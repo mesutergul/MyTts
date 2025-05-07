@@ -91,7 +91,11 @@ namespace MyTts.Services
                     .CancellableThrough(cancellationToken)
                     .ProcessAsynchronously();
                 
-                return new FileContentResult(outputStream.ToArray(), "audio/mpeg");
+                return new FileStreamResult(outputStream, "audio/mpeg")
+                {
+                    EnableRangeProcessing = true,
+                    FileDownloadName = $"merged_{DateTime.UtcNow:yyyyMMddHHmmss}.mp3"
+                };
             }
             catch (OperationCanceledException)
             {
