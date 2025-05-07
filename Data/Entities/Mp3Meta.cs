@@ -5,7 +5,7 @@ using System.ComponentModel.DataAnnotations.Schema;
 namespace MyTts.Data.Entities
 {
     [Table("Haberler_Speeches")]
-    public class Mp3Meta
+    public class Mp3Meta : BaseEntity, IMp3
     {
         [Key]
         [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
