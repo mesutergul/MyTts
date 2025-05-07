@@ -9,7 +9,7 @@ namespace MyTts.Services
         public AudioProcessor(VoiceClip voiceClip)
         {
             _voiceClip = voiceClip ?? throw new ArgumentNullException(nameof(voiceClip));
-            _semaphore = new SemaphoreSlim(1);
+            _semaphore = new SemaphoreSlim(1, 1);
         }
 
         public async Task CopyToAsync(Stream destination, CancellationToken cancellationToken = default)
