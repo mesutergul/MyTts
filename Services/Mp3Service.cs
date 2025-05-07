@@ -51,16 +51,40 @@ namespace MyTts.Services
         {
             try
             {
-                await _processingSemaphore.WaitAsync();
                 var content = await _newsFeedsService.GetFeedUrl(request.News);
-                var filePath = await _ttsManager.ProcessContentAsync(content, Guid.NewGuid(), cancellationToken);
-                return await _mp3FileRepository.LoadMp3MetaByPathAsync(filePath);
+                await CreateSingleMp3Async(content, cancellationToken);
+                return await _mp3FileRepository.LoadMp3MetaByNewsIdAsync<IMp3>(request.News);
+                //await _processingSemaphore.WaitAsync();
+                //var content = await _newsFeedsService.GetFeedUrl(request.News);
+                // (filePath, processor) tu= await _ttsManager.ProcessContentAsync(content, Guid.NewGuid(), cancellationToken);
+                //return await _mp3FileRepository.LoadMp3MetaByPathAsync(tu.filePath);
             }
             finally
             {
                 _processingSemaphore.Release();
             }
         }
+        public async Task<IActionResult> CreateSingleMp3Async(string content, CancellationToken cancellationToken)
+        {
+            try
+            {
+                await _processingSemaphore.WaitAsync();
+                var (filePath, processor) = await _ttsManager.ProcessContentAsync(content, Guid.NewGuid(), cancellationToken);
+                await processor.GetStreamForCloudUpload(cancellationToken);
+                return new EmptyResult();
+            }
+            finally
+            {
+                _processingSemaphore.Release();
+            }
+        }
+        /*
+         await _processingSemaphore.WaitAsync();
+                var content = await _newsFeedsService.GetFeedUrl(request.News);
+                (string filePath, AudioProcessor processor) tu = await _ttsManager.ProcessContentAsync(content, Guid.NewGuid(), cancellationToken);
+                return await tu.processor.GetStreamForCloudUpload(cancellationToken);
+
+         */
         public async Task<IEnumerable<IMp3>> GetFeedByLanguageAsync(ListRequest listRequest, CancellationToken cancellationToken)
         {
             var cacheKey = $"feed_{listRequest.Language}";

@@ -23,8 +23,8 @@ namespace MyTts.Controllers
         {
             try
             {
-                var result = await _mp3Service.CreateMultipleMp3Async(language, limit, cancellationToken);
-                return Ok(result);
+                await _mp3Service.CreateMultipleMp3Async(language, limit, cancellationToken);
+                return Ok();
             }
             catch (Exception ex)
             {
