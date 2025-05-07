@@ -73,15 +73,15 @@ namespace MyTts.Services
             }
         }
 
-        private async Task<IFFMpegArguments> CreateFfmpegArgumentsAsync(
+        private static async Task<FFMpegArguments> CreateFfmpegArgumentsAsync(
             IReadOnlyList<AudioProcessor> processors,
             CancellationToken cancellationToken)
         {           
             // Create FFmpeg arguments with all inputs  
-            var args = FFMpegArguments.FromPipeInput(new StreamPipeSource(processors[0].VoiceClip.GetShareableStream()));
-            for (int i = 1; i < streams.Count; i++)
+            var args = FFMpegArguments.FromPipeInput(new StreamPipeSource(await processors[0].GetStreamForCloudUpload(cancellationToken)));
+            for (int i = 1; i < processors.Count; i++)
             {
-                args.AddPipeInput(new StreamPipeSource(processors[i].VoiceClip.GetShareableStream()));
+                args.AddPipeInput(new StreamPipeSource(await processors[i].GetStreamForCloudUpload(cancellationToken)));
             }
             return args;   
         }
