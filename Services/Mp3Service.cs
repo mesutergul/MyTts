@@ -33,13 +33,14 @@ namespace MyTts.Services
             _newsFeedsService = newsFeedsService ?? throw new ArgumentNullException(nameof(newsFeedsService));
             _processingSemaphore = new SemaphoreSlim(MaxConcurrentProcessing);
         }
-        public async Task<byte[]> CreateMultipleMp3Async(string language, int limit, CancellationToken cancellationToken)
+        public async Task<IActionResult> CreateMultipleMp3Async(string language, int limit, CancellationToken cancellationToken)
         {
             try
             {
                 await _processingSemaphore.WaitAsync();
                 var contents = await _newsFeedsService.GetFeedByLanguageAsync(language, limit);
-                return await _ttsManager.ProcessContentsAsync(contents);
+                await _ttsManager.ProcessContentsAsync(contents);
+                return new EmptyResult();
             }
             finally
             {
@@ -158,15 +159,15 @@ namespace MyTts.Services
             {
                 /// First tries to get the file metadata from cache
                 /// If not in cache, loads and caches it from the repository
-                var mp3File = await _mp3FileRepository.GetFromCacheAsync<IMp3>($"mp3stream:{id}")
-                    ?? await _mp3FileRepository.LoadAndCacheMp3File<IMp3>(id);
-
-                if (mp3File == null)
+                //var mp3File = await _mp3FileRepository.GetFromCacheAsync<IMp3>($"mp3stream:{id}")
+                //    ?? await _mp3FileRepository.LoadAndCacheMp3File<IMp3>(id);
+              
+                if (!await _mp3FileRepository.FileExistsAnywhereAsync(id))
                 {
                     _logger.LogWarning("MP3 file metadata not found for ID: {Id}", id);
                     return new NotFoundObjectResult(new { message = "MP3 file not found." });
                 }
-
+                var mp3File = await _mp3FileRepository.GetFromCacheAsync<IMp3>($"mp3stream:{id}");
                 string filePath = GetAudioFilePath(mp3File.FileName);
                 /// Verifies physical file exists
                 if (!await _mp3FileRepository.Mp3FileExistsAsync(filePath))
@@ -198,20 +199,18 @@ namespace MyTts.Services
         /// Attempts to load existing file
         ///	If not found, creates new MP3 from content
         /// </summary>
-        private async Task<(byte[] FileData, string LocalPath)> GetOrProcessMp3File(string id, CancellationToken cancellationToken)
+        private async Task<(Stream FileData, string LocalPath)> GetOrProcessMp3File(string id, CancellationToken cancellationToken)
         {
             var fileData = await _mp3FileRepository.LoadMp3FileAsync(id, cancellationToken);
             var localPath = id;
-            AudioProcessor processor;
-
+            Stream? fileStream = null;
             if (fileData == null || fileData.Length == 0)
             {
                 var content = _newsFeedsService.GetFeedUrl(id);
-                (localPath, processor)= await _ttsManager.ProcessContentAsync(content, Guid.NewGuid(), cancellationToken);
-                fileData = processor;
-            }
-
-            return (fileData, localPath);
+                (localPath,var processor)= await _ttsManager.ProcessContentAsync(content, Guid.NewGuid(), cancellationToken);
+                fileStream = await processor.GetStreamForCloudUpload(cancellationToken);
+            } else fileStream= new MemoryStream(fileData);
+            return (fileStream, localPath);
         }
 
         private IActionResult CreateStreamResponse(string filePath, string fileName)
@@ -242,8 +241,8 @@ namespace MyTts.Services
         {
             try
             {
-                var (fileData, localPath) = await GetOrProcessMp3File(id, cancellationToken);
-                return CreateDownloadResponse(fileData, localPath);
+                var (fileStream, localPath) = await GetOrProcessMp3File(id, cancellationToken);
+                return CreateStreamimg(fileStream, localPath);
             }
             catch (Exception ex)
             {
@@ -251,6 +250,12 @@ namespace MyTts.Services
                 return CreateErrorResponse(ex, "An error occurred while processing the request.");
             }
         }
+        private IActionResult CreateStreamimg(Stream fileStream, string localPath)
+        {
+            var headers = CreateStandardHeaders(localPath);
+            return CreateFileStreamResponse(fileStream, localPath, headers);
+        }
+
         // public async Task<IActionResult> DownloadMp3(string id, CancellationToken cancellationToken)
         // {
         //     try

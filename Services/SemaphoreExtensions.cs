@@ -1,4 +1,4 @@
-namespace MyTts.Data
+namespace MyTts.Services
 {
     public static class SemaphoreExtensions
     {

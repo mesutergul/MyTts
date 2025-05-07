@@ -144,7 +144,7 @@ namespace MyTts.Repositories
                 throw;
             }
         }
-        private async Task<bool> FileExistsAnywhereAsync(string filePath)
+        public async Task<bool> FileExistsAnywhereAsync(string filePath)
         {
             string metadataCacheKey = $"{FILE_CACHE_KEY_PREFIX}meta:{filePath}";
 

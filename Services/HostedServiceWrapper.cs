@@ -1,5 +1,4 @@
-﻿using MyTts.Data;
-
+﻿
 namespace MyTts.Services
 {
     internal class HostedServiceWrapper : IHostedService

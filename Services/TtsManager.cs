@@ -10,9 +10,7 @@ using Google.Cloud.Storage.V1;
 using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.Mvc;
 using MyTts.Config;
-using MyTts.Services;
 using MyTts.Storage;
-using StackExchange.Redis;
 
 namespace MyTts.Services
 {
@@ -23,6 +21,7 @@ namespace MyTts.Services
         private readonly IRedisCacheService? _cache;
         private readonly IOptions<ElevenLabsConfig> _config;
         private readonly ILogger<TtsManager> _logger;
+        private readonly Mp3StreamMerger _mp3StreamMerger;
         public const string LocalSavePath = "audio";
         private readonly SemaphoreSlim _semaphore;
         private const int MaxConcurrentOperations = 3;
@@ -34,11 +33,13 @@ namespace MyTts.Services
             IOptions<ElevenLabsConfig> config,
             IOptions<StorageConfiguration> storageConfig,
             IRedisCacheService cache,
+            Mp3StreamMerger mp3StreamMerger,
             ILogger<TtsManager> logger)
         {
             _elevenLabsClient = elevenLabsClient ?? throw new ArgumentNullException(nameof(elevenLabsClient));
             _config = config ?? throw new ArgumentNullException(nameof(config));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _mp3StreamMerger = mp3StreamMerger ?? throw new ArgumentNullException(nameof(mp3StreamMerger));
             _cache = cache ?? throw new ArgumentNullException(nameof(cache));
             _storageClient = StorageClient.Create();
             _semaphore = new SemaphoreSlim(MaxConcurrentOperations);
@@ -103,12 +104,12 @@ namespace MyTts.Services
                 throw;
             }
         }
-        public async Task<byte[]> MergeAudioFilesAsync(List<AudioProcessor> processors)
+        public async Task<IActionResult> MergeAudioFilesAsync(List<AudioProcessor> processors)
         {
-            await using var merger = new Mp3StreamMerger(_logger);
-            return await merger.MergeMp3ByteArraysAsync(processors);
+            await _mp3StreamMerger.MergeMp3ByteArraysAsync(processors);
+            return new EmptyResult();
         }
-        public async Task<byte[]> ProcessContentsAsync(IEnumerable<string> contents, CancellationToken cancellationToken = default)
+        public async Task<IActionResult> ProcessContentsAsync(IEnumerable<string> contents, CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(contents);
            // ArgumentException.ThrowIfNullOrEmpty(bucketName);
@@ -124,23 +125,13 @@ namespace MyTts.Services
 
                 await Task.WhenAll(tasks);
                 byte[]? mergedPath = null;
-                if (processedFiles.Count > 1)
-                {
-                    var mergedFileName = $"merged_{DateTime.UtcNow:yyyyMMddHHmmss}.mp3";
-                    mergedPath = await MergeAudioFilesAsync(processedFiles);
-                //        MergeContentsAsync(
-                //        processedFiles,
-                //        mergedFileName,
-                //        breakAudioPath: Path.Combine(LocalSavePath, "break.mp3"),
-                //        headerAudioPath: Path.Combine(LocalSavePath, "header.mp3"),
-                //        insertBreakEvery: 2,
-                //        cancellationToken);
-                }
+                var mergedFileName = $"merged_{DateTime.UtcNow:yyyyMMddHHmmss}.mp3";
+                await MergeAudioFilesAsync(processedFiles);         
                 _logger.LogInformation(
                             "Processed {Count} files. Merged file created: {MergedCreated}",
                             processedFiles.Count,
                             mergedPath != null);
-                return mergedPath;
+                return new EmptyResult();
             }
             catch (OperationCanceledException)
             {

@@ -17,6 +17,7 @@ namespace MyTts.Repositories
         Task SaveSingleMp3MetaAsync(IMp3 mp3File);
         Task<Data.Interfaces.IMp3?> LoadAndCacheMp3File<IMp3>(string id) ;
         Task<IMp3?> GetFromCacheAsync<IMp3>(string key) ;
+        Task<bool> FileExistsAnywhereAsync(string filePath);
         Task SetToCacheAsync<IMp3>(string key, IMp3 value, TimeSpan? expiry = null);
     }
 }

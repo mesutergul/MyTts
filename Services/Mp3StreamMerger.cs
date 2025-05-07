@@ -4,6 +4,7 @@ using System.IO;
 using System.Threading.Tasks;
 using FFMpegCore;
 using FFMpegCore.Pipes;
+using Microsoft.AspNetCore.Mvc;
 
 namespace MyTts.Services
 {
@@ -19,7 +20,7 @@ namespace MyTts.Services
             _mergeLock = new SemaphoreSlim(1, 1);
         }
 
-        public async Task<byte[]> MergeMp3ByteArraysAsync(
+        public async Task<IActionResult> MergeMp3ByteArraysAsync(
             IReadOnlyList<AudioProcessor> audioProcessors,
             CancellationToken cancellationToken = default)
         {
@@ -34,7 +35,7 @@ namespace MyTts.Services
             {
                 using var outputStream = new MemoryStream();
                 await MergeAudioProcessorsAsync(audioProcessors, outputStream, cancellationToken);
-                return outputStream.ToArray();
+                return new EmptyResult();
             }
             finally
             {
@@ -42,7 +43,7 @@ namespace MyTts.Services
             }
         }
 
-        private async Task MergeAudioProcessorsAsync(
+        private async Task<IActionResult> MergeAudioProcessorsAsync(
             IReadOnlyList<AudioProcessor> processors,
             MemoryStream outputStream,
             CancellationToken cancellationToken)
@@ -60,6 +61,7 @@ namespace MyTts.Services
                             .WithCustomArgument("-y"))
                     .CancellableThrough(cancellationToken)
                     .ProcessAsynchronously();
+                return new EmptyResult();
             }
             catch (OperationCanceledException)
             {
