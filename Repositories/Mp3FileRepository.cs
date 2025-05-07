@@ -20,8 +20,8 @@ namespace MyTts.Repositories
 
         private const string DB_CACHE_KEY = "MP3_FILES_DB";
         private const string FILE_CACHE_KEY_PREFIX = "MP3_FILE_";
-        private static readonly TimeSpan DB_CACHE_DURATION = TimeSpan.FromMinutes(5);
-        private static readonly TimeSpan FILE_CACHE_DURATION = TimeSpan.FromMinutes(30);
+        private static readonly TimeSpan DB_CACHE_DURATION = TimeSpan.FromMinutes(45);
+        private static readonly TimeSpan FILE_CACHE_DURATION = TimeSpan.FromMinutes(60);
 
         public Mp3FileRepository(
             ILogger<Mp3FileRepository> logger,
