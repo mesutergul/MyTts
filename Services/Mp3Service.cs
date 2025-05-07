@@ -3,6 +3,7 @@ using MyTts.Models;
 using MyTts.Repositories;
 using Microsoft.AspNetCore.Mvc;
 using MyTts.Data.Interfaces;
+using Microsoft.Extensions.Logging;
 
 namespace MyTts.Services
 {
@@ -32,13 +33,13 @@ namespace MyTts.Services
             _newsFeedsService = newsFeedsService ?? throw new ArgumentNullException(nameof(newsFeedsService));
             _processingSemaphore = new SemaphoreSlim(MaxConcurrentProcessing);
         }
-        public async Task<string> CreateMultipleMp3Async(string language, int limit, CancellationToken cancellationToken)
+        public async Task<byte[]> CreateMultipleMp3Async(string language, int limit, CancellationToken cancellationToken)
         {
             try
             {
                 await _processingSemaphore.WaitAsync();
                 var contents = await _newsFeedsService.GetFeedByLanguageAsync(language, limit);
-                return await _ttsManager.ProcessContentsAsync(contents) ?? string.Empty;
+                return await _ttsManager.ProcessContentsAsync(contents);
             }
             finally
             {
@@ -123,6 +124,12 @@ namespace MyTts.Services
                 StatusCode = 500
             };
         }
+        /// Creates an optimized FileStream with:
+        /// Larger buffer(81920 bytes) for streaming
+        ///	Asynchronous I/O
+        ///	Sequential scan optimization
+        ///	Read-only access
+        ///	File sharing enabled
         private Stream CreateFileStream(string filePath, bool isStreaming = false)
         {
             return new FileStream(
@@ -139,10 +146,18 @@ namespace MyTts.Services
         {
             return Path.Combine(AudioBasePath, fileName);
         }
+        /// <summary>
+        /// Streams MP3 file by IDto the client, optimized for audio streaming with proper caching
+        /// </summary>
+        /// <param name="id"></param>
+        /// <param name="cancellationToken"></param>
+        /// <returns></returns>
         public async Task<IActionResult> StreamMp3(string id, CancellationToken cancellationToken = default)
         {
             try
             {
+                /// First tries to get the file metadata from cache
+                /// If not in cache, loads and caches it from the repository
                 var mp3File = await _mp3FileRepository.GetFromCacheAsync<IMp3>($"mp3stream:{id}")
                     ?? await _mp3FileRepository.LoadAndCacheMp3File<IMp3>(id);
 
@@ -153,14 +168,16 @@ namespace MyTts.Services
                 }
 
                 string filePath = GetAudioFilePath(mp3File.FileName);
-
+                /// Verifies physical file exists
                 if (!await _mp3FileRepository.Mp3FileExistsAsync(filePath))
                 {
                     _logger.LogWarning("MP3 file not found at path: {Path}", filePath);
                     return new NotFoundObjectResult(new { message = "MP3 file not found." });
                 }
-
+                /// Creates optimized FileStream for audio streaming
                 var stream = CreateFileStream(filePath, isStreaming: true);
+                /// Sets up proper HTTP headers for streaming 
+                /// Includes caching, range support
                 var headers = CreateStandardHeaders(mp3File.FileName);
 
                 return CreateFileStreamResponse(stream, mp3File.FileName, headers);
@@ -177,16 +194,21 @@ namespace MyTts.Services
             return await _mp3FileRepository.GetFromCacheAsync<IMp3>(cacheKey)
                 ?? await _mp3FileRepository.LoadAndCacheMp3File<IMp3>(id);
         }
+        /// <summary>
+        /// Attempts to load existing file
+        ///	If not found, creates new MP3 from content
+        /// </summary>
         private async Task<(byte[] FileData, string LocalPath)> GetOrProcessMp3File(string id, CancellationToken cancellationToken)
         {
-            var fileData = await _mp3FileRepository.LoadMp3FileAsync(id);
+            var fileData = await _mp3FileRepository.LoadMp3FileAsync(id, cancellationToken);
             var localPath = id;
+            AudioProcessor processor;
 
             if (fileData == null || fileData.Length == 0)
             {
                 var content = _newsFeedsService.GetFeedUrl(id);
-                localPath = await _ttsManager.ProcessContentAsync(content, Guid.NewGuid(), cancellationToken);
-                fileData = await _mp3FileRepository.LoadMp3FileAsync(localPath);
+                (localPath, processor)= await _ttsManager.ProcessContentAsync(content, Guid.NewGuid(), cancellationToken);
+                fileData = processor;
             }
 
             return (fileData, localPath);
@@ -198,7 +220,6 @@ namespace MyTts.Services
             var headers = CreateStandardHeaders(fileName);
             return CreateFileStreamResponse(stream, fileName, headers);
         }
-
         private IActionResult CreateDownloadResponse(byte[] fileData, string localPath)
         {
             return new FileContentResult(fileData, "audio/mpeg")
@@ -212,7 +233,7 @@ namespace MyTts.Services
             return new NotFoundObjectResult(new { message });
         }
         /// <summary>
-        /// Download MP3 file by ID, if not found, process the content and save it.
+        /// Download MP3 file by ID, if not found, process the content and creates a new MP3 file.
         /// </summary>
         /// <param name="id"></param>
         /// <param name="cancellationToken"></param>

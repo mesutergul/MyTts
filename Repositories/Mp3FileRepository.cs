@@ -89,45 +89,158 @@ namespace MyTts.Repositories
         public async Task<bool> Mp3FileExistsAsync(string filePath)
         {
             string fullPath = Path.Combine(_baseStoragePath, filePath);
-            bool exists = await Task.Run(() => File.Exists(fullPath));
-            if(exists) await _cache.SetAsync(fullPath, exists, TimeSpan.FromMinutes(24 * 60));
-            return exists;
+            return await Task.Run(() => File.Exists(fullPath));
         }
         /// <summary>
         /// Loads an MP3 file from the specified path. If the file is not found, it returns an empty byte array.
         /// </summary>
         /// <param name="filePath"></param>
         /// <returns></returns>
-        public async Task<byte[]> LoadMp3FileAsync(string filePath)
+        //public async Task<byte[]> LoadMp3FileAsync(string filePath)
+        //{
+        //    ArgumentNullException.ThrowIfNull(filePath);
+
+        //    string cacheKey = $"{FILE_CACHE_KEY_PREFIX}{filePath}";
+        //    if (await Mp3FileExistsInCacheAsync(cacheKey) || await Mp3FileExistsInSqlAsync(22) || await Mp3FileExistsAsync(filePath))
+        //    {
+        //        _logger.LogDebug("Cache hit for file: {FilePath}", filePath);
+
+        //        var fileLock = await GetFileLockAsync(filePath);
+        //        await fileLock.WaitAsync();
+        //        try
+        //        {
+        //            string fullPath = GetFullPath(filePath);
+        //            var fileData = await File.ReadAllBytesAsync(fullPath);
+        //            return fileData;
+        //        }
+        //        catch (Exception ex)
+        //        {
+        //            _logger.LogError(ex, "Failed to get MP3 file: {FilePath}", filePath);
+        //            throw;
+        //        }
+        //        finally
+        //        {
+        //            fileLock.Release();
+        //        }
+        //    }
+        //    return Array.Empty<byte>();
+        //}
+        public async Task<byte[]> LoadMp3FileAsync(string filePath, CancellationToken cancellationToken) {
+            ArgumentNullException.ThrowIfNull(filePath); try { 
+                if(await FileExistsAnywhereAsync(filePath))
+                {
+                    return await ReadFileFromDiskAsync(filePath, cancellationToken);
+                }
+                return Array.Empty<byte>();
+            }
+            catch (FileNotFoundException ex)
+            {
+                _logger.LogWarning(ex, "File not found: {FilePath}", filePath);
+                return Array.Empty<byte>();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to load MP3 file: {FilePath}", filePath);
+                throw;
+            }
+        }
+        private async Task<bool> FileExistsAnywhereAsync(string filePath)
+        {
+            string metadataCacheKey = $"{FILE_CACHE_KEY_PREFIX}meta:{filePath}";
+
+            // Check metadata cache first
+            if (await Mp3FileExistsInCacheAsync(metadataCacheKey))
+            {
+                return true;
+            }
+
+            // Check database
+            if (await Mp3FileExistsInSqlAsync(22)) // TODO: Get actual ID
+            {
+                await _cache.SetAsync(metadataCacheKey, true, FILE_CACHE_DURATION);
+                return true;
+            }
+
+            // Finally check physical file
+            var fileExists = await Mp3FileExistsAsync(filePath);
+            if (fileExists)
+            {
+                await _cache.SetAsync(metadataCacheKey, true, FILE_CACHE_DURATION);
+            }
+
+            return fileExists;
+        }
+        private async Task<byte[]> ReadFileFromDiskAsync(string filePath, CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(filePath);
 
-            string cacheKey = $"{FILE_CACHE_KEY_PREFIX}{filePath}";
-            if (await Mp3FileExistsInCacheAsync(cacheKey) || await Mp3FileExistsInSqlAsync(22) || await Mp3FileExistsAsync(filePath))
-            {
-                _logger.LogDebug("Cache hit for file: {FilePath}", filePath);
+            var fullPath = GetFullPath(filePath);
+            const int bufferSize = 81920; // Optimal buffer size for large files
 
-                var fileLock = await GetFileLockAsync(filePath);
-                await fileLock.WaitAsync();
-                try
+            try
+            {
+                var fileInfo = new FileInfo(fullPath);
+                if (!fileInfo.Exists || fileInfo.Length == 0)
                 {
-                    string fullPath = GetFullPath(filePath);
-                    var fileData = await File.ReadAllBytesAsync(fullPath);
-                    return fileData;
+                    _logger.LogWarning("File not found or empty at path: {Path}", fullPath);
+                    return Array.Empty<byte>();
                 }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Failed to get MP3 file: {FilePath}", filePath);
-                    throw;
-                }
-                finally
-                {
-                    fileLock.Release();
-                }
+
+                // Choose reading strategy based on file size read directly / streaming
+                return fileInfo.Length > 100 * 1024 * 1024 // 100MB threshold
+                    ? await ReadLargeFileAsync(fullPath, bufferSize, cancellationToken)
+                    : await File.ReadAllBytesAsync(fullPath, cancellationToken);
             }
-            return Array.Empty<byte>();
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error reading file from disk: {Path}", fullPath);
+                throw new IOException($"Failed to read file: {fullPath}", ex);
+            }
         }
 
+        private async Task<byte[]> ReadLargeFileAsync(string fullPath, int bufferSize, CancellationToken cancellationToken)
+        {
+            await using var fileStream = new FileStream(
+                fullPath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize,
+                FileOptions.Asynchronous | FileOptions.SequentialScan
+            );
+
+            try
+            {
+                var totalBytes = new byte[fileStream.Length];
+                var bytesRead = 0;
+                var buffer = new byte[bufferSize];
+
+                while (bytesRead < totalBytes.Length)
+                {
+                    var count = await fileStream.ReadAsync(
+                        buffer.AsMemory(0, Math.Min(bufferSize, totalBytes.Length - bytesRead)),
+                        cancellationToken
+                    );
+
+                    if (count == 0) break; // End of stream
+
+                    Buffer.BlockCopy(buffer, 0, totalBytes, bytesRead, count);
+                    bytesRead += count;
+                }
+
+                return totalBytes;
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogInformation("File read operation cancelled: {Path}", fullPath);
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error reading large file: {Path}", fullPath);
+                throw new IOException($"Failed to read large file: {fullPath}", ex);
+            }
+        }
         public async Task SaveMp3FileAsync(string filePath, byte[] fileData)
         {
             ArgumentNullException.ThrowIfNull(filePath);
@@ -167,7 +280,6 @@ namespace MyTts.Repositories
                 fileLock.Release();
             }
         }
-
         public async Task DeleteMp3FileAsync(string filePath)
         {
             ArgumentNullException.ThrowIfNull(filePath);

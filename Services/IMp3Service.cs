@@ -9,7 +9,7 @@ namespace MyTts.Services
         Task<IEnumerable<IMp3>> GetFeedByLanguageAsync(ListRequest request, CancellationToken cancellationToken);
         Task<IEnumerable<IMp3>> GetMp3FileListAsync(CancellationToken cancellationToken);
         Task<IMp3> CreateSingleMp3Async(OneRequest request, CancellationToken cancellationToken);
-        Task<string> CreateMultipleMp3Async(string language, int limit, CancellationToken cancellationToken);
+        Task<byte[]> CreateMultipleMp3Async(string language, int limit, CancellationToken cancellationToken);
         Task<IMp3> GetMp3FileAsync(string id, CancellationToken cancellationToken);
         Task<IMp3> GetLastMp3ByLanguageAsync(string language, CancellationToken cancellationToken);
         Task<IActionResult> DownloadMp3(string id, CancellationToken cancellationToken);

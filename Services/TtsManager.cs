@@ -8,12 +8,13 @@ using ElevenLabs.TextToSpeech;
 using ElevenLabs.Voices;
 using Google.Cloud.Storage.V1;
 using Microsoft.Extensions.Options;
+using Microsoft.AspNetCore.Mvc;
 using MyTts.Config;
 using MyTts.Services;
 using MyTts.Storage;
 using StackExchange.Redis;
 
-namespace MyTts.Data
+namespace MyTts.Services
 {
     public class TtsManager
     {
@@ -102,32 +103,38 @@ namespace MyTts.Data
                 throw;
             }
         }
-        public async Task<string?> ProcessContentsAsync(IEnumerable<string> contents, CancellationToken cancellationToken = default)
+        public async Task<byte[]> MergeAudioFilesAsync(List<AudioProcessor> processors)
+        {
+            await using var merger = new Mp3StreamMerger(_logger);
+            return await merger.MergeMp3ByteArraysAsync(processors);
+        }
+        public async Task<byte[]> ProcessContentsAsync(IEnumerable<string> contents, CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(contents);
            // ArgumentException.ThrowIfNullOrEmpty(bucketName);
-            var processedFiles = new List<string>();
+            var processedFiles = new List<AudioProcessor>();
             try
             {
                 var tasks = contents.Select(async content =>
                 {
                     await using var _ = await _semaphore.WaitAsyncDisposable(cancellationToken);
-                    var filePath = await ProcessContentAsync(content, Guid.NewGuid(), cancellationToken);
-                    processedFiles.Add(filePath);
+                     (var filePath, var processor) = await ProcessContentAsync(content, Guid.NewGuid(), cancellationToken);
+                    processedFiles.Add(processor);
                 });
 
                 await Task.WhenAll(tasks);
-                string? mergedPath = null;
+                byte[]? mergedPath = null;
                 if (processedFiles.Count > 1)
                 {
                     var mergedFileName = $"merged_{DateTime.UtcNow:yyyyMMddHHmmss}.mp3";
-                    mergedPath = await MergeContentsAsync(
-                        processedFiles,
-                        mergedFileName,
-                        breakAudioPath: Path.Combine(LocalSavePath, "break.mp3"),
-                        headerAudioPath: Path.Combine(LocalSavePath, "header.mp3"),
-                        insertBreakEvery: 2,
-                        cancellationToken);
+                    mergedPath = await MergeAudioFilesAsync(processedFiles);
+                //        MergeContentsAsync(
+                //        processedFiles,
+                //        mergedFileName,
+                //        breakAudioPath: Path.Combine(LocalSavePath, "break.mp3"),
+                //        headerAudioPath: Path.Combine(LocalSavePath, "header.mp3"),
+                //        insertBreakEvery: 2,
+                //        cancellationToken);
                 }
                 _logger.LogInformation(
                             "Processed {Count} files. Merged file created: {MergedCreated}",
@@ -147,7 +154,7 @@ namespace MyTts.Data
             }
         }
 
-        public async Task<string> ProcessContentAsync(string text, Guid id, CancellationToken cancellationToken)
+        public async Task<(string LocalPath, AudioProcessor FileData)> ProcessContentAsync(string text, Guid id, CancellationToken cancellationToken)
         {
             var fileName = $"speech_{id}.mp3";
             var localPath = Path.Combine(LocalSavePath, fileName);
@@ -179,7 +186,7 @@ namespace MyTts.Data
                 );
 
                 _logger.LogInformation("Processed content {Id}: {FileName}", id, fileName);
-                return localPath;
+                return (localPath, audioProcessor);
             }
             catch (Exception ex)
             {

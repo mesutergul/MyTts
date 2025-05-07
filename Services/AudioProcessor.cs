@@ -1,4 +1,5 @@
-namespace MyTts.Data
+
+namespace MyTts.Services
 {
     public sealed class AudioProcessor : IAsyncDisposable
     {
@@ -14,10 +15,16 @@ namespace MyTts.Data
 
         public async Task CopyToAsync(Stream destination, CancellationToken cancellationToken = default)
         {
-            await using var _ = await _semaphore.WaitAsyncDisposable(cancellationToken);
-            
-            _voiceClip.Position = 0;
-            await _voiceClip.CopyToAsync(destination, 81920, cancellationToken);
+            await _semaphore.WaitAsync(cancellationToken);
+            try
+            {
+                _voiceClip.Position = 0;
+                await _voiceClip.CopyToAsync(destination, 81920, cancellationToken);
+            }
+            finally
+            {
+                _semaphore.Release();
+            }
         }
 
         // New method specifically for cloud storage uploads
@@ -34,6 +41,7 @@ namespace MyTts.Data
                 _semaphore.Release();
             }
         }
+
         public async ValueTask DisposeAsync()
         {
             if (!_disposed)

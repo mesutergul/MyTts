@@ -101,6 +101,7 @@ public static class ServiceCollectionExtensions
             logging.AddFilter("System", LogLevel.Warning);
             logging.AddFilter("MyTts", LogLevel.Information);
         });
+        services.AddSingleton<Mp3StreamMerger>();
 
         return services;
     }
