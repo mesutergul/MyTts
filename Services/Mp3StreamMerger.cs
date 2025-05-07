@@ -1,10 +1,13 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using FFMpegCore;
 using FFMpegCore.Pipes;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 
 namespace MyTts.Services
 {
@@ -30,16 +33,39 @@ namespace MyTts.Services
                 throw new ArgumentException("No audio processors provided", nameof(audioProcessors));
             }
 
-            await _mergeLock.WaitAsync(cancellationToken);
+            // Use ValueTask-based pattern for better async efficiency
+            var lockTaken = false;
             try
             {
+                await _mergeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+                lockTaken = true;
+
                 using var outputStream = new MemoryStream();
-                await MergeAudioProcessorsAsync(audioProcessors, outputStream, cancellationToken);
-                return new EmptyResult();
+                await MergeAudioProcessorsAsync(audioProcessors, outputStream, cancellationToken).ConfigureAwait(false);
+                
+                // Return the stream properly
+                outputStream.Position = 0;
+                return new FileStreamResult(outputStream, "audio/mpeg") 
+                {
+                    FileDownloadName = $"merged_{DateTime.UtcNow:yyyyMMddHHmmss}.mp3"
+                };
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogInformation("Merge operation cancelled");
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in MergeMp3ByteArraysAsync");
+                throw;
             }
             finally
             {
-                _mergeLock.Release();
+                if (lockTaken)
+                {
+                    _mergeLock.Release();
+                }
             }
         }
 
@@ -48,9 +74,12 @@ namespace MyTts.Services
             MemoryStream outputStream,
             CancellationToken cancellationToken)
         {
+            // Create a list to track resources that need disposal
+            var streamPipeSources = new List<StreamPipeSource>(processors.Count);
+            
             try
             {
-                var ffmpegArgs = await CreateFfmpegArgumentsAsync(processors, cancellationToken);
+                var ffmpegArgs = await CreateFfmpegArgumentsAsync(processors, streamPipeSources, cancellationToken).ConfigureAwait(false);
 
                 await ffmpegArgs
                     .OutputToPipe(
@@ -61,7 +90,8 @@ namespace MyTts.Services
                             .WithCustomArgument("-y"))
                     .CancellableThrough(cancellationToken)
                     .ProcessAsynchronously();
-                return new EmptyResult();
+                
+                return new FileContentResult(outputStream.ToArray(), "audio/mpeg");
             }
             catch (OperationCanceledException)
             {
@@ -73,19 +103,47 @@ namespace MyTts.Services
                 _logger.LogError(ex, "Error merging audio processors");
                 throw;
             }
+            finally
+            {
+                // Ensure all resources are properly disposed
+                foreach (var source in streamPipeSources)
+                {
+                    try
+                    {
+                        ((IDisposable)source).Dispose();
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Error disposing StreamPipeSource");
+                    }
+                }
+            }
         }
 
         private static async Task<FFMpegArguments> CreateFfmpegArgumentsAsync(
             IReadOnlyList<AudioProcessor> processors,
+            List<StreamPipeSource> streamPipeSources,
             CancellationToken cancellationToken)
-        {           
-            // Create FFmpeg arguments with all inputs  
-            var args = FFMpegArguments.FromPipeInput(new StreamPipeSource(await processors[0].GetStreamForCloudUpload(cancellationToken)));
-            for (int i = 1; i < processors.Count; i++)
+        {
+            // Create streams for each processor, getting them asynchronously
+            var streams = new List<Stream>(processors.Count);
+            for (int i = 0; i < processors.Count; i++)
             {
-                args.AddPipeInput(new StreamPipeSource(await processors[i].GetStreamForCloudUpload(cancellationToken)));
+                // Use the new async method for better memory efficiency
+                var stream = await processors[i].GetStreamForCloudUploadAsync(cancellationToken).ConfigureAwait(false);
+                streams.Add(stream);
+                var pipeSource = new StreamPipeSource(stream);
+                streamPipeSources.Add(pipeSource);
             }
-            return args;   
+
+            // Create FFmpeg arguments with all inputs
+            var args = FFMpegArguments.FromPipeInput(streamPipeSources[0]);
+            for (int i = 1; i < streamPipeSources.Count; i++)
+            {
+                args.AddPipeInput(streamPipeSources[i]);
+            }
+            
+            return args;
         }
 
         public async ValueTask DisposeAsync()

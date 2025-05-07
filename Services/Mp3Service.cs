@@ -70,7 +70,7 @@ namespace MyTts.Services
             {
                 await _processingSemaphore.WaitAsync();
                 var (filePath, processor) = await _ttsManager.ProcessContentAsync(content, Guid.NewGuid(), cancellationToken);
-                await processor.GetStreamForCloudUpload(cancellationToken);
+                await processor.GetStreamForCloudUploadAsync(cancellationToken);
                 return new EmptyResult();
             }
             finally
@@ -232,7 +232,7 @@ namespace MyTts.Services
             {
                 var content = _newsFeedsService.GetFeedUrl(id);
                 (localPath,var processor)= await _ttsManager.ProcessContentAsync(content, Guid.NewGuid(), cancellationToken);
-                fileStream = await processor.GetStreamForCloudUpload(cancellationToken);
+                fileStream = await processor.GetStreamForCloudUploadAsync(cancellationToken);
             } else fileStream= new MemoryStream(fileData);
             return (fileStream, localPath);
         }
