@@ -48,7 +48,17 @@ namespace MyTts.Services
             _semaphore = new SemaphoreSlim(MaxConcurrentOperations);
             _storageConfig = storageConfig.Value;
             // Initialize Google Cloud Storage
-            (_storageClient, _bucketName) = InitializeGoogleCloudStorage(_storageConfig);
+            var gcs = InitializeGoogleCloudStorage(_storageConfig);
+            if(gcs != null)
+            {
+                _storageClient = gcs.Value.client;
+                _bucketName = gcs.Value.bucketName;
+            }
+            else
+            {
+                _storageClient = null;
+                _bucketName = null;
+            }
             // Initialize JSON options once
             _jsonOptions = new JsonSerializerOptions
             {
@@ -58,57 +68,47 @@ namespace MyTts.Services
 
             Directory.CreateDirectory(LocalSavePath);
         }
-        private (StorageClient client, string bucketName) InitializeGoogleCloudStorage(StorageConfiguration config)
+        private (StorageClient? client, string? bucketName)? InitializeGoogleCloudStorage(StorageConfiguration config)
         {
             try
             {
                 // Get Google Cloud configuration  
-                if (!config.Disks.TryGetValue("GoogleCloud", out var googleCloudDisk))
+                var googleCloudDisk = config.Disks.TryGetValue("gcloud", out var disk) ? disk : null;
+                if (googleCloudDisk == null || !googleCloudDisk.Enabled || googleCloudDisk.Config == null || disk.Config == null)
                 {
-                    throw new InvalidOperationException("GoogleCloud disk configuration not found.");
-                }
-
-                // Ensure Config is not null
-                if (googleCloudDisk.Config == null)
-                {
-                    throw new InvalidOperationException("GoogleCloud disk configuration is null.");
-                }
-
-                // Handle bucket name              
-                if (!googleCloudDisk.Config.TryGetValue("BucketName", out var bucketName) || string.IsNullOrEmpty(bucketName))
-                {
-                    throw new InvalidOperationException("BucketName not configured for GoogleCloud disk.");
+                    _logger.LogWarning("Google Cloud Storage is not enabled or misconfigured. Skipping cloud upload.");
+                    return null;
                 }
 
                 // Create StorageClient with builder for more control  
                 var clientBuilder = new StorageClientBuilder();
 
                 // If AuthJson is provided in config, use it  
-                if (googleCloudDisk.Config.TryGetValue("AuthJson", out var authJson))
+                if (string.IsNullOrEmpty(googleCloudDisk.Config.AuthJson))
                 {
-                    clientBuilder.CredentialsPath = authJson;
+                    clientBuilder.CredentialsPath = googleCloudDisk.Config.AuthJson;
                 }
-
+                
                 var client = clientBuilder.Build();
 
                 // Verify bucket exists and is accessible  
                 try
                 {
-                    client.GetBucket(bucketName);
-                    _logger.LogInformation("Successfully connected to Google Cloud Storage bucket: {BucketName}", bucketName);
+                    client.GetBucket(googleCloudDisk.Config.BucketName);
+                    _logger.LogInformation("Successfully connected to Google Cloud Storage bucket: {BucketName}", googleCloudDisk.Config.BucketName);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Failed to access Google Cloud Storage bucket: {BucketName}", bucketName);
-                    throw new InvalidOperationException($"Cannot access bucket: {bucketName}", ex);
+                    _logger.LogError(ex, "Failed to access Google Cloud Storage bucket: {BucketName}", googleCloudDisk.Config.BucketName);
+                    return null;
                 }
 
-                return (client, bucketName);
+                return (client, googleCloudDisk.Config.BucketName);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to initialize Google Cloud Storage client");
-                throw;
+                return null;
             }
         }
         // Optimized version of MergeAudioFilesAsync
@@ -290,6 +290,11 @@ namespace MyTts.Services
         // Optimized version of UploadToCloudAsync
         private async Task UploadToCloudAsync(AudioProcessor processor, string fileName, CancellationToken cancellationToken)
         {
+            if (_storageClient == null || string.IsNullOrEmpty(_bucketName))
+            {
+                _logger.LogWarning("Skipping cloud upload because GCS is not configured.");
+                return;
+            }
             // Use the new async method to get the stream efficiently
             await using var uploadStream = await processor.GetStreamForCloudUploadAsync(cancellationToken);
 
@@ -311,7 +316,7 @@ namespace MyTts.Services
 
         private async Task StoreMetadataRedisAsync(Guid id, string text, string localPath, string fileName, CancellationToken cancellationToken)
         {
-            if (_cache == null) return;
+            if (_cache==null && await await Task.FromResult(_cache.IsConnectedAsync())) return;
             var metadata = new AudioMetadata
             {
                 Id = id,

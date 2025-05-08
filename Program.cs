@@ -82,7 +82,8 @@ public static class ServiceCollectionExtensions
             });
         });
         // Add AutoMapper - MISSING REGISTRATION
-        services.AddAutoMapper(typeof(Program).Assembly);
+        // services.AddAutoMapper(typeof(Program).Assembly);
+        services.AddAutoMapper(AppDomain.CurrentDomain.GetAssemblies());
 
         // Register concrete implementations first
         services.AddScoped<Mp3MetaRepository>();
@@ -143,7 +144,7 @@ public static class ServiceCollectionExtensions
                 {
                     Driver = disk.Value.Driver,
                     Root = disk.Value.Root,
-                    Config = disk.Value.Config ?? new Dictionary<string, string>()
+                    Config = disk.Value.Config ?? new DiskConfig()
                 };
             }
             
@@ -164,7 +165,7 @@ public static class ServiceCollectionExtensions
             .ValidateDataAnnotations()
             .ValidateOnStart();
 
-        services.AddSingleton<IValidateOptions<ElevenLabsConfig>, ElevenLabsConfig>();
+        // services.AddSingleton<IValidateOptions<ElevenLabsConfig>, ElevenLabsConfig>();
 
         // Register ElevenLabsClient with better error handling
         services.AddSingleton(sp =>

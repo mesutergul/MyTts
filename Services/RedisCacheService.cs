@@ -29,7 +29,7 @@ namespace MyTts.Services
             {
                 var value = await _db.StringGetAsync(GetKey(key));
                 return value.HasValue 
-                    ? JsonSerializer.Deserialize<T>(value!) 
+                    ? JsonSerializer.Deserialize<T>(value) 
                     : default;
             }
             catch (Exception ex)
@@ -52,21 +52,40 @@ namespace MyTts.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error setting value for key: {Key}", key);
-                throw;
+                _logger.LogError(ex, "Redis SET failed for key: {Key}", key);
+                //throw;
             }
         }
 
         public async Task<bool> RemoveAsync(string key)
         {
-            return await _db.KeyDeleteAsync(GetKey(key));
+            try
+            {
+                return await _db.KeyDeleteAsync(GetKey(key));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Redis REMOVE failed for key: {Key}", key);
+                return false;
+            }
         }
 
         public async Task<bool> ExistsAsync(string key)
         {
-            return await _db.KeyExistsAsync(GetKey(key));
+            try
+            {
+                return await _db.KeyExistsAsync(GetKey(key));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Redis EXISTS check failed for key: {Key}", key);
+                return false;
+            }
         }
-
+        public Task<bool> IsConnectedAsync()
+        {
+            return Task.FromResult(_redis.IsConnected);
+        }
         private string GetKey(string key) => $"{_config.InstanceName}{key}";
     }
 }

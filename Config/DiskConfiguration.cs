@@ -4,7 +4,7 @@
     {
         public string Driver { get; set; } = "local";
         public string Root { get; set; } = string.Empty;
-        public Dictionary<string, string> Config { get; set; } = new();
+        public DiskConfig? Config { get; set; } = new();
 
     }
 }

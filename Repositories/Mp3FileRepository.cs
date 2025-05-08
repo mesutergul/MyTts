@@ -51,7 +51,7 @@ namespace MyTts.Repositories
             try
             {
                 var existsInCache = await _cache.GetAsync<bool?>(cacheKey);
-                return existsInCache.Value;
+                return existsInCache.HasValue?existsInCache.Value:false;
             }
             catch (Exception ex)
             {
