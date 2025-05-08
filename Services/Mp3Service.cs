@@ -171,6 +171,9 @@ namespace MyTts.Services
         {
             return Path.Combine(AudioBasePath, fileName);
         }
+        public async Task<bool> FileExistsAnywhereAsync(string id) {
+            return await _mp3FileRepository.FileExistsAnywhereAsync(id);
+        }
         /// <summary>
         /// Streams MP3 file by IDto the client, optimized for audio streaming with proper caching
         /// </summary>
@@ -186,7 +189,7 @@ namespace MyTts.Services
                 //var mp3File = await _mp3FileRepository.GetFromCacheAsync<IMp3>($"mp3stream:{id}")
                 //    ?? await _mp3FileRepository.LoadAndCacheMp3File<IMp3>(id);
               
-                if (!await _mp3FileRepository.FileExistsAnywhereAsync(id))
+                if (!await FileExistsAnywhereAsync(id))
                 {
                     _logger.LogWarning("MP3 file metadata not found for ID: {Id}", id);
                     return new NotFoundObjectResult(new { message = "MP3 file not found." });
@@ -219,6 +222,10 @@ namespace MyTts.Services
             return await _mp3FileRepository.GetFromCacheAsync<IMp3>(cacheKey)
                 ?? await _mp3FileRepository.LoadAndCacheMp3File<IMp3>(id);
         }
+        public async Task<Stream> GetMp3File(string id, CancellationToken cancellationToken)
+        {
+          return await _mp3FileRepository.ReadLargeFileAsStreamAsync(id, 81920, cancellationToken);    
+        }
         /// <summary>
         /// Attempts to load existing file
         ///	If not found, creates new MP3 from content
@@ -237,7 +244,7 @@ namespace MyTts.Services
             return (fileStream, localPath);
         }
 
-        private IActionResult CreateStreamResponse(string filePath, string fileName)
+        private async Task<IActionResult> CreateStreamResponse(string filePath, string fileName)
         {
             var stream = CreateFileStream(filePath, isStreaming: true);
             var headers = CreateStandardHeaders(fileName);

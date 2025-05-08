@@ -241,6 +241,40 @@ namespace MyTts.Repositories
                 throw new IOException($"Failed to read large file: {fullPath}", ex);
             }
         }
+        /// <summary>
+        /// Opens a large file as a stream for efficient reading with cancellation support
+        /// </summary>
+        public async Task<Stream> ReadLargeFileAsStreamAsync(string fullPath, int bufferSize, CancellationToken cancellationToken)
+        {
+            try
+            {
+                var fileStream = new FileStream(
+                    fullPath,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.Read,
+                    bufferSize,
+                    FileOptions.Asynchronous | FileOptions.SequentialScan
+                );
+
+                // Position stream at beginning
+                await fileStream.FlushAsync(cancellationToken);
+                fileStream.Position = 0;
+
+                // The caller is now responsible for disposing the stream
+                return fileStream;
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogInformation("File stream operation cancelled: {Path}", fullPath);
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error opening file stream: {Path}", fullPath);
+                throw new IOException($"Failed to open file stream: {fullPath}", ex);
+            }
+        }
         public async Task SaveMp3FileAsync(string filePath, byte[] fileData)
         {
             ArgumentNullException.ThrowIfNull(filePath);

@@ -15,5 +15,7 @@ namespace MyTts.Services
         Task<IActionResult> DownloadMp3(string id, CancellationToken cancellationToken);
         Task<IActionResult> StreamMp3(string id, CancellationToken cancellationToken);
         Task<IEnumerable<IMp3>> GetMp3FileListByLanguageAsync(string language, CancellationToken cancellationToken);
+        Task<Stream> GetMp3File(string id, CancellationToken cancellationToken);
+        Task<bool> FileExistsAnywhereAsync(string filePath);
     }
 }

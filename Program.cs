@@ -25,6 +25,10 @@ var app = builder.Build();
 // Configure the HTTP request pipeline
 ConfigureMiddleware(app);
 ConfigureEndpoints(app);
+foreach (var address in app.Urls)
+{
+    Console.WriteLine($"Application listening on: {address}");
+}
 
 app.Run();
 

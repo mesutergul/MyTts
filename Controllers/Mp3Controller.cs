@@ -72,18 +72,40 @@ namespace MyTts.Controllers
         {
             try
             {
-                var file = await _mp3Service.GetMp3FileAsync(id, cancellationToken);
-                if (file == null)
-                {
-                    return NotFound();
-                }
+                // Resolve full path (ensure proper path validation in production)
+                string fullPath = Path.Combine("YourFilesDirectory", id);
 
-                return File(file.FilePath, "audio/mpeg");
+                //if (!System.IO.File.Exists(fullPath))
+                //{
+                //    return NotFound($"File {id} not found");
+                //}
+                if(await _mp3Service.FileExistsAnywhereAsync(fullPath))
+                {
+                    return NotFound($"File {id} not found");
+                }
+                    
+                // Get file info for content type and length
+                var fileInfo = new FileInfo(fullPath);
+
+                // Get file stream
+                var fileStream = await _mp3Service.GetMp3File(fullPath, cancellationToken);
+
+                // Return streaming file response
+                return new FileStreamResult(fileStream, "GetContentType(fileName)")
+                {
+                    FileDownloadName = id,
+                    EnableRangeProcessing = true // Enables partial content requests
+                };
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogInformation("Download operation cancelled for: {FileName}", id);
+                return StatusCode(499, "Request cancelled"); // Non-standard code for client closed request
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error retrieving MP3 file with ID {Id}", id);
-                return Problem("Failed to retrieve MP3 file");
+                _logger.LogError(ex, "Error streaming file: {FileName}", id);
+                return StatusCode(500, "Could not download the requested file");
             }
         }
         /// <summary>
@@ -148,6 +170,42 @@ namespace MyTts.Controllers
             {
                 _logger.LogError(ex, "Error retrieving MP3 file with ID {Id}", id);
                 return Problem("Failed to retrieve MP3 file");
+            }
+        }
+        public async Task<IActionResult> DownloadFile(string fileName, CancellationToken cancellationToken)
+        {
+            try
+            {
+                // Resolve full path (ensure proper path validation in production)
+                string fullPath = Path.Combine("YourFilesDirectory", fileName);
+
+                if (!System.IO.File.Exists(fullPath))
+                {
+                    return NotFound($"File {fileName} not found");
+                }
+
+                // Get file info for content type and length
+                var fileInfo = new FileInfo(fullPath);
+
+                // Get file stream
+                var fileStream = await _mp3Service.GetMp3File(fullPath, cancellationToken);
+
+                // Return streaming file response
+                return new FileStreamResult(fileStream, "GetContentType(fileName)")
+                {
+                    FileDownloadName = fileName,
+                    EnableRangeProcessing = true // Enables partial content requests
+                };
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogInformation("Download operation cancelled for: {FileName}", fileName);
+                return StatusCode(499, "Request cancelled"); // Non-standard code for client closed request
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error streaming file: {FileName}", fileName);
+                return StatusCode(500, "Could not download the requested file");
             }
         }
         //public async Task Delete(string id)

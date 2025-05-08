@@ -19,5 +19,6 @@ namespace MyTts.Repositories
         Task<IMp3?> GetFromCacheAsync<IMp3>(string key) ;
         Task<bool> FileExistsAnywhereAsync(string filePath);
         Task SetToCacheAsync<IMp3>(string key, IMp3 value, TimeSpan? expiry = null);
+        Task<Stream> ReadLargeFileAsStreamAsync(string fullPath, int bufferSize, CancellationToken cancellationToken);
     }
 }
