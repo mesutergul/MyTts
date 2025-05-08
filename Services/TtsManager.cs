@@ -23,11 +23,14 @@ namespace MyTts.Services
         private readonly IOptions<ElevenLabsConfig> _config;
         private readonly ILogger<TtsManager> _logger;
         private readonly Mp3StreamMerger _mp3StreamMerger;
-        public const string LocalSavePath = "audio";
         private readonly SemaphoreSlim _semaphore;
-        private const int MaxConcurrentOperations = 20;
-        private readonly StorageConfiguration _storageConfig;
         private readonly string _bucketName;
+        private readonly JsonSerializerOptions _jsonOptions;
+        private readonly StorageConfiguration _storageConfig;
+        private bool _disposed;
+
+        public const string LocalSavePath = "audio";
+        private const int MaxConcurrentOperations = 20;
 
         public TtsManager(
             ElevenLabsClient elevenLabsClient,
@@ -42,12 +45,16 @@ namespace MyTts.Services
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _mp3StreamMerger = mp3StreamMerger ?? throw new ArgumentNullException(nameof(mp3StreamMerger));
             _cache = cache ?? throw new ArgumentNullException(nameof(cache));
-            _storageClient = StorageClient.Create();
             _semaphore = new SemaphoreSlim(MaxConcurrentOperations);
             _storageConfig = storageConfig.Value;
             // Initialize Google Cloud Storage
             (_storageClient, _bucketName) = InitializeGoogleCloudStorage(_storageConfig);
-
+            // Initialize JSON options once
+            _jsonOptions = new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+            };
 
             Directory.CreateDirectory(LocalSavePath);
         }
@@ -67,9 +74,8 @@ namespace MyTts.Services
                     throw new InvalidOperationException("GoogleCloud disk configuration is null.");
                 }
 
-                // Handle bucket name
-                string? bucketName = null;
-                if (!googleCloudDisk.Config.TryGetValue("BucketName", out bucketName) || string.IsNullOrEmpty(bucketName))
+                // Handle bucket name              
+                if (!googleCloudDisk.Config.TryGetValue("BucketName", out var bucketName) || string.IsNullOrEmpty(bucketName))
                 {
                     throw new InvalidOperationException("BucketName not configured for GoogleCloud disk.");
                 }
@@ -149,36 +155,23 @@ namespace MyTts.Services
 
             try
             {
-                // Create a list to store the results as they complete
-                var processedFiles = new ConcurrentBag<AudioProcessor>();
+                var processingTasks = new List<Task<(string LocalPath, AudioProcessor Processor)>>(contentsList.Count);
 
-                // Create tasks for all content items but process them with MaxConcurrentOperations limit
-                await Parallel.ForEachAsync(
-                    contentsList,
-                    new ParallelOptions
-                    {
-                        MaxDegreeOfParallelism = MaxConcurrentOperations,
-                        CancellationToken = cancellationToken
-                    },
-                    async (content, token) =>
-                    {
-                        try
-                        {
-                            (var filePath, var processor) = await ProcessContentAsync(content, Guid.NewGuid(), token);
-                            processedFiles.Add(processor);
-                        }
-                        catch (Exception ex) when (ex is not OperationCanceledException)
-                        {
-                            _logger.LogError(ex, "Error processing content item");
-                        }
-                    });
-
-                // Convert to list and check if we have any successful results
-                var results = processedFiles.ToList();
-                if (results.Count > 0)
+                foreach (var content in contentsList)
                 {
-                    _logger.LogInformation("Successfully processed {Count} files", results.Count);
-                    return await MergeAudioFilesAsync(results, cancellationToken);
+                    // Create tasks but don't await them yet
+                    processingTasks.Add(ProcessContentWithSemaphoreAsync(content, Guid.NewGuid(), cancellationToken));
+                }
+
+                // Wait for all tasks to complete
+                var results = await Task.WhenAll(processingTasks);
+
+                // Extract the processors
+                var processors = results.Select(r => r.Processor).ToList();
+                if (processors.Count > 0)
+                {
+                    _logger.LogInformation("Successfully processed {Count} files", processors.Count);
+                    return await MergeAudioFilesAsync(processors, cancellationToken);
                 }
 
                 _logger.LogWarning("No files were successfully processed");
@@ -193,6 +186,21 @@ namespace MyTts.Services
             {
                 _logger.LogError(ex, "Error during batch processing");
                 throw;
+            }
+        }
+        private async Task<(string LocalPath, AudioProcessor Processor)> ProcessContentWithSemaphoreAsync(
+            string content,
+            Guid id,
+            CancellationToken cancellationToken)
+        {
+            await _semaphore.WaitAsync(cancellationToken);
+            try
+            {
+                return await ProcessContentAsync(content, id, cancellationToken);
+            }
+            finally
+            {
+                _semaphore.Release();
             }
         }
 
@@ -218,26 +226,17 @@ namespace MyTts.Services
                 var voiceClip = new VoiceClip(elevenLabsVoiceClip.ClipData.ToArray());
                 var audioProcessor = new AudioProcessor(voiceClip);
 
-                // Use Task.WhenAll for concurrent operations with proper error handling
-                try
+                // Start all operations concurrently
+                var saveTasks = new[]
                 {
-                    await Task.WhenAll(
-                        // Save locally with optimized buffer size
-                        SaveLocallyAsync(audioProcessor, localPath, cancellationToken),
-                        // Upload to Google Cloud Storage efficiently
-                        UploadToCloudAsync(audioProcessor, fileName, cancellationToken),
-                        // Store metadata operations
-                        Task.WhenAll(
-                            SaveMetadataSqlAsync(id, text, localPath, fileName, cancellationToken),
-                            StoreMetadataRedisAsync(id, text, localPath, fileName, cancellationToken)
-                        )
-                    );
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error in parallel processing operations for content {Id}", id);
-                    // Don't rethrow here - we need to ensure audioProcessor is returned
-                }
+                    SaveLocallyAsync(audioProcessor, localPath, cancellationToken),
+                    UploadToCloudAsync(audioProcessor, fileName, cancellationToken),
+                    SaveMetadataSqlAsync(id, text, localPath, fileName, cancellationToken),
+                    StoreMetadataRedisAsync(id, text, localPath, fileName, cancellationToken)
+                };
+
+                // Wait for all operations to complete
+                await Task.WhenAll(saveTasks);
 
                 _logger.LogInformation("Processed content {Id}: {FileName}", id, fileName);
                 return (localPath, audioProcessor);
@@ -249,32 +248,6 @@ namespace MyTts.Services
             }
         }
 
-        // Helper class for better semaphore management
-        private class SemaphoreGuard : IDisposable
-        {
-            private readonly SemaphoreSlim _semaphore;
-            private bool _isAcquired;
-
-            public SemaphoreGuard(SemaphoreSlim semaphore)
-            {
-                _semaphore = semaphore;
-            }
-
-            public async Task WaitAsync(CancellationToken cancellationToken)
-            {
-                await _semaphore.WaitAsync(cancellationToken);
-                _isAcquired = true;
-            }
-
-            public void Dispose()
-            {
-                if (_isAcquired)
-                {
-                    _semaphore.Release();
-                    _isAcquired = false;
-                }
-            }
-        }
         private Task<TextToSpeechRequest> CreateTtsRequestAsync(Voice voice, string text)
         {
             var voiceSettings = new VoiceSettings
@@ -308,7 +281,7 @@ namespace MyTts.Services
                 FileMode.Create,
                 FileAccess.Write,
                 FileShare.None,
-                bufferSize: 32768,
+                bufferSize: 65536,
                 fileOptions);
 
             await processor.CopyToAsync(fileStream, cancellationToken);
@@ -323,7 +296,8 @@ namespace MyTts.Services
             // Use optimized upload options
             var uploadOptions = new UploadObjectOptions
             {
-                ChunkSize = 262144 // 256KB chunks for better handling
+                ChunkSize = 262144, // 256KB chunks for better handling
+                PredefinedAcl = PredefinedObjectAcl.PublicRead // Make accessible without authentication if needed
             };
 
             await _storageClient.UploadObjectAsync(
@@ -337,6 +311,7 @@ namespace MyTts.Services
 
         private async Task StoreMetadataRedisAsync(Guid id, string text, string localPath, string fileName, CancellationToken cancellationToken)
         {
+            if (_cache == null) return;
             var metadata = new AudioMetadata
             {
                 Id = id,
@@ -508,7 +483,32 @@ namespace MyTts.Services
                 return false;
             }
         }
+        // Helper class for better semaphore management
+        private class SemaphoreGuard : IDisposable
+        {
+            private readonly SemaphoreSlim _semaphore;
+            private bool _isAcquired;
 
+            public SemaphoreGuard(SemaphoreSlim semaphore)
+            {
+                _semaphore = semaphore;
+            }
+
+            public async Task WaitAsync(CancellationToken cancellationToken)
+            {
+                await _semaphore.WaitAsync(cancellationToken);
+                _isAcquired = true;
+            }
+
+            public void Dispose()
+            {
+                if (_isAcquired)
+                {
+                    _semaphore.Release();
+                    _isAcquired = false;
+                }
+            }
+        }
         private record FFprobeOutput
         {
             public List<StreamInfo>? Streams { get; init; }

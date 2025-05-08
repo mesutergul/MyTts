@@ -1,7 +1,6 @@
-﻿
-namespace MyTts.Services
+﻿namespace MyTts.Services
 {
-    internal class HostedServiceWrapper : IHostedService
+    public class HostedServiceWrapper : IHostedService
     {
         private readonly TtsManager _ttsManager;
 
@@ -10,10 +9,15 @@ namespace MyTts.Services
             _ttsManager = ttsManager;
         }
 
-        public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task StartAsync(CancellationToken cancellationToken)
+        {
+            // Initialize TtsManager here if needed
+            return Task.CompletedTask;
+        }
 
         public async Task StopAsync(CancellationToken cancellationToken)
         {
+            // Dispose TtsManager properly when the application is shutting down
             await _ttsManager.DisposeAsync();
         }
     }

@@ -77,14 +77,28 @@ public static class ServiceCollectionExtensions
                 sqlOptions.CommandTimeout(30);
             });
         });
+        // Add AutoMapper - MISSING REGISTRATION
+        services.AddAutoMapper(typeof(Program).Assembly);
 
-        // Repository pattern registrations
-        services.AddScoped<IRepository<Mp3Meta, IMp3>, Mp3MetaRepository>();
-        services.AddScoped<IRepository<News, INews>, NewsRepository>();
-        
+        // Register concrete implementations first
+        services.AddScoped<Mp3MetaRepository>();
+        services.AddScoped<NewsRepository>();
+
+        // Then map interfaces to the already registered implementations
+        services.AddScoped<IRepository<Mp3Meta, IMp3>>(sp => sp
+            .GetRequiredService<Mp3MetaRepository>());
+        services.AddScoped<IRepository<News, INews>>(sp => sp
+            .GetRequiredService<NewsRepository>());
+
         // Service registrations
-        services.AddScoped<IMp3Service, Mp3Service>();
-        services.AddScoped<IMp3FileRepository, Mp3FileRepository>();
+        // Register concrete implementations
+        services.AddScoped<Mp3FileRepository>();
+        services.AddScoped<Mp3Service>();
+
+        // Then map interfaces to implementations
+        services.AddScoped<IMp3FileRepository>(sp => sp.GetRequiredService<Mp3FileRepository>());
+        services.AddScoped<IMp3Service>(sp => sp.GetRequiredService<Mp3Service>());
+
         services.AddScoped<NewsFeedsService>();
         
         // Controller registrations
@@ -134,9 +148,7 @@ public static class ServiceCollectionExtensions
 
         // Register TtsManager as a singleton with proper disposal
         services.AddSingleton<TtsManager>();
-        services.AddHostedService<IHostedService>(sp =>
-            new HostedServiceWrapper(sp.GetRequiredService<TtsManager>()));
-            
+
         return services;
     }
 

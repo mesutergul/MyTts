@@ -5,7 +5,7 @@ namespace MyTts.Services
     public sealed class VoiceClip : Stream, IAsyncDisposable
     {
         // Use Memory<byte> directly instead of wrapping in a MemoryStream
-        private readonly Memory<byte> _audioData;
+        private readonly ReadOnlyMemory<byte> _audioData;
         private long _position;
         private bool _disposed;
 
@@ -16,7 +16,7 @@ namespace MyTts.Services
             _audioData = audioData;
         }
 
-        public VoiceClip(Memory<byte> audioData)
+        public VoiceClip(ReadOnlyMemory<byte> audioData)
         {
             _audioData = audioData;
         }
