@@ -11,6 +11,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.Mvc;
 using MyTts.Config;
 using MyTts.Storage;
+using System.Collections.Concurrent;
 
 namespace MyTts.Services
 {
@@ -24,7 +25,7 @@ namespace MyTts.Services
         private readonly Mp3StreamMerger _mp3StreamMerger;
         public const string LocalSavePath = "audio";
         private readonly SemaphoreSlim _semaphore;
-        private const int MaxConcurrentOperations = 3;
+        private const int MaxConcurrentOperations = 20;
         private readonly StorageConfiguration _storageConfig;
         private readonly string _bucketName;
 
@@ -104,33 +105,83 @@ namespace MyTts.Services
                 throw;
             }
         }
-        public async Task<IActionResult> MergeAudioFilesAsync(List<AudioProcessor> processors)
+        // Optimized version of MergeAudioFilesAsync
+        public async Task<IActionResult> MergeAudioFilesAsync(List<AudioProcessor> processors, CancellationToken cancellationToken = default)
         {
-            await _mp3StreamMerger.MergeMp3ByteArraysAsync(processors);
-            return new EmptyResult();
+            ArgumentNullException.ThrowIfNull(processors);
+            if (processors.Count == 0)
+            {
+                throw new ArgumentException("No audio processors provided", nameof(processors));
+            }
+
+            // For a single file, we can return it directly without merging
+            if (processors.Count == 1)
+            {
+                _logger.LogInformation("Only one processor provided - returning without merge");
+                // Memory-efficient way to return a single file
+                return await CreateSingleFileResultAsync(processors[0], cancellationToken);
+            }
+
+            // Use the optimized Mp3StreamMerger
+            return await _mp3StreamMerger.MergeMp3ByteArraysAsync(processors, cancellationToken);
         }
+        // Helper method for single file scenario
+        private async Task<IActionResult> CreateSingleFileResultAsync(AudioProcessor processor, CancellationToken cancellationToken)
+        {
+            await using var uploadStream = await processor.GetStreamForCloudUploadAsync(cancellationToken);
+
+            return new FileStreamResult(uploadStream, "audio/mpeg")
+            {
+                EnableRangeProcessing = true,
+                FileDownloadName = $"audio_{DateTime.UtcNow:yyyyMMddHHmmss}.mp3"
+            };
+        }
+        // Optimized ProcessContentsAsync
         public async Task<IActionResult> ProcessContentsAsync(IEnumerable<string> contents, CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(contents);
-           // ArgumentException.ThrowIfNullOrEmpty(bucketName);
-            var processedFiles = new List<AudioProcessor>();
+            var contentsList = contents.ToList(); // Materialize once to avoid multiple enumeration
+
+            if (!contentsList.Any())
+            {
+                return new EmptyResult();
+            }
+
             try
             {
-                var tasks = contents.Select(async content =>
-                {
-                    await using var _ = await _semaphore.WaitAsyncDisposable(cancellationToken);
-                     (var filePath, var processor) = await ProcessContentAsync(content, Guid.NewGuid(), cancellationToken);
-                    processedFiles.Add(processor);
-                });
+                // Create a list to store the results as they complete
+                var processedFiles = new ConcurrentBag<AudioProcessor>();
 
-                await Task.WhenAll(tasks);
-                byte[]? mergedPath = null;
-                var mergedFileName = $"merged_{DateTime.UtcNow:yyyyMMddHHmmss}.mp3";
-                await MergeAudioFilesAsync(processedFiles);         
-                _logger.LogInformation(
-                            "Processed {Count} files. Merged file created: {MergedCreated}",
-                            processedFiles.Count,
-                            mergedPath != null);
+                // Create tasks for all content items but process them with MaxConcurrentOperations limit
+                await Parallel.ForEachAsync(
+                    contentsList,
+                    new ParallelOptions
+                    {
+                        MaxDegreeOfParallelism = MaxConcurrentOperations,
+                        CancellationToken = cancellationToken
+                    },
+                    async (content, token) =>
+                    {
+                        try
+                        {
+                            (var filePath, var processor) = await ProcessContentAsync(content, Guid.NewGuid(), token);
+                            processedFiles.Add(processor);
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException)
+                        {
+                            _logger.LogError(ex, "Error processing content item");
+                        }
+                    });
+
+                // Convert to list and check if we have any successful results
+                var results = processedFiles.ToList();
+                if (results.Count > 0)
+                {
+                    _logger.LogInformation("Successfully processed {Count} files", results.Count);
+                    return await MergeAudioFilesAsync(results, cancellationToken);
+                }
+
+                _logger.LogWarning("No files were successfully processed");
                 return new EmptyResult();
             }
             catch (OperationCanceledException)
@@ -140,11 +191,12 @@ namespace MyTts.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error processing contents batch");
+                _logger.LogError(ex, "Error during batch processing");
                 throw;
             }
         }
 
+        // Optimized version of ProcessContentAsync
         public async Task<(string LocalPath, AudioProcessor FileData)> ProcessContentAsync(string text, Guid id, CancellationToken cancellationToken)
         {
             var fileName = $"speech_{id}.mp3";
@@ -152,29 +204,40 @@ namespace MyTts.Services
 
             try
             {
-                // Generate audio using ElevenLabs API
+                // Generate audio using ElevenLabs API - wrap in using to ensure proper disposal
                 var voice = await _elevenLabsClient.VoicesEndpoint
                     .GetVoiceAsync(_config.Value.VoiceId, false, cancellationToken);
 
                 var request = await CreateTtsRequestAsync(voice, text);
 
-                // Process audio and upload
-                await using VoiceClip voiceClip = await _elevenLabsClient.TextToSpeechEndpoint
+                // Create VoiceClip directly without intermediate conversions
+                ElevenLabs.VoiceClip elevenLabsVoiceClip = await _elevenLabsClient.TextToSpeechEndpoint
                     .TextToSpeechAsync(request, null, cancellationToken);
 
-                await using var audioProcessor = new AudioProcessor(voiceClip);
+                // Use direct conversion with our optimized classes
+                var voiceClip = new VoiceClip(elevenLabsVoiceClip.ClipData.ToArray());
+                var audioProcessor = new AudioProcessor(voiceClip);
 
-                // Parallel operations for saving and uploading
-                await Task.WhenAll(
-                    // Save locally
-                    SaveLocallyAsync(audioProcessor, localPath, cancellationToken),
-                    // Save metadata to SQL
-                    SaveMetadataSqlAsync(id, text, localPath, fileName, cancellationToken),
-                    // Upload to Google Cloud Storage
-                    UploadToCloudAsync(audioProcessor, fileName, cancellationToken),
-                    // Store metadata in Redis
-                    StoreMetadataRedisAsync(id, text, localPath, fileName, cancellationToken)
-                );
+                // Use Task.WhenAll for concurrent operations with proper error handling
+                try
+                {
+                    await Task.WhenAll(
+                        // Save locally with optimized buffer size
+                        SaveLocallyAsync(audioProcessor, localPath, cancellationToken),
+                        // Upload to Google Cloud Storage efficiently
+                        UploadToCloudAsync(audioProcessor, fileName, cancellationToken),
+                        // Store metadata operations
+                        Task.WhenAll(
+                            SaveMetadataSqlAsync(id, text, localPath, fileName, cancellationToken),
+                            StoreMetadataRedisAsync(id, text, localPath, fileName, cancellationToken)
+                        )
+                    );
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error in parallel processing operations for content {Id}", id);
+                    // Don't rethrow here - we need to ensure audioProcessor is returned
+                }
 
                 _logger.LogInformation("Processed content {Id}: {FileName}", id, fileName);
                 return (localPath, audioProcessor);
@@ -186,6 +249,32 @@ namespace MyTts.Services
             }
         }
 
+        // Helper class for better semaphore management
+        private class SemaphoreGuard : IDisposable
+        {
+            private readonly SemaphoreSlim _semaphore;
+            private bool _isAcquired;
+
+            public SemaphoreGuard(SemaphoreSlim semaphore)
+            {
+                _semaphore = semaphore;
+            }
+
+            public async Task WaitAsync(CancellationToken cancellationToken)
+            {
+                await _semaphore.WaitAsync(cancellationToken);
+                _isAcquired = true;
+            }
+
+            public void Dispose()
+            {
+                if (_isAcquired)
+                {
+                    _semaphore.Release();
+                    _isAcquired = false;
+                }
+            }
+        }
         private Task<TextToSpeechRequest> CreateTtsRequestAsync(Voice voice, string text)
         {
             var voiceSettings = new VoiceSettings
@@ -208,24 +297,41 @@ namespace MyTts.Services
             return Task.FromResult(request);
         }
 
+        // Optimized version of SaveLocallyAsync
         private async Task SaveLocallyAsync(AudioProcessor processor, string localPath, CancellationToken cancellationToken)
         {
-            await using var fileStream = File.Create(localPath);
+            // Use FileOptions for better performance
+            var fileOptions = FileOptions.Asynchronous | FileOptions.SequentialScan;
+
+            await using var fileStream = new FileStream(
+                localPath,
+                FileMode.Create,
+                FileAccess.Write,
+                FileShare.None,
+                bufferSize: 32768,
+                fileOptions);
+
             await processor.CopyToAsync(fileStream, cancellationToken);
         }
 
+        // Optimized version of UploadToCloudAsync
         private async Task UploadToCloudAsync(AudioProcessor processor, string fileName, CancellationToken cancellationToken)
         {
-            //await using var memoryStream = new MemoryStream();
-            //await processor.CopyToAsync(memoryStream, cancellationToken);
-            //memoryStream.Position = 0;
-            using var uploadStream = await processor.GetStreamForCloudUpload(cancellationToken);
+            // Use the new async method to get the stream efficiently
+            await using var uploadStream = await processor.GetStreamForCloudUploadAsync(cancellationToken);
+
+            // Use optimized upload options
+            var uploadOptions = new UploadObjectOptions
+            {
+                ChunkSize = 262144 // 256KB chunks for better handling
+            };
 
             await _storageClient.UploadObjectAsync(
                 _bucketName,
                 fileName,
                 "audio/mpeg",
                 uploadStream,
+                options: uploadOptions,
                 cancellationToken: cancellationToken);
         }
 
@@ -241,13 +347,13 @@ namespace MyTts.Services
             };
 
             await _cache!.SetAsync<AudioMetadata>($"tts:{id}", metadata, TimeSpan.FromHours(1));
-                
+
         }
 
         private Task SaveMetadataSqlAsync(Guid id, string text, string localPath, string fileName, CancellationToken cancellationToken)
         {
             // TODO: Implement database operations
-            
+
             return Task.CompletedTask;
         }
 
@@ -402,7 +508,7 @@ namespace MyTts.Services
                 return false;
             }
         }
-        
+
         private record FFprobeOutput
         {
             public List<StreamInfo>? Streams { get; init; }

@@ -19,7 +19,7 @@ namespace MyTts.Controllers
         /// <summary>
         /// Creates multiple MP3 files based on the specified language and limit.   
         /// </summary>
-        public async Task<IActionResult> Feed(string language, int limit, CancellationToken cancellationToken)
+        public async Task<IActionResult> Feed(HttpContext context, string language, int limit, CancellationToken cancellationToken)
         {
             try
             {
@@ -35,7 +35,7 @@ namespace MyTts.Controllers
         /// <summary>
         /// Creates a single MP3 file based on the specified request.
         /// </summary>
-        public async Task<IActionResult> One(OneRequest request, CancellationToken cancellationToken)
+        public async Task<IActionResult> One(HttpContext context, OneRequest request, CancellationToken cancellationToken)
         {
             try
             {
@@ -51,7 +51,7 @@ namespace MyTts.Controllers
         /// <summary>
         /// Retrieves a list of MP3 files based on the specified request.
         /// </summary>
-        public async Task<IActionResult> List(ListRequest request, CancellationToken cancellationToken)
+        public async Task<IActionResult> List(HttpContext context, ListRequest request, CancellationToken cancellationToken)
         {
             try
             {
@@ -68,7 +68,7 @@ namespace MyTts.Controllers
         /// It is responsible for retrieving an MP3 file by its unique identifier (id) 
         /// and returning it to the client as a downloadable file.
         /// </summary>
-        public async Task<IActionResult> GetFile(string id, CancellationToken cancellationToken)
+        public async Task<IActionResult> GetFile(HttpContext context, string id, CancellationToken cancellationToken)
         {
             try
             {
@@ -89,7 +89,7 @@ namespace MyTts.Controllers
         /// <summary>
         /// Retrieves the last MP3 file for a specific language.
         /// </summary>
-        public async Task<IActionResult> GetLast(string language, CancellationToken cancellationToken)
+        public async Task<IActionResult> GetLast(HttpContext context, string language, CancellationToken cancellationToken)
         {
             try
             {
@@ -110,7 +110,7 @@ namespace MyTts.Controllers
         /// <summary>
         /// Retrieves an MP3 file by its unique identifier (id) and returning it to the client
         /// </summary>
-        public async Task<IActionResult> GetMp3FileById(string id, CancellationToken cancellationToken)
+        public async Task<IActionResult> GetMp3FileById(HttpContext context, string id, CancellationToken cancellationToken)
         {
             try
             {
@@ -133,7 +133,7 @@ namespace MyTts.Controllers
         /// <param name="id"></param>
         /// <param name="cancellationToken"></param>
         /// <returns></returns>
-        public async Task<IActionResult> GetMp3FileListByLanguage(string id, CancellationToken cancellationToken)
+        public async Task<IActionResult> GetMp3FileListByLanguage(HttpContext context, string id, CancellationToken cancellationToken)
         {
             try
             {

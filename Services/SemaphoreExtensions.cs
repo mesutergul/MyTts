@@ -6,14 +6,14 @@ namespace MyTts.Services
             this SemaphoreSlim semaphore,
             CancellationToken cancellationToken = default)
         {
-            await semaphore.WaitAsync(cancellationToken);
+            await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
             return new SemaphoreReleaser(semaphore);
         }
 
         private sealed class SemaphoreReleaser : IAsyncDisposable
         {
             private readonly SemaphoreSlim _semaphore;
-            private bool _disposed;
+            private int _released;
 
             public SemaphoreReleaser(SemaphoreSlim semaphore)
             {
@@ -22,10 +22,10 @@ namespace MyTts.Services
 
             public ValueTask DisposeAsync()
             {
-                if (!_disposed)
+                // Use Interlocked to ensure thread-safe release
+                if (Interlocked.Exchange(ref _released, 1) == 0)
                 {
                     _semaphore.Release();
-                    _disposed = true;
                 }
                 return ValueTask.CompletedTask;
             }

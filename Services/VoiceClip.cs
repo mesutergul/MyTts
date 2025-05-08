@@ -4,46 +4,65 @@ namespace MyTts.Services
 {
     public sealed class VoiceClip : Stream, IAsyncDisposable
     {
-        private readonly MemoryStream _audioDataStream;
+        // Use Memory<byte> directly instead of wrapping in a MemoryStream
+        private readonly Memory<byte> _audioData;
+        private long _position;
         private bool _disposed;
 
         public VoiceClip(byte[] audioData)
         {
             ArgumentNullException.ThrowIfNull(audioData);
-            _audioDataStream = new MemoryStream(audioData, writable: false); // Read-only for safety
+            // Store reference directly without copying if possible
+            _audioData = audioData;
         }
 
         public VoiceClip(Memory<byte> audioData)
         {
-            _audioDataStream = new MemoryStream(audioData.ToArray(), writable: false);
+            _audioData = audioData;
         }
 
         // Stream implementation
-        public override bool CanRead => !_disposed && _audioDataStream.CanRead;
-        public override bool CanSeek => !_disposed && _audioDataStream.CanSeek;
-        public override bool CanWrite => false; // Make it read-only
-        public override long Length => _disposed ? 0 : _audioDataStream.Length;
+        public override bool CanRead => !_disposed;
+        public override bool CanSeek => !_disposed;
+        public override bool CanWrite => false; // Read-only
+        public override long Length => _disposed ? 0 : _audioData.Length;
+        
         public override long Position
         {
-            get => _disposed ? 0 : _audioDataStream.Position;
+            get => _disposed ? 0 : _position;
             set
             {
                 ThrowIfDisposed();
-                _audioDataStream.Position = value;
+                if (value < 0 || value > _audioData.Length)
+                    throw new ArgumentOutOfRangeException(nameof(value));
+                _position = value;
             }
         }
 
-        // Optimized methods for performance
+        // Highly optimized read methods to avoid unnecessary allocations
         public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
         {
-            ThrowIfDisposed();
-            return await _audioDataStream.ReadAsync(buffer.AsMemory(offset, count), cancellationToken);
+            return await ReadAsyncInternal(buffer.AsMemory(offset, count), cancellationToken);
         }
 
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
+            return await ReadAsyncInternal(buffer, cancellationToken);
+        }
+
+        private ValueTask<int> ReadAsyncInternal(Memory<byte> buffer, CancellationToken cancellationToken)
+        {
             ThrowIfDisposed();
-            return await _audioDataStream.ReadAsync(buffer, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            int bytesToRead = (int)Math.Min(buffer.Length, _audioData.Length - _position);
+            if (bytesToRead <= 0)
+                return new ValueTask<int>(0);
+
+            _audioData.Slice((int)_position, bytesToRead).CopyTo(buffer.Slice(0, bytesToRead));
+            _position += bytesToRead;
+            
+            return new ValueTask<int>(bytesToRead);
         }
 
         public override async Task CopyToAsync(Stream destination, int bufferSize = 81920, CancellationToken cancellationToken = default)
@@ -51,14 +70,32 @@ namespace MyTts.Services
             ThrowIfDisposed();
             ArgumentNullException.ThrowIfNull(destination);
 
-            // Use ArrayPool for buffer management
-            byte[] buffer = ArrayPool<byte>.Shared.Rent(bufferSize);
+            // Calculate what's left to copy
+            int remainingBytes = (int)(_audioData.Length - _position);
+            if (remainingBytes <= 0)
+                return;
+
+            // Use shared buffer pool
+            byte[] buffer = ArrayPool<byte>.Shared.Rent(Math.Min(bufferSize, remainingBytes));
             try
             {
-                int bytesRead;
-                while ((bytesRead = await ReadAsync(buffer, 0, buffer.Length, cancellationToken)) != 0)
+                // We can optimize this further with a single write operation if possible
+                if (remainingBytes <= buffer.Length)
                 {
-                    await destination.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
+                    _audioData.Slice((int)_position, remainingBytes).CopyTo(buffer);
+                    await destination.WriteAsync(buffer.AsMemory(0, remainingBytes), cancellationToken);
+                    _position += remainingBytes;
+                }
+                else
+                {
+                    while (remainingBytes > 0 && !cancellationToken.IsCancellationRequested)
+                    {
+                        int bytesToCopy = Math.Min(buffer.Length, remainingBytes);
+                        _audioData.Slice((int)_position, bytesToCopy).CopyTo(buffer);
+                        await destination.WriteAsync(buffer.AsMemory(0, bytesToCopy), cancellationToken);
+                        _position += bytesToCopy;
+                        remainingBytes -= bytesToCopy;
+                    }
                 }
             }
             finally
@@ -67,26 +104,47 @@ namespace MyTts.Services
             }
         }
 
-        // Make stream shareable for merging operations
+        // Stream sharing without full copy
         public Stream GetShareableStream()
         {
             ThrowIfDisposed();
-            _audioDataStream.Position = 0;
-            return new MemoryStream(_audioDataStream.ToArray(), writable: false);
+            return new MemoryStream(_audioData.ToArray(), writable: false);
         }
 
         // Basic Stream implementation
         public override void Flush() => ThrowIfDisposed();
+        
         public override int Read(byte[] buffer, int offset, int count)
         {
             ThrowIfDisposed();
-            return _audioDataStream.Read(buffer, offset, count);
+            
+            int bytesToRead = (int)Math.Min(count, _audioData.Length - _position);
+            if (bytesToRead <= 0)
+                return 0;
+
+            _audioData.Slice((int)_position, bytesToRead).CopyTo(buffer.AsMemory(offset, bytesToRead));
+            _position += bytesToRead;
+            
+            return bytesToRead;
         }
 
         public override long Seek(long offset, SeekOrigin origin)
         {
             ThrowIfDisposed();
-            return _audioDataStream.Seek(offset, origin);
+            
+            long newPosition = origin switch
+            {
+                SeekOrigin.Begin => offset,
+                SeekOrigin.Current => _position + offset,
+                SeekOrigin.End => _audioData.Length + offset,
+                _ => throw new ArgumentException("Invalid seek origin", nameof(origin))
+            };
+
+            if (newPosition < 0 || newPosition > _audioData.Length)
+                throw new ArgumentOutOfRangeException(nameof(offset));
+
+            _position = newPosition;
+            return _position;
         }
 
         public override void SetLength(long value) => throw new NotSupportedException("Stream is read-only");
@@ -97,23 +155,18 @@ namespace MyTts.Services
         {
             if (!_disposed)
             {
-                if (disposing)
-                {
-                    _audioDataStream.Dispose();
-                }
                 _disposed = true;
             }
             base.Dispose(disposing);
         }
 
-        public override async ValueTask DisposeAsync()
+        public override ValueTask DisposeAsync()
         {
             if (!_disposed)
             {
-                await _audioDataStream.DisposeAsync();
                 _disposed = true;
             }
-            await base.DisposeAsync();
+            return base.DisposeAsync();
         }
 
         private void ThrowIfDisposed()
@@ -124,13 +177,14 @@ namespace MyTts.Services
             }
         }
 
-        // Conversion operator
+        // Conversion operator with optimized memory handling
         public static implicit operator VoiceClip(ElevenLabs.VoiceClip voiceClip)
         {
             ArgumentNullException.ThrowIfNull(voiceClip);
 
             try
             {
+                // Convert directly to Memory<byte> if possible to avoid copy
                 return new VoiceClip(voiceClip.ClipData.ToArray());
             }
             catch (Exception ex)
