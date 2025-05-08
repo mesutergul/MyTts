@@ -11,20 +11,19 @@ using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.Mvc;
 using MyTts.Config;
 using MyTts.Storage;
-using System.Collections.Concurrent;
 
 namespace MyTts.Services
 {
     public class TtsManager
     {
         private readonly ElevenLabsClient _elevenLabsClient;
-        private readonly StorageClient _storageClient;
+        private readonly StorageClient? _storageClient;
         private readonly IRedisCacheService? _cache;
         private readonly IOptions<ElevenLabsConfig> _config;
         private readonly ILogger<TtsManager> _logger;
         private readonly Mp3StreamMerger _mp3StreamMerger;
         private readonly SemaphoreSlim _semaphore;
-        private readonly string _bucketName;
+        private readonly string? _bucketName;
         private readonly JsonSerializerOptions _jsonOptions;
         private readonly StorageConfiguration _storageConfig;
         private bool _disposed;
@@ -74,7 +73,7 @@ namespace MyTts.Services
             {
                 // Get Google Cloud configuration  
                 var googleCloudDisk = config.Disks.TryGetValue("gcloud", out var disk) ? disk : null;
-                if (googleCloudDisk == null || !googleCloudDisk.Enabled || googleCloudDisk.Config == null || disk.Config == null)
+                if (googleCloudDisk == null || !googleCloudDisk.Enabled || googleCloudDisk.Config == null || disk?.Config == null)
                 {
                     _logger.LogWarning("Google Cloud Storage is not enabled or misconfigured. Skipping cloud upload.");
                     return null;
@@ -316,7 +315,7 @@ namespace MyTts.Services
 
         private async Task StoreMetadataRedisAsync(Guid id, string text, string localPath, string fileName, CancellationToken cancellationToken)
         {
-            if (_cache==null && await await Task.FromResult(_cache.IsConnectedAsync())) return;
+            if (_cache==null && await _cache!.IsConnectedAsync()) return;
             var metadata = new AudioMetadata
             {
                 Id = id,
