@@ -18,11 +18,11 @@ using StackExchange.Redis;
 using System.Net.Http.Headers;
 
 var builder = WebApplication.CreateBuilder(args);
-
 // Add services to the container
 ConfigureServices(builder.Services, builder.Configuration);
 
 var app = builder.Build();
+
 app.UseForwardedHeaders(new ForwardedHeadersOptions
 {
     ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
@@ -47,7 +47,8 @@ static void ConfigureMiddleware(WebApplication app)
 
     app.UseHttpsRedirection();
     app.UseRouting();
-    app.UseCors("AllowAllOrigins");
+    //app.UseCors("AllowAllOrigins");
+    app.UseCors("AllowLocalDevelopment");
     app.UseAuthorization();
 }
 
@@ -101,10 +102,10 @@ public static IServiceCollection AddCoreServices(this IServiceCollection service
 
         services.AddScoped(typeof(IRepository<,>), typeof(Repository<,>));
         services.AddScoped<Mp3MetaRepository>();
-        services.AddScoped<NewsRepository>();
+        //services.AddScoped<NewsRepository>();
 
         services.AddScoped<IRepository<Mp3Meta, IMp3>>(sp => sp.GetRequiredService<Mp3MetaRepository>());
-        services.AddScoped<IRepository<News, INews>>(sp => sp.GetRequiredService<NewsRepository>());
+        //services.AddScoped<IRepository<News, INews>>(sp => sp.GetRequiredService<NewsRepository>());
 
         // AppDbContextFactory requires AppDbContext, so register it only if available
         services.AddScoped<IAppDbContextFactory, DefaultAppDbContextFactory>();
@@ -114,7 +115,7 @@ public static IServiceCollection AddCoreServices(this IServiceCollection service
         // Register dummy DbContext to satisfy dependencies
         services.AddDbContext<AppDbContext>(options => { });
 
-        services.AddSingleton<IRepository<News, INews>, NullNewsRepository>();
+        //services.AddSingleton<IRepository<News, INews>, NullNewsRepository>();
 
         // In fallback mode, use a dummy factory or skip registration if unused
         services.AddSingleton<IAppDbContextFactory, NullAppDbContextFactory>();
@@ -399,12 +400,24 @@ public static IServiceCollection AddCoreServices(this IServiceCollection service
             options.Filters.Add(new Microsoft.AspNetCore.Mvc.ProducesAttribute("application/json"));
         });
 
+        //services.AddCors(options =>
+        //{
+        //    options.AddPolicy("AllowAllOrigins", builder =>
+        //        builder.AllowAnyOrigin()
+        //               .AllowAnyMethod()
+        //               .WithHeaders("Authorization", "Content-Type", "Accept"));
+        //});
         services.AddCors(options =>
         {
-            options.AddPolicy("AllowAllOrigins", builder =>
-                builder.AllowAnyOrigin()
-                       .AllowAnyMethod()
-                       .WithHeaders("Authorization", "Content-Type", "Accept"));
+            options.AddPolicy("AllowLocalDevelopment", policy =>
+            {
+                policy
+                    .WithOrigins("http://127.0.0.1:5500")
+                    .AllowAnyHeader()
+                    .AllowAnyMethod()
+                    .WithExposedHeaders("Content-Disposition") // Important for downloads
+                    .AllowCredentials(); // optional if using cookies/auth
+            });
         });
 
         return services;

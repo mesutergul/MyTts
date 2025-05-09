@@ -20,11 +20,11 @@ public interface IMapFrom<T> where T : IEntity
     void Mapping(Profile profile);
 }
 
-    public interface INews : IModel
-    {
-        new int Id { get; set; }
-        string Title { get; set; }
-        string Content { get; set; }
-    }
+    //public interface INews : IModel
+    //{
+    //    new int Id { get; set; }
+    //    string Title { get; set; }
+    //    string Content { get; set; }
+    //}
 
 }

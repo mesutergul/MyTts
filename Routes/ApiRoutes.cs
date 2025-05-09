@@ -16,7 +16,7 @@ namespace MyTts.Routes
                 var language = context.Request.RouteValues["language"]?.ToString();
                 var limit = int.TryParse(context.Request.Query["limit"], out var parsedLimit) ? parsedLimit : 20;
                 await controller.Feed(context, language, limit, token);
-            }).WithMetadata(new { Name = "elevenlabs.mp3.feed" });
+            }).WithName("elevenlabs.mp3.feed");
 
             endpoints.MapPost("api/mp3/one", async (HttpContext context, CancellationToken token) =>
             {
@@ -28,7 +28,7 @@ namespace MyTts.Routes
                      new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
                 await controller.One(context, oneRequest, token);
-            }).WithMetadata(new { Name = "elevenlabs.mp3.one" });
+            }).WithName("elevenlabs.mp3.one");
 
             endpoints.MapPost("api/mp3/list", async (HttpContext context, CancellationToken token) =>
             {
@@ -38,21 +38,22 @@ namespace MyTts.Routes
                 var listRequest = JsonSerializer.Deserialize<ListRequest>(requestBody,
                     new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                 await controller.List(context, listRequest, token);
-            }).WithMetadata(new { Name = "elevenlabs.mp3.list" });
+            }).WithName("elevenlabs.mp3.list" );
 
             endpoints.MapGet("api/mp3/one/{id}", async (HttpContext context, CancellationToken token) =>
-            {
+            {             
                 var controller = context.RequestServices.GetRequiredService<Mp3Controller>();
                 var id = context.Request.RouteValues["id"]?.ToString();
                 await controller.GetFile(context, id, token);
-            }).WithMetadata(new { Name = "elevenlabs.mp3.getone" });
+            }).RequireCors("AllowLocalDevelopment") // Apply CORS policy
+                .WithName("elevenlabs.mp3.getone" );
 
             endpoints.MapGet("api/mp3/last/{language}", async (HttpContext context, CancellationToken token) =>
             {
                 var controller = context.RequestServices.GetRequiredService<Mp3Controller>();
                 var language = context.Request.RouteValues["language"]?.ToString();
                 await controller.GetLast(context, language, token);
-            }).WithMetadata(new { Name = "elevenlabs.mp3.getlast" });
+            }).WithName("elevenlabs.mp3.getlast" );
 
 
             // New endpoint for merging multiple MP3 files
@@ -67,7 +68,7 @@ namespace MyTts.Routes
             //        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
             //    await controller.MergeMp3Files(context, fileIds, cancellationToken);
-            //}).WithMetadata(new { Name = "elevenlabs.mp3.merge" });
+            //}).WithName(new { Name = "elevenlabs.mp3.merge" });
         }
     }
 }

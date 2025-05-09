@@ -60,20 +60,27 @@ namespace MyTts.Repositories
                 throw;
             }
         }
-        public async Task<bool> Mp3FileExistsInSqlAsync(int id)
+        public async Task<bool> Mp3FileExistsInSqlAsync(string id)
         {
-            ArgumentOutOfRangeException.ThrowIfLessThan(id, 1);
+            int parsedId;
             if (_mp3MetaRepository == null)
             {
                 _logger.LogWarning("SQL repository not registered. Skipping DB check.");
                 return false;
             }
+            if (!int.TryParse(id, out parsedId))
+            {
+                _logger.LogWarning("Invalid ID format: {Id}", id);
+                return false;
+            }
+            ArgumentOutOfRangeException.ThrowIfLessThan(parsedId, 1);
             try
             {
                 await _dbLock.WaitAsync();
                 try
                 {
-                    return await _mp3MetaRepository.ExistByIdAsync(id);
+                    var exist= await _mp3MetaRepository.ExistByIdAsync(parsedId);
+                    return exist;
                     // if (!exists)
                     //     throw new KeyNotFoundException($"MP3 file not found for path: {id}");
 
@@ -162,20 +169,16 @@ namespace MyTts.Repositories
             }
 
             // Check database
-            if (await Mp3FileExistsInSqlAsync(int.Parse(filePath))) // TODO: Get actual ID
+            if (await Mp3FileExistsInSqlAsync(filePath) || await Mp3FileExistsAsync(metadataCacheKey)) // TODO: Get actual ID
             {
-                await _cache.SetAsync(metadataCacheKey, true, FILE_CACHE_DURATION);
+                if (_cache != null)
+                {
+                    await _cache.SetAsync(metadataCacheKey, true, FILE_CACHE_DURATION);
+                }
                 return true;
             }
 
-            // Finally check physical file
-            var fileExists = await Mp3FileExistsAsync(metadataCacheKey);
-            if (fileExists && _cache != null)
-            {
-                await _cache.SetAsync(metadataCacheKey, true, FILE_CACHE_DURATION);
-            }
-
-            return fileExists;
+            return false;
         }
         private async Task<byte[]> ReadFileFromDiskAsync(string filePath, CancellationToken cancellationToken = default)
         {
@@ -508,7 +511,7 @@ namespace MyTts.Repositories
             try
             {
                 var mp3Files = await LoadListMp3MetadatasAsync();
-                return mp3Files.FirstOrDefault(f => f.FilePath == filePath)
+                return mp3Files.FirstOrDefault(f => f.FileUrl == filePath)
                     ?? throw new FileNotFoundException($"MP3 file not found: {filePath}");
             }
             catch (Exception ex)

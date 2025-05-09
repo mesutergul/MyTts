@@ -195,7 +195,7 @@ namespace MyTts.Services
                     return new NotFoundObjectResult(new { message = "MP3 file not found." });
                 }
                 var mp3File = await _mp3FileRepository.GetFromCacheAsync<IMp3>($"mp3stream:{id}");
-                string filePath = GetAudioFilePath(mp3File.FileName);
+                string filePath = GetAudioFilePath(mp3File.FileUrl);
                 /// Verifies physical file exists
                 if (!await _mp3FileRepository.Mp3FileExistsAsync(filePath))
                 {
@@ -206,9 +206,9 @@ namespace MyTts.Services
                 var stream = CreateFileStream(filePath, isStreaming: true);
                 /// Sets up proper HTTP headers for streaming 
                 /// Includes caching, range support
-                var headers = CreateStandardHeaders(mp3File.FileName);
+                var headers = CreateStandardHeaders(mp3File.FileUrl);
 
-                return CreateFileStreamResponse(stream, mp3File.FileName, headers);
+                return CreateFileStreamResponse(stream, mp3File.FileUrl, headers);
             }
             catch (Exception ex)
             {
@@ -353,7 +353,7 @@ namespace MyTts.Services
                         return new NotFoundObjectResult(new { message = "MP3 file not found." });
                     }
 
-                    filePath = Path.Combine(TtsManager.LocalSavePath, mp3File.FileName);
+                    filePath = Path.Combine(TtsManager.LocalSavePath, mp3File.FileUrl);
 
                     // Cache the path for future requests
                     await _cache!.SetAsync(cacheKey, filePath, TimeSpan.FromHours(1));

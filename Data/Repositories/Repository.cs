@@ -7,7 +7,7 @@ using AutoMapper; // Ensure the namespace containing BaseEntity is imported
 namespace MyTts.Data.Repositories
 {
     public class Repository<TEntity, TModel> : IRepository<TEntity, TModel>
-    where TEntity : BaseEntity
+    where TEntity : BaseEntity, IMp3
     where TModel : class, IModel
 
     {
@@ -117,7 +117,7 @@ namespace MyTts.Data.Repositories
                 return false;
             }
 
-            return await Task.FromResult(_dbSet.Any(entity => entity.Id == id));
+            return await Task.FromResult(_dbSet.Any(entity => entity.FileId == id));
         }
 
     }

@@ -72,14 +72,18 @@ namespace MyTts.Controllers
         {
             try
             {
+                if (!int.TryParse(id, out int parsedId))
+                {
+                    return BadRequest("Invalid ID format");
+                }
                 // Resolve full path (ensure proper path validation in production)
-               // string fullPath = Path.Combine("YourFilesDirectory", id);
+                // string fullPath = Path.Combine("YourFilesDirectory", id);
 
                 //if (!System.IO.File.Exists(fullPath))
                 //{
                 //    return NotFound($"File {id} not found");
                 //}
-                if(!await _mp3Service.FileExistsAnywhereAsync(id))
+                if (!await _mp3Service.FileExistsAnywhereAsync(id))
                 {
                     _logger.LogWarning("File {FileName} not found", id);
                     return NotFound($"File {id} not found");
@@ -90,23 +94,38 @@ namespace MyTts.Controllers
 
                 // Get file stream
                 var fileStream = await _mp3Service.GetMp3File(id, cancellationToken);
+                // Set content length if known
+                if (fileStream.Length > 0)
+                    context.Response.ContentLength = fileStream.Length;
 
-                // Return streaming file response
-                return new FileStreamResult(fileStream, "audio/mpeg")
+                context.Response.StatusCode = StatusCodes.Status200OK;
+                context.Response.ContentType = "audio/mpeg";
+                context.Response.Headers["Cache-Control"] = "no-cache";
+                context.Response.Headers["Transfer-Encoding"] = "chunked";
+
+                var buffer = new byte[65536];
+                int bytesRead;
+
+                while ((bytesRead = await fileStream.ReadAsync(buffer, 0, buffer.Length, cancellationToken)) > 0)
                 {
-                    FileDownloadName = id,
-                    EnableRangeProcessing = true // Enables partial content requests
-                };
+                    await context.Response.Body.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
+                    await context.Response.Body.FlushAsync(cancellationToken);
+
+                    // Optional: simulate slower streaming
+                    // await Task.Delay(30, cancellationToken);
+                }
+
+                return new EmptyResult(); // stream handled manually
             }
             catch (OperationCanceledException)
             {
                 _logger.LogInformation("Download operation cancelled for: {FileName}", id);
-                return StatusCode(499, "Request cancelled"); // Non-standard code for client closed request
+                return StatusCode(499, "Request cancelled");
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error streaming file: {FileName}", id);
-                return StatusCode(500, "Could not download the requested file");
+                return StatusCode(500, "Could not stream the requested file");
             }
         }
         /// <summary>

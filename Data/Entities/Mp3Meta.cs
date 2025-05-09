@@ -5,35 +5,25 @@ using MyTts.Data.Interfaces;
 
 namespace MyTts.Data.Entities
 {
-    [Table("Haberler_Speeches")]
+    [Table("Haber_Ses_Dosyalari")]
     public class Mp3Meta : BaseEntity, IMp3
     {
         [Key]
         [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
         public int Id { get; set; }
-        [Column("FileName")]
-        public required string FileName { get; set; }
-        [Column("Title")]
-        public required string Title { get; set; }
-        [Column("Size")]
-        public double Size { get; set; }
-        [Column("Duration")]
-        public int Duration { get; set; }
-        [Column("BitRate")]
-        public int BitRate { get; set; }
-        [Column("NewsCount")]
-        public int NewsCount { get; set; }
-        [Column("FilePath")]
-        public required string FilePath { get; set; } // Ensure this property is correctly defined
-        [Column("FullUrl")]
-        public required string FullUrl { get; set; }
-        [Column("NewsIds")]
-        public required string NewsIds { get; set; }
-        [Column("Language")]
+        [Column("haber_id")]
+        public required int FileId { get; set; }
+        [Column("ses_dosyasi_url")]
+        public required string FileUrl { get; set; }
+        
+        [Column("dil")]
         public required string Language { get; set; }
 
         [Column("Created_Date")]
         public DateTime? CreatedDate { get; set; }
+
+        [Column("durum")]
+        public bool Enabled { get; set; }
 
         // Add other properties as needed, based on your database schema
     }
