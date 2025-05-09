@@ -45,7 +45,7 @@ static void ConfigureMiddleware(WebApplication app)
         app.MapOpenApi();
     }
 
-    app.UseHttpsRedirection();
+    //app.UseHttpsRedirection();
     app.UseRouting();
     //app.UseCors("AllowAllOrigins");
     app.UseCors("AllowLocalDevelopment");
@@ -131,6 +131,7 @@ public static IServiceCollection AddCoreServices(this IServiceCollection service
 
     services.AddScoped<Mp3Service>();
     services.AddScoped<IMp3Service>(sp => sp.GetRequiredService<Mp3Service>());
+    services.AddScoped<IAudioConversionService, AudioConversionService>();
 
     services.AddScoped<NewsFeedsService>();
 
@@ -149,68 +150,6 @@ public static IServiceCollection AddCoreServices(this IServiceCollection service
 
     return services;
 }
-
-    // public static IServiceCollection AddCoreServices(this IServiceCollection services, IConfiguration configuration)
-    // {
-    //     var connectionString = configuration.GetConnectionString("DefaultConnection");
-    //     var dbAvailable = TestSqlConnection(connectionString); // simple connection test
-    //     if (!string.IsNullOrWhiteSpace(connectionString) && dbAvailable)
-    //     {
-    //         services.AddDbContext<AppDbContext>(options =>
-    //         {
-    //             options.UseSqlServer(connectionString, sqlOptions =>
-    //             {
-    //                 sqlOptions.EnableRetryOnFailure(3);
-    //                 sqlOptions.CommandTimeout(30);
-    //             });
-    //         });
-            
-    //           // If you're using generic Repository<>
-    //         services.AddScoped(typeof(IRepository<,>), typeof(Repository<,>));
-    //         services.AddScoped<Mp3MetaRepository>();
-    //         services.AddScoped<NewsRepository>();
-
-    //         services.AddScoped<IRepository<Mp3Meta, IMp3>>(sp => sp.GetRequiredService<Mp3MetaRepository>());
-    //         services.AddScoped<IRepository<News, INews>>(sp => sp.GetRequiredService<NewsRepository>());
-    //     }
-    //     else
-    //     {
-    //         services.AddSingleton<IRepository<Mp3Meta, IMp3>, NullMp3MetaRepository>();
-    //         services.AddDbContext<AppDbContext>(_ => new DbContextOptions<AppDbContext>());
-    //     }
-    //     services.AddSingleton<IAppDbContextFactory, DefaultAppDbContextFactory>();
-
-    //     services.AddAutoMapper(typeof(Program).Assembly);
-    //     // Service registrations
-    //     // Register concrete implementations
-    //     services.AddScoped<Mp3FileRepository>();
-    //     services.AddScoped<Mp3Service>();
-
-    //     // Then map interfaces to implementations
-    //     services.AddScoped<IMp3FileRepository>(sp => sp.GetRequiredService<Mp3FileRepository>());
-    //     services.AddScoped<IMp3Service>(sp => sp.GetRequiredService<Mp3Service>());
-
-    //     services.AddScoped<NewsFeedsService>();
-
-    //     // Controller registrations
-    //     services.AddTransient<Mp3Controller>();
-
-    //     // Add logging with better configuration
-    //     services.AddLogging(logging =>
-    //     {
-    //         logging.AddConsole();
-    //         logging.AddDebug();
-
-    //         // Configure log levels for your application
-    //         logging.AddFilter("Microsoft", LogLevel.Warning);
-    //         logging.AddFilter("System", LogLevel.Warning);
-    //         logging.AddFilter("MyTts", LogLevel.Information);
-    //     });
-    //     services.AddSingleton<Mp3StreamMerger>();
-
-    //     return services;
-    // }
-
     public static IServiceCollection AddStorageServices(this IServiceCollection services, IConfiguration configuration)
     {
         // Configure storage with proper validation
@@ -239,7 +178,7 @@ public static IServiceCollection AddCoreServices(this IServiceCollection service
         });
 
         // Register TtsManager as a singleton with proper disposal
-        services.AddSingleton<TtsManager>();
+        services.AddScoped<TtsManager>();
 
         return services;
     }
@@ -314,29 +253,6 @@ public static IServiceCollection AddCoreServices(this IServiceCollection service
             services.AddSingleton<IRedisCacheService, NullRedisCacheService>();
         }
 
-        // Register Redis configuration
-        // services.AddOptions<RedisConfig>()
-        //     .Bind(configuration.GetSection("Redis"))
-        //     .ValidateDataAnnotations()
-        //     .ValidateOnStart();
-
-        // // Register ConnectionMultiplexer with connection resilience
-        // services.AddSingleton<IConnectionMultiplexer>(sp =>
-        // {
-        //     var config = sp.GetRequiredService<IOptions<RedisConfig>>().Value;
-        //     var options = ConfigurationOptions.Parse(config.ConnectionString);
-
-        //     // Add resilience
-        //     options.AbortOnConnectFail = false;
-        //     options.ConnectRetry = 3;
-        //     options.ConnectTimeout = 5000;
-
-        //     return ConnectionMultiplexer.Connect(options);
-        // });
-
-        // // Register Redis cache service
-        // services.AddSingleton<IRedisCacheService, RedisCacheService>();
-
         return services;
     }
 
@@ -389,7 +305,6 @@ public static IServiceCollection AddCoreServices(this IServiceCollection service
 
         return services;
     }
-
     public static IServiceCollection AddApiServices(this IServiceCollection services)
     {
         services.AddEndpointsApiExplorer();
@@ -400,19 +315,12 @@ public static IServiceCollection AddCoreServices(this IServiceCollection service
             options.Filters.Add(new Microsoft.AspNetCore.Mvc.ProducesAttribute("application/json"));
         });
 
-        //services.AddCors(options =>
-        //{
-        //    options.AddPolicy("AllowAllOrigins", builder =>
-        //        builder.AllowAnyOrigin()
-        //               .AllowAnyMethod()
-        //               .WithHeaders("Authorization", "Content-Type", "Accept"));
-        //});
         services.AddCors(options =>
         {
             options.AddPolicy("AllowLocalDevelopment", policy =>
             {
                 policy
-                    .WithOrigins("http://127.0.0.1:5500")
+                    .WithOrigins("http://127.0.0.1:5500", "http://localhost:5500")
                     .AllowAnyHeader()
                     .AllowAnyMethod()
                     .WithExposedHeaders("Content-Disposition") // Important for downloads

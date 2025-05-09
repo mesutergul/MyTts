@@ -76,32 +76,23 @@ namespace MyTts.Controllers
                 {
                     return BadRequest("Invalid ID format");
                 }
-                // Resolve full path (ensure proper path validation in production)
-                // string fullPath = Path.Combine("YourFilesDirectory", id);
 
-                //if (!System.IO.File.Exists(fullPath))
-                //{
-                //    return NotFound($"File {id} not found");
-                //}
                 if (!await _mp3Service.FileExistsAnywhereAsync(id))
                 {
                     _logger.LogWarning("File {FileName} not found", id);
                     return NotFound($"File {id} not found");
                 }
-                    
-                // Get file info for content type and length
-             //   var fileInfo = new FileInfo(id);
-
-                // Get file stream
-                var fileStream = await _mp3Service.GetMp3File(id, cancellationToken);
-                // Set content length if known
-                if (fileStream.Length > 0)
-                    context.Response.ContentLength = fileStream.Length;
-
+                await using var fileStream = await _mp3Service.GetMp4File(id, cancellationToken); // Actually returns MP4
                 context.Response.StatusCode = StatusCodes.Status200OK;
-                context.Response.ContentType = "audio/mpeg";
+                context.Response.ContentType = "audio/mp4";
+                context.Response.ContentLength = fileStream.Length;
                 context.Response.Headers["Cache-Control"] = "no-cache";
                 context.Response.Headers["Transfer-Encoding"] = "chunked";
+                context.Response.Headers["Access-Control-Expose-Headers"] = "Content-Disposition";
+                context.Response.Headers.Append("Access-Control-Allow-Origin", "http://127.0.0.1:5500");
+                context.Response.Headers.Append("Access-Control-Allow-Headers", "*");
+                context.Response.Headers.Append("Access-Control-Allow-Methods", "GET, OPTIONS");
+                context.Response.Headers.Append("Access-Control-Expose-Headers", "Content-Disposition");
 
                 var buffer = new byte[65536];
                 int bytesRead;
@@ -110,9 +101,6 @@ namespace MyTts.Controllers
                 {
                     await context.Response.Body.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
                     await context.Response.Body.FlushAsync(cancellationToken);
-
-                    // Optional: simulate slower streaming
-                    // await Task.Delay(30, cancellationToken);
                 }
 
                 return new EmptyResult(); // stream handled manually
@@ -208,7 +196,7 @@ namespace MyTts.Controllers
                 var fileInfo = new FileInfo(fullPath);
 
                 // Get file stream
-                var fileStream = await _mp3Service.GetMp3File(fullPath, cancellationToken);
+                var fileStream = await _mp3Service.GetMp4File(fullPath, cancellationToken);
 
                 // Return streaming file response
                 return new FileStreamResult(fileStream, "GetContentType(fileName)")

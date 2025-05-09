@@ -26,7 +26,7 @@ namespace MyTts.Services
         private readonly string? _bucketName;
         private readonly JsonSerializerOptions _jsonOptions;
         private readonly StorageConfiguration _storageConfig;
-        private bool _disposed;
+        private readonly IAudioConversionService _audioConversionService;
 
         public const string LocalSavePath = "audio";
         private const int MaxConcurrentOperations = 20;
@@ -37,6 +37,7 @@ namespace MyTts.Services
             IOptions<StorageConfiguration> storageConfig,
             IRedisCacheService cache,
             Mp3StreamMerger mp3StreamMerger,
+            IAudioConversionService audioConversionService,
             ILogger<TtsManager> logger)
         {
             _elevenLabsClient = elevenLabsClient ?? throw new ArgumentNullException(nameof(elevenLabsClient));
@@ -44,6 +45,7 @@ namespace MyTts.Services
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _mp3StreamMerger = mp3StreamMerger ?? throw new ArgumentNullException(nameof(mp3StreamMerger));
             _cache = cache ?? throw new ArgumentNullException(nameof(cache));
+            _audioConversionService = audioConversionService ?? throw new ArgumentNullException(nameof(audioConversionService));
             _semaphore = new SemaphoreSlim(MaxConcurrentOperations);
             _storageConfig = storageConfig.Value;
             // Initialize Google Cloud Storage
@@ -206,26 +208,33 @@ namespace MyTts.Services
         // Optimized version of ProcessContentAsync
         public async Task<(string LocalPath, AudioProcessor FileData)> ProcessContentAsync(string text, Guid id, CancellationToken cancellationToken)
         {
-            var fileName = $"speech_{id}.mp3";
+            var fileName = $"speech_{id}.m4a"; // Updated extension for MP4/AAC
             var localPath = Path.Combine(LocalSavePath, fileName);
 
             try
             {
-                // Generate audio using ElevenLabs API - wrap in using to ensure proper disposal
+                // 1. Generate voice using ElevenLabs
                 var voice = await _elevenLabsClient.VoicesEndpoint
                     .GetVoiceAsync(_config.Value.VoiceId, false, cancellationToken);
 
                 var request = await CreateTtsRequestAsync(voice, text);
 
-                // Create VoiceClip directly without intermediate conversions
                 ElevenLabs.VoiceClip elevenLabsVoiceClip = await _elevenLabsClient.TextToSpeechEndpoint
                     .TextToSpeechAsync(request, null, cancellationToken);
 
-                // Use direct conversion with our optimized classes
-                var voiceClip = new VoiceClip(elevenLabsVoiceClip.ClipData.ToArray());
+                // 2. Convert MP3 to M4A using the audio conversion service
+                var m4aPath = await _audioConversionService
+                    .ConvertMp3ToM4aAsync(elevenLabsVoiceClip.ClipData.ToArray(), cancellationToken);
+
+                // 3. Load converted audio into AudioProcessor
+                var audioData = await File.ReadAllBytesAsync(m4aPath, cancellationToken);
+                var voiceClip = new VoiceClip(audioData);
                 var audioProcessor = new AudioProcessor(voiceClip);
 
-                // Start all operations concurrently
+                // 4. Save to desired local path (renaming the temp file)
+                File.Move(m4aPath, localPath, overwrite: true);
+
+                // 5. Start all operations concurrently
                 var saveTasks = new[]
                 {
                     SaveLocallyAsync(audioProcessor, localPath, cancellationToken),
@@ -234,7 +243,6 @@ namespace MyTts.Services
                     StoreMetadataRedisAsync(id, text, localPath, fileName, cancellationToken)
                 };
 
-                // Wait for all operations to complete
                 await Task.WhenAll(saveTasks);
 
                 _logger.LogInformation("Processed content {Id}: {FileName}", id, fileName);
@@ -246,6 +254,7 @@ namespace MyTts.Services
                 throw;
             }
         }
+
 
         private Task<TextToSpeechRequest> CreateTtsRequestAsync(Voice voice, string text)
         {

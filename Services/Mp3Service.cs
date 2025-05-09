@@ -4,6 +4,7 @@ using MyTts.Repositories;
 using Microsoft.AspNetCore.Mvc;
 using MyTts.Data.Interfaces;
 using Microsoft.Extensions.Logging;
+using System.Diagnostics;
 
 namespace MyTts.Services
 {
@@ -222,7 +223,7 @@ namespace MyTts.Services
             return await _mp3FileRepository.GetFromCacheAsync<IMp3>(cacheKey)
                 ?? await _mp3FileRepository.LoadAndCacheMp3File<IMp3>(id);
         }
-        public async Task<Stream> GetMp3File(string id, CancellationToken cancellationToken)
+        public async Task<Stream> GetMp4File(string id, CancellationToken cancellationToken)
         {
           return await _mp3FileRepository.ReadLargeFileAsStreamAsync(id, 81920, cancellationToken);    
         }
@@ -436,5 +437,22 @@ namespace MyTts.Services
             // return await _mp3FileRepository.LoadMp3MetaByLanguageAsync(language);
             throw new NotImplementedException();
         }
+        /// ffmpeg -i input.mp3 -c:a aac -b:a 128k output.m4a
+        public async Task ConvertMp3ToM4A(string inputPath, string outputPath)
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "ffmpeg",
+                Arguments = $"-i \"{inputPath}\" -c:a aac -b:a 128k \"{outputPath}\"",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var process = Process.Start(startInfo);
+            await process.WaitForExitAsync();
+        }
+
     }
 }
