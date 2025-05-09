@@ -98,9 +98,10 @@ namespace MyTts.Repositories
                 return false;
             }
         }
-        public async Task<bool> Mp3FileExistsAsync(string filePath)
+        public async Task<bool> Mp4FileExistsAsync(string filePath)
         {
-            string fullPath = Path.Combine(_baseStoragePath, filePath + ".mp3");
+            string fullPath = Path.Combine(_baseStoragePath, filePath + ".m4a");
+            _logger.LogDebug("Checking if MP4 file exists at {FullPath}", fullPath);
             return await Task.Run(() => File.Exists(fullPath));
         }
         /// <summary>
@@ -169,7 +170,7 @@ namespace MyTts.Repositories
             }
 
             // Check database
-            if (await Mp3FileExistsInSqlAsync(filePath) || await Mp3FileExistsAsync(metadataCacheKey)) // TODO: Get actual ID
+            if (await Mp3FileExistsInSqlAsync(filePath) || await Mp4FileExistsAsync(metadataCacheKey)) // TODO: Get actual ID
             {
                 if (_cache != null)
                 {

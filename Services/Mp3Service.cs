@@ -198,7 +198,7 @@ namespace MyTts.Services
                 var mp3File = await _mp3FileRepository.GetFromCacheAsync<IMp3>($"mp3stream:{id}");
                 string filePath = GetAudioFilePath(mp3File.FileUrl);
                 /// Verifies physical file exists
-                if (!await _mp3FileRepository.Mp3FileExistsAsync(filePath))
+                if (!await _mp3FileRepository.Mp4FileExistsAsync(filePath))
                 {
                     _logger.LogWarning("MP3 file not found at path: {Path}", filePath);
                     return new NotFoundObjectResult(new { message = "MP3 file not found." });
@@ -361,7 +361,7 @@ namespace MyTts.Services
                 }
 
                 // Check if file exists
-                if (!await _mp3FileRepository.Mp3FileExistsAsync(filePath))
+                if (!await _mp3FileRepository.Mp4FileExistsAsync(filePath))
                 {
                     _logger.LogWarning("MP3 file not found at path: {Path}", filePath);
                     return new NotFoundObjectResult(new { message = "MP3 file not found." });

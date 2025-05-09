@@ -92,7 +92,6 @@ namespace MyTts.Controllers
                 context.Response.Headers.Append("Access-Control-Allow-Origin", "http://127.0.0.1:5500");
                 context.Response.Headers.Append("Access-Control-Allow-Headers", "*");
                 context.Response.Headers.Append("Access-Control-Allow-Methods", "GET, OPTIONS");
-                context.Response.Headers.Append("Access-Control-Expose-Headers", "Content-Disposition");
 
                 var buffer = new byte[65536];
                 int bytesRead;

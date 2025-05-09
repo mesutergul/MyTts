@@ -17,7 +17,7 @@ namespace MyTts.Services
             IOptions<RedisConfig> config,
             ILogger<RedisCacheService> logger)
         {
-            
+
             _redis = redis;
             _config = config.Value;
             _logger = logger;
@@ -39,23 +39,30 @@ namespace MyTts.Services
                 _logger.LogWarning("Redis connection not available for GET operation. Key: {Key}", key);
                 return default;
             }
+            // Get the value from Redis using the formatted key
+            var value = await _db.StringGetAsync(GetKey(key));
+
+            // Return default(T) if the value doesn't exist
+            if (value.IsNull)
+                return default;
+
+            // Directly deserialize the string value to type T
             try
             {
-                var value = await _db.StringGetAsync(GetKey(key));
-                return value.HasValue 
-                    ? JsonSerializer.Deserialize<T>(value) 
-                    : default;
+                string jsonString = value.ToString();
+                return JsonSerializer.Deserialize<T>(jsonString);
             }
-            catch (Exception ex)
+            catch (JsonException)
             {
-                _logger.LogError(ex, "Error getting value for key: {Key}", key);
+                // Log the error if needed
+                _logger.LogError($"Failed to deserialize value for key {key}");
                 return default;
             }
         }
 
         public async Task SetAsync<T>(string key, T value, TimeSpan? expiry = null)
         {
-           if (_db == null || !_redis.IsConnected) // Defensive check, though DI should prevent this
+            if (_db == null || !_redis.IsConnected) // Defensive check, though DI should prevent this
             {
                 _logger.LogWarning("Redis connection not available for SET operation. Key: {Key}", key);
                 return;

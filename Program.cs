@@ -4,7 +4,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using MyTts.Config;
 using MyTts.Controllers;
-using MyTts.Data;
 using MyTts.Data.Context;
 using MyTts.Data.Entities;
 using MyTts.Data.Interfaces;
@@ -87,7 +86,7 @@ public static class ServiceCollectionExtensions
 public static IServiceCollection AddCoreServices(this IServiceCollection services, IConfiguration configuration)
 {
     var connectionString = configuration.GetConnectionString("DefaultConnection");
-    var dbAvailable = TestSqlConnection(connectionString);
+    var dbAvailable = !string.IsNullOrEmpty(connectionString) && TestSqlConnection(connectionString);
 
     if (dbAvailable)
     {

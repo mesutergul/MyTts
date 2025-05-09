@@ -10,7 +10,7 @@ namespace MyTts.Repositories
         Task<List<IMp3>> LoadListMp3MetadatasAsync();
         Task SaveMp3MetadatasAsync(List<IMp3> mp3Files);
         Task DeleteMp3FileAsync(string filePath);
-        Task<bool> Mp3FileExistsAsync(string filePath);
+        Task<bool> Mp4FileExistsAsync(string filePath);
         Task<IMp3> LoadMp3MetaByPathAsync(string filePath);
         Task<Data.Interfaces.IMp3> LoadMp3MetaByNewsIdAsync<IMp3>(string id);
         Task<IMp3> LoadLatestMp3MetaByLanguageAsync(string language);
