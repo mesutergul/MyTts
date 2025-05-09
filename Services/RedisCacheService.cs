@@ -17,14 +17,28 @@ namespace MyTts.Services
             IOptions<RedisConfig> config,
             ILogger<RedisCacheService> logger)
         {
+            
             _redis = redis;
             _config = config.Value;
             _logger = logger;
+            if (redis == null || !redis.IsConnected)
+            {
+                _logger.LogError("Redis ConnectionMultiplexer is not connected. RedisCacheService cannot operate.");
+                // Throwing here is okay, as this service should only be instantiated
+                // when the ConnectionMultiplexer is ready. The DI container will then
+                // use the fallback.
+                throw new InvalidOperationException("Redis ConnectionMultiplexer is not connected.");
+            }
             _db = redis.GetDatabase(_config.DatabaseId);
         }
 
         public async Task<T?> GetAsync<T>(string key)
         {
+            if (_db == null || !_redis.IsConnected) // Defensive check, though DI should prevent this
+            {
+                _logger.LogWarning("Redis connection not available for GET operation. Key: {Key}", key);
+                return default;
+            }
             try
             {
                 var value = await _db.StringGetAsync(GetKey(key));
@@ -41,6 +55,11 @@ namespace MyTts.Services
 
         public async Task SetAsync<T>(string key, T value, TimeSpan? expiry = null)
         {
+           if (_db == null || !_redis.IsConnected) // Defensive check, though DI should prevent this
+            {
+                _logger.LogWarning("Redis connection not available for SET operation. Key: {Key}", key);
+                return;
+            }
             try
             {
                 var serializedValue = JsonSerializer.Serialize(value);
@@ -59,6 +78,11 @@ namespace MyTts.Services
 
         public async Task<bool> RemoveAsync(string key)
         {
+            if (_db == null || !_redis.IsConnected)
+            {
+                _logger.LogWarning("Redis connection not available for REMOVE operation. Key: {Key}", key);
+                return false;
+            }
             try
             {
                 return await _db.KeyDeleteAsync(GetKey(key));
@@ -72,6 +96,11 @@ namespace MyTts.Services
 
         public async Task<bool> ExistsAsync(string key)
         {
+            if (_db == null || !_redis.IsConnected)
+            {
+                _logger.LogWarning("Redis connection not available for EXISTS operation. Key: {Key}", key);
+                return false;
+            }
             try
             {
                 return await _db.KeyExistsAsync(GetKey(key));

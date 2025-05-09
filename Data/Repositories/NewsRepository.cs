@@ -9,11 +9,11 @@ namespace MyTts.Data.Repositories
 {
     public class NewsRepository : Repository<News, INews>, INewsRepository
     {
-        public NewsRepository(AppDbContext context, IMapper mapper) : base(context, mapper) { }
+        public NewsRepository(DefaultAppDbContextFactory contextFactory, IMapper? mapper, ILogger<NewsRepository> logger) : base(contextFactory, mapper, logger) { }
         // News'a özel metodları burada implemente edebilirsin
-        public async Task<IEnumerable<News>> GetAllNewsAsync()
-        {
-            return await _context.News.ToListAsync();
-        }
+        // public async Task<IEnumerable<News>> GetAllNewsAsync()
+        // {
+        //     return await _context!.News.ToListAsync();
+        // }
     }
 }

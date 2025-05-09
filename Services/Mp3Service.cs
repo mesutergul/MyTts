@@ -244,7 +244,7 @@ namespace MyTts.Services
             return (fileStream, localPath);
         }
 
-        private async Task<IActionResult> CreateStreamResponse(string filePath, string fileName)
+        private IActionResult CreateStreamResponse(string filePath, string fileName)
         {
             var stream = CreateFileStream(filePath, isStreaming: true);
             var headers = CreateStandardHeaders(fileName);
@@ -273,7 +273,7 @@ namespace MyTts.Services
             try
             {
                 var (fileStream, localPath) = await GetOrProcessMp3File(id, cancellationToken);
-                return CreateStreamimg(fileStream, localPath);
+                return CreateStreaming(fileStream, localPath);
             }
             catch (Exception ex)
             {
@@ -281,7 +281,7 @@ namespace MyTts.Services
                 return CreateErrorResponse(ex, "An error occurred while processing the request.");
             }
         }
-        private IActionResult CreateStreamimg(Stream fileStream, string localPath)
+        private IActionResult CreateStreaming(Stream fileStream, string localPath)
         {
             var headers = CreateStandardHeaders(localPath);
             return CreateFileStreamResponse(fileStream, localPath, headers);

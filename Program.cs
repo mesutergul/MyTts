@@ -1,3 +1,5 @@
+using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using MyTts.Config;
@@ -21,7 +23,10 @@ var builder = WebApplication.CreateBuilder(args);
 ConfigureServices(builder.Services, builder.Configuration);
 
 var app = builder.Build();
-
+app.UseForwardedHeaders(new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
+});
 // Configure the HTTP request pipeline
 ConfigureMiddleware(app);
 ConfigureEndpoints(app);
@@ -65,14 +70,26 @@ static void ConfigureServices(IServiceCollection services, IConfiguration config
 
 public static class ServiceCollectionExtensions
 {
-    public static IServiceCollection AddCoreServices(this IServiceCollection services, IConfiguration configuration)
+    private static bool TestSqlConnection(string connectionString)
+{
+    try
     {
-        var connectionString = configuration.GetConnectionString("DefaultConnection");
-        if (string.IsNullOrEmpty(connectionString))
-        {
-            throw new InvalidOperationException("Database connection string is not configured");
-        }
+        using var conn = new SqlConnection(connectionString);
+        conn.Open();
+        return true;
+    }
+    catch
+    {
+        return false;
+    }
+}
+public static IServiceCollection AddCoreServices(this IServiceCollection services, IConfiguration configuration)
+{
+    var connectionString = configuration.GetConnectionString("DefaultConnection");
+    var dbAvailable = TestSqlConnection(connectionString);
 
+    if (dbAvailable)
+    {
         services.AddDbContext<AppDbContext>(options =>
         {
             options.UseSqlServer(connectionString, sqlOptions =>
@@ -81,49 +98,117 @@ public static class ServiceCollectionExtensions
                 sqlOptions.CommandTimeout(30);
             });
         });
-        // Add AutoMapper - MISSING REGISTRATION
-        // services.AddAutoMapper(typeof(Program).Assembly);
-        services.AddAutoMapper(AppDomain.CurrentDomain.GetAssemblies());
 
-        // Register concrete implementations first
+        services.AddScoped(typeof(IRepository<,>), typeof(Repository<,>));
         services.AddScoped<Mp3MetaRepository>();
         services.AddScoped<NewsRepository>();
 
-        // Then map interfaces to the already registered implementations
-        services.AddScoped<IRepository<Mp3Meta, IMp3>>(sp => sp
-            .GetRequiredService<Mp3MetaRepository>());
-        services.AddScoped<IRepository<News, INews>>(sp => sp
-            .GetRequiredService<NewsRepository>());
+        services.AddScoped<IRepository<Mp3Meta, IMp3>>(sp => sp.GetRequiredService<Mp3MetaRepository>());
+        services.AddScoped<IRepository<News, INews>>(sp => sp.GetRequiredService<NewsRepository>());
 
-        // Service registrations
-        // Register concrete implementations
-        services.AddScoped<Mp3FileRepository>();
-        services.AddScoped<Mp3Service>();
-
-        // Then map interfaces to implementations
-        services.AddScoped<IMp3FileRepository>(sp => sp.GetRequiredService<Mp3FileRepository>());
-        services.AddScoped<IMp3Service>(sp => sp.GetRequiredService<Mp3Service>());
-
-        services.AddScoped<NewsFeedsService>();
-        
-        // Controller registrations
-        services.AddTransient<Mp3Controller>();
-        
-        // Add logging with better configuration
-        services.AddLogging(logging =>
-        {
-            logging.AddConsole();
-            logging.AddDebug();
-            
-            // Configure log levels for your application
-            logging.AddFilter("Microsoft", LogLevel.Warning);
-            logging.AddFilter("System", LogLevel.Warning);
-            logging.AddFilter("MyTts", LogLevel.Information);
-        });
-        services.AddSingleton<Mp3StreamMerger>();
-
-        return services;
+        // AppDbContextFactory requires AppDbContext, so register it only if available
+        services.AddScoped<IAppDbContextFactory, DefaultAppDbContextFactory>();
     }
+    else
+    {
+        // Register dummy DbContext to satisfy dependencies
+        services.AddDbContext<AppDbContext>(options => { });
+
+        services.AddSingleton<IRepository<News, INews>, NullNewsRepository>();
+
+        // In fallback mode, use a dummy factory or skip registration if unused
+        services.AddSingleton<IAppDbContextFactory, NullAppDbContextFactory>();
+        services.AddSingleton<Mp3MetaRepository, NullMp3MetaRepository>();
+    }
+
+    // Prevent AutoMapper from scanning all assemblies (which causes the SqlGuidCaster crash)
+    services.AddAutoMapper(cfg => { }, typeof(Program));
+
+    // Application services
+    services.AddScoped<Mp3FileRepository>();
+    services.AddScoped<IMp3FileRepository>(sp => sp.GetRequiredService<Mp3FileRepository>());
+
+    services.AddScoped<Mp3Service>();
+    services.AddScoped<IMp3Service>(sp => sp.GetRequiredService<Mp3Service>());
+
+    services.AddScoped<NewsFeedsService>();
+
+    services.AddSingleton<Mp3StreamMerger>();
+
+    services.AddTransient<Mp3Controller>();
+
+    services.AddLogging(logging =>
+    {
+        logging.AddConsole();
+        logging.AddDebug();
+        logging.AddFilter("Microsoft", LogLevel.Warning);
+        logging.AddFilter("System", LogLevel.Warning);
+        logging.AddFilter("MyTts", LogLevel.Information);
+    });
+
+    return services;
+}
+
+    // public static IServiceCollection AddCoreServices(this IServiceCollection services, IConfiguration configuration)
+    // {
+    //     var connectionString = configuration.GetConnectionString("DefaultConnection");
+    //     var dbAvailable = TestSqlConnection(connectionString); // simple connection test
+    //     if (!string.IsNullOrWhiteSpace(connectionString) && dbAvailable)
+    //     {
+    //         services.AddDbContext<AppDbContext>(options =>
+    //         {
+    //             options.UseSqlServer(connectionString, sqlOptions =>
+    //             {
+    //                 sqlOptions.EnableRetryOnFailure(3);
+    //                 sqlOptions.CommandTimeout(30);
+    //             });
+    //         });
+            
+    //           // If you're using generic Repository<>
+    //         services.AddScoped(typeof(IRepository<,>), typeof(Repository<,>));
+    //         services.AddScoped<Mp3MetaRepository>();
+    //         services.AddScoped<NewsRepository>();
+
+    //         services.AddScoped<IRepository<Mp3Meta, IMp3>>(sp => sp.GetRequiredService<Mp3MetaRepository>());
+    //         services.AddScoped<IRepository<News, INews>>(sp => sp.GetRequiredService<NewsRepository>());
+    //     }
+    //     else
+    //     {
+    //         services.AddSingleton<IRepository<Mp3Meta, IMp3>, NullMp3MetaRepository>();
+    //         services.AddDbContext<AppDbContext>(_ => new DbContextOptions<AppDbContext>());
+    //     }
+    //     services.AddSingleton<IAppDbContextFactory, DefaultAppDbContextFactory>();
+
+    //     services.AddAutoMapper(typeof(Program).Assembly);
+    //     // Service registrations
+    //     // Register concrete implementations
+    //     services.AddScoped<Mp3FileRepository>();
+    //     services.AddScoped<Mp3Service>();
+
+    //     // Then map interfaces to implementations
+    //     services.AddScoped<IMp3FileRepository>(sp => sp.GetRequiredService<Mp3FileRepository>());
+    //     services.AddScoped<IMp3Service>(sp => sp.GetRequiredService<Mp3Service>());
+
+    //     services.AddScoped<NewsFeedsService>();
+
+    //     // Controller registrations
+    //     services.AddTransient<Mp3Controller>();
+
+    //     // Add logging with better configuration
+    //     services.AddLogging(logging =>
+    //     {
+    //         logging.AddConsole();
+    //         logging.AddDebug();
+
+    //         // Configure log levels for your application
+    //         logging.AddFilter("Microsoft", LogLevel.Warning);
+    //         logging.AddFilter("System", LogLevel.Warning);
+    //         logging.AddFilter("MyTts", LogLevel.Information);
+    //     });
+    //     services.AddSingleton<Mp3StreamMerger>();
+
+    //     return services;
+    // }
 
     public static IServiceCollection AddStorageServices(this IServiceCollection services, IConfiguration configuration)
     {
@@ -132,12 +217,13 @@ public static class ServiceCollectionExtensions
             .Bind(configuration.GetSection("Storage"))
             .ValidateDataAnnotations()
             .ValidateOnStart();
-        
+
         // Register disk configurations 
-        services.AddSingleton(sp => {
+        services.AddSingleton(sp =>
+        {
             var storageConfig = sp.GetRequiredService<IOptions<StorageConfiguration>>().Value;
             var disks = new Dictionary<string, DiskConfiguration>();
-            
+
             foreach (var disk in storageConfig.Disks)
             {
                 disks[disk.Key] = new DiskConfiguration
@@ -147,7 +233,7 @@ public static class ServiceCollectionExtensions
                     Config = disk.Value.Config ?? new DiskConfig()
                 };
             }
-            
+
             return disks;
         });
 
@@ -171,7 +257,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton(sp =>
         {
             var config = sp.GetRequiredService<IOptions<ElevenLabsConfig>>().Value;
-            
+
             // First try configuration, then environment variable
             var apiKey = config.ApiKey ??
                         Environment.GetEnvironmentVariable("ELEVENLABS_API_KEY") ??
@@ -190,32 +276,55 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddRedisServices(this IServiceCollection services, IConfiguration configuration)
     {
         // Register in-memory cache for local caching
-        services.AddMemoryCache(options => {
+        services.AddMemoryCache(options =>
+        {
             options.SizeLimit = 1024; // Set a reasonable size limit
         });
-
-        // Register Redis configuration
-        services.AddOptions<RedisConfig>()
-            .Bind(configuration.GetSection("Redis"))
-            .ValidateDataAnnotations()
-            .ValidateOnStart();
-
-        // Register ConnectionMultiplexer with connection resilience
-        services.AddSingleton<IConnectionMultiplexer>(sp =>
+        var redisConfig = configuration.GetSection("Redis").Get<RedisConfig>();
+        if (redisConfig == null || string.IsNullOrEmpty(redisConfig.ConnectionString))
         {
-            var config = sp.GetRequiredService<IOptions<RedisConfig>>().Value;
-            var options = ConfigurationOptions.Parse(config.ConnectionString);
-            
-            // Add resilience
+            services.AddSingleton<IRedisCacheService, NullRedisCacheService>();
+            return services;
+        }
+        try
+        {
+            var options = ConfigurationOptions.Parse(redisConfig.ConnectionString);
             options.AbortOnConnectFail = false;
             options.ConnectRetry = 3;
             options.ConnectTimeout = 5000;
-            
-            return ConnectionMultiplexer.Connect(options);
-        });
 
-        // Register Redis cache service
-        services.AddSingleton<IRedisCacheService, RedisCacheService>();
+            var muxer = ConnectionMultiplexer.Connect(options);
+            services.AddSingleton<IConnectionMultiplexer>(muxer);
+            services.AddSingleton<IRedisCacheService, RedisCacheService>();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Redis connection failed: {ex.Message}");
+            services.AddSingleton<IRedisCacheService, NullRedisCacheService>();
+        }
+
+        // Register Redis configuration
+        // services.AddOptions<RedisConfig>()
+        //     .Bind(configuration.GetSection("Redis"))
+        //     .ValidateDataAnnotations()
+        //     .ValidateOnStart();
+
+        // // Register ConnectionMultiplexer with connection resilience
+        // services.AddSingleton<IConnectionMultiplexer>(sp =>
+        // {
+        //     var config = sp.GetRequiredService<IOptions<RedisConfig>>().Value;
+        //     var options = ConfigurationOptions.Parse(config.ConnectionString);
+
+        //     // Add resilience
+        //     options.AbortOnConnectFail = false;
+        //     options.ConnectRetry = 3;
+        //     options.ConnectTimeout = 5000;
+
+        //     return ConnectionMultiplexer.Connect(options);
+        // });
+
+        // // Register Redis cache service
+        // services.AddSingleton<IRedisCacheService, RedisCacheService>();
 
         return services;
     }
@@ -227,8 +336,8 @@ public static class ServiceCollectionExtensions
         {
             client.Timeout = TimeSpan.FromMinutes(5);
             client.DefaultRequestHeaders.Add("User-Agent", "MyTts/1.0");
-        }).AddTransientHttpErrorPolicy(builder => 
-            builder.WaitAndRetryAsync(3, retryAttempt => 
+        }).AddTransientHttpErrorPolicy(builder =>
+            builder.WaitAndRetryAsync(3, retryAttempt =>
                 TimeSpan.FromSeconds(Math.Pow(2, retryAttempt))));
 
         // Configure ElevenLabs client with proper settings
@@ -236,13 +345,13 @@ public static class ServiceCollectionExtensions
         {
             var settings = new ElevenLabs.ElevenLabsClientSettings("api.elevenlabs.io", "v1");
             var config = sp.GetRequiredService<IOptions<ElevenLabsConfig>>().Value;
-            
+
             var apiKey = config.ApiKey;
             if (string.IsNullOrEmpty(apiKey))
             {
                 apiKey = Environment.GetEnvironmentVariable("ELEVENLABS_API_KEY");
             }
-            
+
             if (string.IsNullOrEmpty(apiKey))
             {
                 throw new InvalidOperationException("ElevenLabs API key not found in configuration or environment variables");
@@ -253,8 +362,8 @@ public static class ServiceCollectionExtensions
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("xi-api-key", apiKey);
             client.DefaultRequestHeaders.Add("User-Agent", "MyTts");
             client.Timeout = TimeSpan.FromSeconds(60);
-        }).AddTransientHttpErrorPolicy(builder => 
-            builder.WaitAndRetryAsync(3, retryAttempt => 
+        }).AddTransientHttpErrorPolicy(builder =>
+            builder.WaitAndRetryAsync(3, retryAttempt =>
                 TimeSpan.FromSeconds(Math.Pow(2, retryAttempt))));
 
         // Configure feed client with resilience
@@ -263,8 +372,8 @@ public static class ServiceCollectionExtensions
             client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
             client.DefaultRequestHeaders.Add("User-Agent", "MyTts-FeedClient");
             client.Timeout = TimeSpan.FromSeconds(30);
-        }).AddTransientHttpErrorPolicy(builder => 
-            builder.WaitAndRetryAsync(3, retryAttempt => 
+        }).AddTransientHttpErrorPolicy(builder =>
+            builder.WaitAndRetryAsync(3, retryAttempt =>
                 TimeSpan.FromSeconds(Math.Pow(2, retryAttempt))));
 
         return services;
@@ -274,7 +383,8 @@ public static class ServiceCollectionExtensions
     {
         services.AddEndpointsApiExplorer();
         services.AddOpenApi();
-        services.AddControllers(options => {
+        services.AddControllers(options =>
+        {
             // Add global filters if needed
             options.Filters.Add(new Microsoft.AspNetCore.Mvc.ProducesAttribute("application/json"));
         });
@@ -288,5 +398,5 @@ public static class ServiceCollectionExtensions
         });
 
         return services;
-    }
+    }  
 }

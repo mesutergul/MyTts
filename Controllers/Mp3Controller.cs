@@ -73,25 +73,25 @@ namespace MyTts.Controllers
             try
             {
                 // Resolve full path (ensure proper path validation in production)
-                string fullPath = Path.Combine("YourFilesDirectory", id);
+               // string fullPath = Path.Combine("YourFilesDirectory", id);
 
                 //if (!System.IO.File.Exists(fullPath))
                 //{
                 //    return NotFound($"File {id} not found");
                 //}
-                if(await _mp3Service.FileExistsAnywhereAsync(fullPath))
+                if(await _mp3Service.FileExistsAnywhereAsync(id))
                 {
                     return NotFound($"File {id} not found");
                 }
                     
                 // Get file info for content type and length
-                var fileInfo = new FileInfo(fullPath);
+             //   var fileInfo = new FileInfo(id);
 
                 // Get file stream
-                var fileStream = await _mp3Service.GetMp3File(fullPath, cancellationToken);
+                var fileStream = await _mp3Service.GetMp3File(id, cancellationToken);
 
                 // Return streaming file response
-                return new FileStreamResult(fileStream, "GetContentType(fileName)")
+                return new FileStreamResult(fileStream, "audio/mpeg")
                 {
                     FileDownloadName = id,
                     EnableRangeProcessing = true // Enables partial content requests

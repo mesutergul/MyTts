@@ -9,9 +9,5 @@ namespace MyTts.Data.Context
 
         public DbSet<Mp3Meta> Mp3Metas { get; set; }
         public DbSet<News> News { get; set; }
-        protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
-        {
-            optionsBuilder.UseSqlServer("YourConnectionStringHere");
-        }
     }
 }
