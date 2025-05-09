@@ -276,11 +276,12 @@ public static IServiceCollection AddCoreServices(this IServiceCollection service
     public static IServiceCollection AddRedisServices(this IServiceCollection services, IConfiguration configuration)
     {
         // Register in-memory cache for local caching
-        services.AddMemoryCache(options =>
-        {
-            options.SizeLimit = 1024; // Set a reasonable size limit
-        });
+        //services.AddMemoryCache(options =>
+        //{
+        //    options.SizeLimit = 1024; // Set a reasonable size limit
+        //});
         var redisConfig = configuration.GetSection("Redis").Get<RedisConfig>();
+        bool redisAvailable = false;
         if (redisConfig == null || string.IsNullOrEmpty(redisConfig.ConnectionString))
         {
             services.AddSingleton<IRedisCacheService, NullRedisCacheService>();
@@ -293,9 +294,18 @@ public static IServiceCollection AddCoreServices(this IServiceCollection service
             options.ConnectRetry = 3;
             options.ConnectTimeout = 5000;
 
-            var muxer = ConnectionMultiplexer.Connect(options);
-            services.AddSingleton<IConnectionMultiplexer>(muxer);
-            services.AddSingleton<IRedisCacheService, RedisCacheService>();
+            using (var testConnection = ConnectionMultiplexer.Connect(options))
+            {
+                redisAvailable = testConnection.IsConnected;
+                if (!redisAvailable)
+                {
+                    services.AddSingleton<IRedisCacheService, NullRedisCacheService>();
+                }
+                else {
+                    services.AddSingleton<IConnectionMultiplexer>(testConnection);
+                    services.AddSingleton<IRedisCacheService, RedisCacheService>();
+                }
+            }
         }
         catch (Exception ex)
         {

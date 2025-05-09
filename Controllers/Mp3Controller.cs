@@ -79,8 +79,9 @@ namespace MyTts.Controllers
                 //{
                 //    return NotFound($"File {id} not found");
                 //}
-                if(await _mp3Service.FileExistsAnywhereAsync(id))
+                if(!await _mp3Service.FileExistsAnywhereAsync(id))
                 {
+                    _logger.LogWarning("File {FileName} not found", id);
                     return NotFound($"File {id} not found");
                 }
                     

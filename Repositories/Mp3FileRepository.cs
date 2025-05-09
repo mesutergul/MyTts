@@ -31,8 +31,8 @@ namespace MyTts.Repositories
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _cache = cache ?? throw new ArgumentNullException(nameof(cache));
-            _baseStoragePath = configuration["Storage:BasePath"] ?? "/home/mesut/dotnetProjects/audio";
-            _metadataPath = configuration["Storage:MetadataPath"] ?? "/home/mesut/dotnetProjects/audio/meta/mp3files.json";
+            _baseStoragePath = configuration["Storage:BasePath"] ?? "C:\\repos\\audio";
+            _metadataPath = configuration["Storage:MetadataPath"] ?? "C:\\repos\\audiometa\\mp3files.json";
             _dbLock = new SemaphoreSlim(1, 1);
             _fileLocks = new ConcurrentDictionary<string, SemaphoreSlim>();
             _jsonSettings = new JsonSerializerSettings
