@@ -35,21 +35,30 @@ namespace MyTts.Services
             _newsFeedsService = newsFeedsService ?? throw new ArgumentNullException(nameof(newsFeedsService));
             _processingSemaphore = new SemaphoreSlim(MaxConcurrentProcessing);
         }
-        public async Task<IActionResult> CreateMultipleMp3Async(string language, int limit, AudioType fileType, CancellationToken cancellationToken)
+        public async Task<(Stream audioData, string contentType, string fileName)> CreateMultipleMp3Async(string language, int limit, AudioType fileType, CancellationToken cancellationToken)
         {
             try
             {
                 await _processingSemaphore.WaitAsync();
-                var contents = await _newsFeedsService.GetFeedByLanguageAsync(language, limit);
-                await _ttsManager.ProcessContentsAsync(contents, fileType);
-                return new EmptyResult();
+               // var contents = await _newsFeedsService.GetFeedByLanguageAsync(language, limit);
+               var contents = new List<string>
+               {
+                   "May whatever is possible be done to reach an authentic, true and lasting peace as quickly as possible.",
+                   "Make sure you're awaiting all async operations properly, especially if you're using scoped services in async scenarios",
+                   "This is a common issue in ASP.NET Core applications, especially when working with services that need to maintain state or resources across asynchronous operations",
+                   "As the error message indicated, the API accepts only one method of authentication, not both simultaneously.",
+                   "I see the issue in your code. The problem is with how you're setting up the Authorization header. Let me fix that for you",
+                   "Routes are now grouped by functionality and follow a consistent pattern, making the code easier to read and maintain"
+                };
+               return await _ttsManager.ProcessContentsAsync(contents, fileType);
+
             }
             finally
             {
                 _processingSemaphore.Release();
             }
         }
-        public async Task<string> CreateSingleMp3Async(OneRequest request, AudioType fileType, CancellationToken cancellationToken)
+        public async Task<Stream> CreateSingleMp3Async(OneRequest request, AudioType fileType, CancellationToken cancellationToken)
         {
             try
             {
@@ -58,7 +67,8 @@ namespace MyTts.Services
                // var content = "Make sure you're awaiting all async operations properly, especially if you're using scoped services in async scenarios";
                // var content = "This is a common issue in ASP.NET Core applications, especially when working with services that need to maintain state or resources across asynchronous operations";
                //var content = "As the error message indicated, the API accepts only one method of authentication, not both simultaneously.";
-                var content ="I see the issue in your code. The problem is with how you're setting up the Authorization header. Let me fix that for you";
+             //   var content ="I see the issue in your code. The problem is with how you're setting up the Authorization header. Let me fix that for you";
+               var content = "Routes are now grouped by functionality and follow a consistent pattern, making the code easier to read and maintain";
                 return await RequestSingleMp3Async(content, fileType, cancellationToken);
                 // return await _mp3FileRepository.LoadMp3MetaByNewsIdAsync(request.News, fileType, cancellationToken)
                 //     ?? throw new KeyNotFoundException($"MP3 file not found for ID: {request.News}");
@@ -77,14 +87,13 @@ namespace MyTts.Services
                 _processingSemaphore.Release();
             }
         }
-        public async Task<string> RequestSingleMp3Async(string content, AudioType fileType, CancellationToken cancellationToken)
+        public async Task<Stream> RequestSingleMp3Async(string content, AudioType fileType, CancellationToken cancellationToken)
         {
             try
             {
                 await _processingSemaphore.WaitAsync();
                 var (filePath, processor) = await _ttsManager.ProcessContentAsync(content, Guid.NewGuid(), fileType, cancellationToken);
-                return filePath;
-                // return await processor.GetStreamForCloudUploadAsync(cancellationToken);
+                return await processor.GetStreamForCloudUploadAsync(cancellationToken);
             }
             catch (Exception ex)
             {

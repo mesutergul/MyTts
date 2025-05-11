@@ -26,7 +26,7 @@ namespace MyTts.Controllers
             try
             {
                 await _mp3Service.CreateMultipleMp3Async(language, limit, AudioType.Mp3, cancellationToken);
-                return Ok();
+                return Ok(language);
             }
             catch (Exception ex)
             {
@@ -284,9 +284,12 @@ namespace MyTts.Controllers
                 Language = "en-US",
             };
             try {
-                var result = await _mp3Service.CreateSingleMp3Async(request, AudioType.Mp3, token);
-                return Ok(result);
-                //return File(result, "audio/mpeg", "callrecording.mp3", true);
+                await using var result = await _mp3Service.CreateSingleMp3Async(request, AudioType.Mp3, token);
+                return new FileStreamResult(result, "audio/mpeg")
+                {
+                    FileDownloadName = $"{id}.mp3",
+                    EnableRangeProcessing = true,
+                };
             }
             catch (Exception ex)
             {

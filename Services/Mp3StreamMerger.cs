@@ -8,6 +8,7 @@ using FFMpegCore;
 using FFMpegCore.Pipes;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
+using MyTts.Repositories;
 
 namespace MyTts.Services
 {
@@ -23,8 +24,9 @@ namespace MyTts.Services
             _mergeLock = new SemaphoreSlim(1, 1);
         }
 
-        public async Task<IActionResult> MergeMp3ByteArraysAsync(
+        public async Task<(Stream audioData, string contentType, string fileName)> MergeMp3ByteArraysAsync(
             IReadOnlyList<AudioProcessor> audioProcessors,
+            AudioType fileType,
             CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(audioProcessors);
@@ -46,14 +48,12 @@ namespace MyTts.Services
                     return await CreateSingleFileResultAsync(audioProcessors[0], cancellationToken);
                 }
                 using var outputStream = new MemoryStream();
-                await MergeAudioProcessorsAsync(audioProcessors, outputStream, cancellationToken).ConfigureAwait(false);
-                
+                await MergeAudioProcessorsAsync(audioProcessors, outputStream, fileType, cancellationToken).ConfigureAwait(false);
+
                 // Return the stream properly
                 outputStream.Position = 0;
-                return new FileStreamResult(outputStream, "audio/mpeg") 
-                {
-                    FileDownloadName = $"merged_{DateTime.UtcNow:yyyyMMddHHmmss}.mp3"
-                };
+                _logger.LogInformation("Merged audio processors successfully");
+                return (outputStream, "audio/mpeg", $"merged_{DateTime.UtcNow:yyyyMMddHHmmss}.mp3");
             }
             catch (OperationCanceledException)
             {
@@ -74,14 +74,16 @@ namespace MyTts.Services
             }
         }
 
-        private async Task<IActionResult> MergeAudioProcessorsAsync(
+        private async Task MergeAudioProcessorsAsync(
             IReadOnlyList<AudioProcessor> processors,
             MemoryStream outputStream,
+            AudioType fileType,
             CancellationToken cancellationToken)
         {
             // Create a list to track resources that need disposal
             var streamPipeSources = new List<StreamPipeSource>(processors.Count);
             var streamsToDispose = new List<Stream>(processors.Count);
+            var codec=fileType.Equals(AudioType.Mp3)?"libmp3lame":"aac";
             try
             {
                 var ffmpegArgs = await CreateFfmpegArgumentsAsync(processors, streamPipeSources, streamsToDispose, cancellationToken).ConfigureAwait(false);
@@ -90,17 +92,38 @@ namespace MyTts.Services
                     .OutputToPipe(
                         new StreamPipeSink(outputStream),
                         options => options
-                            .WithAudioCodec("copy")
+                            //.WithAudioCodec("copy")
+                            .WithAudioCodec(codec)
+                            .WithAudioBitrate(128)
+                            .WithCustomArgument($"-f {fileType}")
                             .WithCustomArgument($"-filter_complex \"concat=n={processors.Count}:v=0:a=1[outa]\" -map \"[outa]\"")
                             .WithCustomArgument("-y"))
                     .CancellableThrough(cancellationToken)
                     .ProcessAsynchronously();
-                
-                return new FileStreamResult(outputStream, "audio/mpeg")
+                // Ensure the outputStream contains data before trying to save
+                if (outputStream.Length > 0)
                 {
-                    EnableRangeProcessing = true,
-                    FileDownloadName = $"merged_{DateTime.UtcNow:yyyyMMddHHmmss}.mp3"
-                };
+                    var outputFilePath = Path.Combine(Path.GetFullPath("."), $"merged_{DateTime.UtcNow:yyyyMMddHHmmss}.{fileType.ToString().ToLower()}");
+                    _logger.LogInformation("Saving merged audio from MemoryStream to file: {FilePath}", outputFilePath);
+
+                    // Reset the MemoryStream position to the beginning so we can read from it
+                    outputStream.Position = 0;
+
+                    // Create a FileStream to write the MemoryStream content to disk
+                    // FileMode.Create will create the file if it doesn't exist, or overwrite it if it does.
+                    using (var fileStream = new FileStream(outputFilePath, FileMode.Create, FileAccess.Write, FileShare.None))
+                    {
+                        // Copy the content from the MemoryStream to the FileStream asynchronously
+                        await outputStream.CopyToAsync(fileStream, cancellationToken);
+                    }
+                    _logger.LogInformation("Merged audio successfully saved to {FilePath}", outputFilePath);
+                }
+                else
+                {
+                    _logger.LogWarning("FFmpeg process completed but outputStream is empty. No data to save to file .");
+                    // You might want to delete the potentially created empty file here if outputStream is empty
+                    // try { if (File.Exists(outputFilePath)) File.Delete(outputFilePath); } catch { }
+                }
             }
             catch (OperationCanceledException)
             {
@@ -119,7 +142,7 @@ namespace MyTts.Services
                 {
                     try
                     {
-                        ((IDisposable)source).Dispose();
+                        ((IDisposable)source.Source).Dispose();
                     }
                     catch (Exception ex)
                     {
@@ -140,14 +163,11 @@ namespace MyTts.Services
                 }
             }
         }
-        private async Task<IActionResult> CreateSingleFileResultAsync(AudioProcessor processor, CancellationToken cancellationToken)
+
+        private async Task<(Stream audioData, string contentType, string fileName)> CreateSingleFileResultAsync(AudioProcessor processor, CancellationToken cancellationToken)
         {
             var stream = await processor.GetStreamForCloudUploadAsync(cancellationToken);
-            return new FileStreamResult(stream, "audio/mpeg")
-            {
-                FileDownloadName = $"audio_{DateTime.UtcNow:yyyyMMddHHmmss}.mp3",
-                EnableRangeProcessing = true
-            };
+            return (stream, "audio/mpeg", $"audio_{DateTime.UtcNow:yyyyMMddHHmmss}.mp3");
         }
         private static async Task<FFMpegArguments> CreateFfmpegArgumentsAsync(
             IReadOnlyList<AudioProcessor> processors,
@@ -163,11 +183,13 @@ namespace MyTts.Services
 
             // Create FFmpeg arguments with the first input
             var args = FFMpegArguments.FromPipeInput(firstPipeSource);
+            var streams = new List<Stream>(processors.Count){firstStream};
 
             // Process remaining streams
             for (int i = 1; i < processors.Count; i++)
             {
                 var stream = await processors[i].GetStreamForCloudUploadAsync(cancellationToken).ConfigureAwait(false);
+                streams.Add(stream);
                 streamsToDispose.Add(stream);
                 var pipeSource = new StreamPipeSource(stream);
                 streamPipeSources.Add(pipeSource);
@@ -175,15 +197,15 @@ namespace MyTts.Services
             }
 
             // Create streams for each processor, getting them asynchronously
-            var streams = new List<Stream>(processors.Count);
-            for (int i = 0; i < processors.Count; i++)
-            {
-                // Use the new async method for better memory efficiency
-                var stream = await processors[i].GetStreamForCloudUploadAsync(cancellationToken).ConfigureAwait(false);
-                streams.Add(stream);
-                var pipeSource = new StreamPipeSource(stream);
-                streamPipeSources.Add(pipeSource);
-            }
+            // var streams = new List<Stream>(processors.Count);
+            // for (int i = 0; i < processors.Count; i++)
+            // {
+            //     // Use the new async method for better memory efficiency
+            //     var stream = await processors[i].GetStreamForCloudUploadAsync(cancellationToken).ConfigureAwait(false);
+            //     streams.Add(stream);
+            //     var pipeSource = new StreamPipeSource(stream);
+            //     streamPipeSources.Add(pipeSource);
+            // }
 
             return args;
         }

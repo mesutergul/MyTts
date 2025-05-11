@@ -32,7 +32,7 @@ namespace MyTts.Services
         private readonly IAudioConversionService _audioConversionService;
         private readonly Mp3MetaRepository? _mp3MetaRepository;
         public const string LocalSavePath = "audio";
-        private const int MaxConcurrentOperations = 20;
+        private const int MaxConcurrentOperations = 2;
 
         public TtsManager(
             ElevenLabsClient elevenLabsClient,
@@ -118,7 +118,7 @@ namespace MyTts.Services
             }
         }
         // Optimized version of MergeAudioFilesAsync
-        public async Task<IActionResult> MergeAudioFilesAsync(List<AudioProcessor> processors, CancellationToken cancellationToken = default)
+        public async Task<(Stream audioData, string contentType, string fileName)> MergeAudioFilesAsync(List<AudioProcessor> processors, AudioType fileType, CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(processors);
             if (processors.Count == 0)
@@ -135,28 +135,24 @@ namespace MyTts.Services
             }
 
             // Use the optimized Mp3StreamMerger
-            return await _mp3StreamMerger.MergeMp3ByteArraysAsync(processors, cancellationToken);
+            return await _mp3StreamMerger.MergeMp3ByteArraysAsync(processors, fileType, cancellationToken);
         }
         // Helper method for single file scenario
-        private async Task<IActionResult> CreateSingleFileResultAsync(AudioProcessor processor, CancellationToken cancellationToken)
+        private async Task<(Stream audioData, string contentType, string fileName)> CreateSingleFileResultAsync(AudioProcessor processor, CancellationToken cancellationToken)
         {
             await using var uploadStream = await processor.GetStreamForCloudUploadAsync(cancellationToken);
 
-            return new FileStreamResult(uploadStream, "audio/mpeg")
-            {
-                EnableRangeProcessing = true,
-                FileDownloadName = $"audio_{DateTime.UtcNow:yyyyMMddHHmmss}.m4a"
-            };
+            return (uploadStream, "audio/mpeg", $"single_{Guid.NewGuid()}.mp3");
         }
         // Optimized ProcessContentsAsync
-        public async Task<IActionResult> ProcessContentsAsync(IEnumerable<string> contents, AudioType fileType, CancellationToken cancellationToken = default)
+        public async Task<(Stream audioData, string contentType, string fileName)> ProcessContentsAsync(IEnumerable<string> contents, AudioType fileType, CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(contents);
             var contentsList = contents.ToList(); // Materialize once to avoid multiple enumeration
 
             if (!contentsList.Any())
             {
-                return new EmptyResult();
+                return (null, "", "");
             }
 
             try
@@ -177,11 +173,11 @@ namespace MyTts.Services
                 if (processors.Count > 0)
                 {
                     _logger.LogInformation("Successfully processed {Count} files", processors.Count);
-                    return await MergeAudioFilesAsync(processors, cancellationToken);
+                    return await MergeAudioFilesAsync(processors, fileType, cancellationToken);
                 }
 
                 _logger.LogWarning("No files were successfully processed");
-                return new EmptyResult();
+                return (null, "", "");
             }
             catch (OperationCanceledException)
             {
@@ -231,10 +227,10 @@ namespace MyTts.Services
                 }, cancellationToken, TaskContinuationOptions.OnlyOnRanToCompletion, TaskScheduler.Default).Unwrap();
 
                 // Generate audio clip from ElevenLabs
-                await using VoiceClip voiceClip = await _elevenLabsClient.TextToSpeechEndpoint
+                VoiceClip voiceClip = await _elevenLabsClient.TextToSpeechEndpoint
                     .TextToSpeechAsync(await requestTask, null, cancellationToken);
 
-                await using var audioProcessor = new AudioProcessor(voiceClip);
+                var audioProcessor = new AudioProcessor(voiceClip);
 
                 // Launch all I/O-bound tasks in parallel
                 var tasks = new Task[]
