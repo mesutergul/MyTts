@@ -32,7 +32,7 @@ namespace MyTts.Services
             _db = redis.GetDatabase(_config.DatabaseId);
         }
 
-        public async Task<T?> GetAsync<T>(string key)
+        public async Task<T?> GetAsync<T>(string key, CancellationToken cancellationToken = default)
         {
             if (_db == null || !_redis.IsConnected) // Defensive check, though DI should prevent this
             {
@@ -60,7 +60,7 @@ namespace MyTts.Services
             }
         }
 
-        public async Task SetAsync<T>(string key, T value, TimeSpan? expiry = null)
+        public async Task SetAsync<T>(string key, T value, TimeSpan? expiry = null, CancellationToken cancellationToken = default)
         {
             if (_db == null || !_redis.IsConnected) // Defensive check, though DI should prevent this
             {
@@ -83,7 +83,7 @@ namespace MyTts.Services
             }
         }
 
-        public async Task<bool> RemoveAsync(string key)
+        public async Task<bool> RemoveAsync(string key, CancellationToken cancellationToken = default)
         {
             if (_db == null || !_redis.IsConnected)
             {
@@ -101,7 +101,7 @@ namespace MyTts.Services
             }
         }
 
-        public async Task<bool> ExistsAsync(string key)
+        public async Task<bool> ExistsAsync(string key, CancellationToken cancellationToken = default)
         {
             if (_db == null || !_redis.IsConnected)
             {
@@ -118,7 +118,7 @@ namespace MyTts.Services
                 return false;
             }
         }
-        public Task<bool> IsConnectedAsync()
+        public Task<bool> IsConnectedAsync(CancellationToken cancellationToken = default)
         {
             return Task.FromResult(_redis.IsConnected);
         }

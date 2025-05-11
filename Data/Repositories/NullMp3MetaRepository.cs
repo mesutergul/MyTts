@@ -20,33 +20,37 @@ namespace MyTts.Data.Repositories
         {
         }
 
-        public override Task<bool> ExistByIdAsync(int id)
+        public override Task<bool> ExistByIdAsync(int id, CancellationToken cancellationToken)
         {
             return Task.FromResult(false);
         }
 
-        public override Task<IEnumerable<Mp3Meta>> GetAllAsync() // Added override
+        public override Task<IEnumerable<Mp3Meta>> GetAllAsync(CancellationToken cancellationToken)
         {
             return Task.FromResult<IEnumerable<Mp3Meta>>(new List<Mp3Meta>());
         }
 
-        public override Task<Mp3Meta> GetByIdAsync(int id) // Added override
+        public override Task<Mp3Meta> GetByIdAsync(int id, CancellationToken cancellationToken)
         {
             return Task.FromResult<Mp3Meta>(null);
         }
 
-        public override Task AddAsync(Mp3Meta entity) // Added override
+        public override Task AddAsync(Mp3Meta entity, CancellationToken cancellationToken)
         {
             return Task.CompletedTask;
         }
 
-        public override Task SaveChangesAsync() // Added override
+        public override Task SaveChangesAsync(CancellationToken cancellationToken)
         {
             return Task.CompletedTask;
         }
 
-        public override void Update(Mp3Meta entity) { } // Added override
+        public override void Update(Mp3Meta entity, CancellationToken cancellationToken)
+        {
+        }
 
-        public override void Delete(Mp3Meta entity) { } // Added override
+        public override void Delete(Mp3Meta entity, CancellationToken cancellationToken)
+        {
+        }
     }
 }

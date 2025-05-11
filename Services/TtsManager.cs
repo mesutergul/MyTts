@@ -11,6 +11,9 @@ using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.Mvc;
 using MyTts.Config;
 using MyTts.Storage;
+using MyTts.Data.Repositories;
+using MyTts.Data.Entities;
+using MyTts.Repositories;
 
 namespace MyTts.Services
 {
@@ -27,7 +30,7 @@ namespace MyTts.Services
         private readonly JsonSerializerOptions _jsonOptions;
         private readonly StorageConfiguration _storageConfig;
         private readonly IAudioConversionService _audioConversionService;
-
+        private readonly Mp3MetaRepository? _mp3MetaRepository;
         public const string LocalSavePath = "audio";
         private const int MaxConcurrentOperations = 20;
 
@@ -35,6 +38,7 @@ namespace MyTts.Services
             ElevenLabsClient elevenLabsClient,
             IOptions<ElevenLabsConfig> config,
             IOptions<StorageConfiguration> storageConfig,
+            Mp3MetaRepository mp3MetaRepository,
             IRedisCacheService cache,
             Mp3StreamMerger mp3StreamMerger,
             IAudioConversionService audioConversionService,
@@ -45,12 +49,13 @@ namespace MyTts.Services
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _mp3StreamMerger = mp3StreamMerger ?? throw new ArgumentNullException(nameof(mp3StreamMerger));
             _cache = cache ?? throw new ArgumentNullException(nameof(cache));
+            _mp3MetaRepository = mp3MetaRepository;
             _audioConversionService = audioConversionService ?? throw new ArgumentNullException(nameof(audioConversionService));
             _semaphore = new SemaphoreSlim(MaxConcurrentOperations);
             _storageConfig = storageConfig.Value;
             // Initialize Google Cloud Storage
             var gcs = InitializeGoogleCloudStorage(_storageConfig);
-            if(gcs != null)
+            if (gcs != null)
             {
                 _storageClient = gcs.Value.client;
                 _bucketName = gcs.Value.bucketName;
@@ -89,7 +94,7 @@ namespace MyTts.Services
                 {
                     clientBuilder.CredentialsPath = googleCloudDisk.Config.AuthJson;
                 }
-                
+
                 var client = clientBuilder.Build();
 
                 // Verify bucket exists and is accessible  
@@ -140,11 +145,11 @@ namespace MyTts.Services
             return new FileStreamResult(uploadStream, "audio/mpeg")
             {
                 EnableRangeProcessing = true,
-                FileDownloadName = $"audio_{DateTime.UtcNow:yyyyMMddHHmmss}.mp3"
+                FileDownloadName = $"audio_{DateTime.UtcNow:yyyyMMddHHmmss}.m4a"
             };
         }
         // Optimized ProcessContentsAsync
-        public async Task<IActionResult> ProcessContentsAsync(IEnumerable<string> contents, CancellationToken cancellationToken = default)
+        public async Task<IActionResult> ProcessContentsAsync(IEnumerable<string> contents, AudioType fileType, CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(contents);
             var contentsList = contents.ToList(); // Materialize once to avoid multiple enumeration
@@ -161,7 +166,7 @@ namespace MyTts.Services
                 foreach (var content in contentsList)
                 {
                     // Create tasks but don't await them yet
-                    processingTasks.Add(ProcessContentWithSemaphoreAsync(content, Guid.NewGuid(), cancellationToken));
+                    processingTasks.Add(ProcessContentWithSemaphoreAsync(content, Guid.NewGuid(), fileType, cancellationToken));
                 }
 
                 // Wait for all tasks to complete
@@ -192,12 +197,13 @@ namespace MyTts.Services
         private async Task<(string LocalPath, AudioProcessor Processor)> ProcessContentWithSemaphoreAsync(
             string content,
             Guid id,
+            AudioType fileType,
             CancellationToken cancellationToken)
         {
             await _semaphore.WaitAsync(cancellationToken);
             try
             {
-                return await ProcessContentAsync(content, id, cancellationToken);
+                return await ProcessContentAsync(content, id, fileType, cancellationToken);
             }
             finally
             {
@@ -206,36 +212,32 @@ namespace MyTts.Services
         }
 
         // Optimized version of ProcessContentAsync
-        public async Task<(string LocalPath, AudioProcessor FileData)> ProcessContentAsync(string text, Guid id, CancellationToken cancellationToken)
+        public async Task<(string LocalPath, AudioProcessor FileData)> ProcessContentAsync(string text, Guid id, AudioType fileType, CancellationToken cancellationToken)
         {
-            var fileName = $"speech_{id}.m4a"; // Updated extension for MP4/AAC
+            var fileName = $"speech_{id}.{fileType.ToString().ToLower()}"; // m4a container for AAC
             var localPath = Path.Combine(LocalSavePath, fileName);
 
             try
             {
-                // 1. Generate voice using ElevenLabs
-                var voice = await _elevenLabsClient.VoicesEndpoint
-                    .GetVoiceAsync(_config.Value.VoiceId, false, cancellationToken);
+                // var voice = Voice.Arnold;
+                // Fetch voice and create request in parallel if CreateTtsRequestAsync doesn't depend on voice
+                var voiceTask = _elevenLabsClient.VoicesEndpoint
+                    .GetVoiceAsync(_config.Value.VoiceId, withSettings: false, cancellationToken);
 
-                var request = await CreateTtsRequestAsync(voice, text);
+                var requestTask = voiceTask.ContinueWith(async vt =>
+                {
+                    var voice = await vt;
+                    return await CreateTtsRequestAsync(voice, text);
+                }, cancellationToken, TaskContinuationOptions.OnlyOnRanToCompletion, TaskScheduler.Default).Unwrap();
 
-                ElevenLabs.VoiceClip elevenLabsVoiceClip = await _elevenLabsClient.TextToSpeechEndpoint
-                    .TextToSpeechAsync(request, null, cancellationToken);
+                // Generate audio clip from ElevenLabs
+                await using VoiceClip voiceClip = await _elevenLabsClient.TextToSpeechEndpoint
+                    .TextToSpeechAsync(await requestTask, null, cancellationToken);
 
-                // 2. Convert MP3 to M4A using the audio conversion service
-                var m4aPath = await _audioConversionService
-                    .ConvertMp3ToM4aAsync(elevenLabsVoiceClip.ClipData.ToArray(), cancellationToken);
+                await using var audioProcessor = new AudioProcessor(voiceClip);
 
-                // 3. Load converted audio into AudioProcessor
-                var audioData = await File.ReadAllBytesAsync(m4aPath, cancellationToken);
-                var voiceClip = new VoiceClip(audioData);
-                var audioProcessor = new AudioProcessor(voiceClip);
-
-                // 4. Save to desired local path (renaming the temp file)
-                File.Move(m4aPath, localPath, overwrite: true);
-
-                // 5. Start all operations concurrently
-                var saveTasks = new[]
+                // Launch all I/O-bound tasks in parallel
+                var tasks = new Task[]
                 {
                     SaveLocallyAsync(audioProcessor, localPath, cancellationToken),
                     UploadToCloudAsync(audioProcessor, fileName, cancellationToken),
@@ -243,7 +245,7 @@ namespace MyTts.Services
                     StoreMetadataRedisAsync(id, text, localPath, fileName, cancellationToken)
                 };
 
-                await Task.WhenAll(saveTasks);
+                await Task.WhenAll(tasks);
 
                 _logger.LogInformation("Processed content {Id}: {FileName}", id, fileName);
                 return (localPath, audioProcessor);
@@ -254,8 +256,6 @@ namespace MyTts.Services
                 throw;
             }
         }
-
-
         private Task<TextToSpeechRequest> CreateTtsRequestAsync(Voice voice, string text)
         {
             var voiceSettings = new VoiceSettings
@@ -283,6 +283,7 @@ namespace MyTts.Services
         {
             // Use FileOptions for better performance
             var fileOptions = FileOptions.Asynchronous | FileOptions.SequentialScan;
+            // Directory.CreateDirectory(Path.GetDirectoryName(localPath)!); // Ensure path exists
 
             await using var fileStream = new FileStream(
                 localPath,
@@ -292,7 +293,8 @@ namespace MyTts.Services
                 bufferSize: 65536,
                 fileOptions);
 
-            await processor.CopyToAsync(fileStream, cancellationToken);
+            await processor.CopyToAsync(fileStream, cancellationToken).ConfigureAwait(false);
+            _logger.LogInformation("Saved file locally: {LocalPath}", localPath);
         }
 
         // Optimized version of UploadToCloudAsync
@@ -304,7 +306,7 @@ namespace MyTts.Services
                 return;
             }
             // Use the new async method to get the stream efficiently
-            await using var uploadStream = await processor.GetStreamForCloudUploadAsync(cancellationToken);
+            await using var uploadStream = await processor.GetStreamForCloudUploadAsync(cancellationToken).ConfigureAwait(false);
 
             // Use optimized upload options
             var uploadOptions = new UploadObjectOptions
@@ -320,11 +322,12 @@ namespace MyTts.Services
                 uploadStream,
                 options: uploadOptions,
                 cancellationToken: cancellationToken);
+            _logger.LogInformation("Uploaded file to cloud: {FileName}", fileName);
         }
 
         private async Task StoreMetadataRedisAsync(Guid id, string text, string localPath, string fileName, CancellationToken cancellationToken)
         {
-            if (_cache==null && await _cache!.IsConnectedAsync()) return;
+            if (_cache == null && await _cache!.IsConnectedAsync()) return;
             var metadata = new AudioMetadata
             {
                 Id = id,
@@ -338,11 +341,16 @@ namespace MyTts.Services
 
         }
 
-        private Task SaveMetadataSqlAsync(Guid id, string text, string localPath, string fileName, CancellationToken cancellationToken)
+        private async Task SaveMetadataSqlAsync(Guid id, string text, string localPath, string fileName, CancellationToken cancellationToken)
         {
-            // TODO: Implement database operations
-
-            return Task.CompletedTask;
+            var mp3Meta = new Mp3Meta
+            {
+            FileId=1,
+            FileUrl=localPath,
+            Language="tr"
+            };
+            await _mp3MetaRepository.AddAsync(mp3Meta, cancellationToken).ConfigureAwait(false);
+            _logger.LogDebug("Saved metadata to SQL via EF for {Id}", id);
         }
 
         public async Task<string> MergeContentsAsync(
@@ -734,6 +742,20 @@ namespace MyTts.Services
                 cancellationToken: cancellationToken);
         }
         */
+        /* ElevenLabs.VoiceClip elevenLabsVoiceClip = await _elevenLabsClient.TextToSpeechEndpoint
+            .TextToSpeechAsync(request, null, cancellationToken);
 
+        // 2. Convert MP3 to M4A using the audio conversion service
+        var m4aPath = await _audioConversionService
+            .ConvertMp3ToM4aAsync(elevenLabsVoiceClip.ClipData.ToArray(), cancellationToken);
+
+        // 3. Load converted audio into AudioProcessor
+        var audioData = await File.ReadAllBytesAsync(m4aPath, cancellationToken);
+        var voiceClip = new VoiceClip(audioData);
+        var audioProcessor = new AudioProcessor(voiceClip);
+
+        // 4. Save to desired local path (renaming the temp file)
+        File.Move(m4aPath, localPath, overwrite: true);
+        */
     }
 }

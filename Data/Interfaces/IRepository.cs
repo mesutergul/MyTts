@@ -10,13 +10,13 @@ namespace MyTts.Data.Interfaces
     where TEntity : BaseEntity 
     where TModel : class, IModel
     {
-        Task<TEntity> GetByIdAsync(int id);
-        Task<IEnumerable<TEntity>> GetAllAsync();
-        Task AddAsync(TEntity entity);
-        Task SaveChangesAsync();
-        Task<IEnumerable<TEntity>> FindAsync(Func<TEntity, bool> predicate);
-        void Update(TEntity entity);
-        void Delete(TEntity entity);
+        Task<TEntity> GetByIdAsync(int id, CancellationToken cancellationToken);
+        Task<IEnumerable<TEntity>> GetAllAsync(CancellationToken cancellationToken);
+        Task AddAsync(TEntity entity, CancellationToken cancellationToken);
+        Task SaveChangesAsync(CancellationToken cancellationToken);
+        Task<IEnumerable<TEntity>> FindAsync(Func<TEntity, bool> predicate, CancellationToken cancellationToken);
+        void Update(TEntity entity, CancellationToken cancellationToken);
+        void Delete(TEntity entity, CancellationToken cancellationToken);
     }
     
 }

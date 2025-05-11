@@ -1,74 +1,109 @@
-﻿
-
-using System.Text.Json;
+using Microsoft.AspNetCore.Mvc;
 using MyTts.Controllers;
 using MyTts.Models;
 
-namespace MyTts.Routes
+public static class ApiRoutes
 {
-    public static class ApiRoutes
+    public static void RegisterMp3Routes(IEndpointRouteBuilder endpoints)
     {
-        public static void RegisterMp3Routes(IEndpointRouteBuilder endpoints)
-        {
-            endpoints.MapGet("api/mp3/feed/{language}", async (HttpContext context, CancellationToken token) =>
+        // Group all routes under the same base path
+        var mp3Group = endpoints.MapGroup("api/mp3")
+            .WithTags("MP3"); // Add tag for Swagger documentation
+
+        // Routes that require CORS
+        var corsRoutes = mp3Group.MapGroup(string.Empty)
+            .RequireCors("AllowLocalDevelopment");
+
+        // Feed endpoint
+        mp3Group.MapGet("feed/{language}", 
+            async (HttpContext context, string language, [FromQuery] int? limit, 
+                  [FromServices] Mp3Controller controller, CancellationToken token) =>
             {
-                var controller = context.RequestServices.GetRequiredService<Mp3Controller>();
-                var language = context.Request.RouteValues["language"]?.ToString();
-                var limit = int.TryParse(context.Request.Query["limit"], out var parsedLimit) ? parsedLimit : 20;
-                await controller.Feed(context, language, limit, token);
-            }).WithName("elevenlabs.mp3.feed");
+                await controller.Feed(context, language, limit ?? 20, token);
+            })
+            .WithName("elevenlabs.mp3.feed")
+            .WithDisplayName("Get MP3 Feed")
+            .Produces(200)
+            .ProducesProblem(500);
 
-            endpoints.MapPost("api/mp3/one", async (HttpContext context, CancellationToken token) =>
+        // One endpoint (create a single MP3)
+        mp3Group.MapPost("one", 
+            async (HttpContext context, [FromBody] OneRequest request,
+                  [FromServices] Mp3Controller controller, CancellationToken token) =>
             {
-                var controller = context.RequestServices.GetRequiredService<Mp3Controller>();
+                await controller.One(context, request, token);
+            })
+            .WithName("elevenlabs.mp3.one")
+            .WithDisplayName("Create Single MP3")
+            .Accepts<OneRequest>("application/json")
+            .Produces(200)
+            .ProducesProblem(400)
+            .ProducesProblem(500);
 
-                using var reader = new StreamReader(context.Request.Body);
-                var requestBody = await reader.ReadToEndAsync(token);
-                var oneRequest = JsonSerializer.Deserialize<OneRequest>(requestBody,
-                     new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-
-                await controller.One(context, oneRequest, token);
-            }).WithName("elevenlabs.mp3.one");
-
-            endpoints.MapPost("api/mp3/list", async (HttpContext context, CancellationToken token) =>
+        // List endpoint (create multiple MP3s)
+        mp3Group.MapPost("list", 
+            async (HttpContext context, [FromBody] ListRequest request,
+                  [FromServices] Mp3Controller controller, CancellationToken token) =>
             {
-                var controller = context.RequestServices.GetRequiredService<Mp3Controller>();
-                using var reader = new StreamReader(context.Request.Body);
-                var requestBody = await reader.ReadToEndAsync(token);
-                var listRequest = JsonSerializer.Deserialize<ListRequest>(requestBody,
-                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                await controller.List(context, listRequest, token);
-            }).WithName("elevenlabs.mp3.list" );
+                await controller.List(context, request, token);
+            })
+            .WithName("elevenlabs.mp3.list")
+            .WithDisplayName("Create Multiple MP3s")
+            .Accepts<ListRequest>("application/json")
+            .Produces(200)
+            .ProducesProblem(400)
+            .ProducesProblem(500);
 
-            endpoints.MapGet("api/mp3/one/{id}", async (HttpContext context, CancellationToken token) =>
-            {             
-                var controller = context.RequestServices.GetRequiredService<Mp3Controller>();
-                var id = context.Request.RouteValues["id"]?.ToString();
+        // Get file endpoint
+        corsRoutes.MapGet("one/{id}", 
+            async (HttpContext context, string id,
+                  [FromServices] Mp3Controller controller, CancellationToken token) =>
+            {
                 await controller.GetFile(context, id, token);
-            }).RequireCors("AllowLocalDevelopment") // Apply CORS policy
-                .WithName("elevenlabs.mp3.getone" );
+            })
+            .WithName("elevenlabs.mp3.getone")
+            .WithDisplayName("Get MP3 File")
+            .Produces(200)
+            .ProducesProblem(404)
+            .ProducesProblem(500);
 
-            endpoints.MapGet("api/mp3/last/{language}", async (HttpContext context, CancellationToken token) =>
+        // Get last MP3 for language endpoint
+        mp3Group.MapGet("last/{language}", 
+            async (HttpContext context, string language,
+                  [FromServices] Mp3Controller controller, CancellationToken token) =>
             {
-                var controller = context.RequestServices.GetRequiredService<Mp3Controller>();
-                var language = context.Request.RouteValues["language"]?.ToString();
                 await controller.GetLast(context, language, token);
-            }).WithName("elevenlabs.mp3.getlast" );
+            })
+            .WithName("elevenlabs.mp3.getlast")
+            .WithDisplayName("Get Last MP3 For Language")
+            .Produces(200)
+            .ProducesProblem(404)
+            .ProducesProblem(500);
 
+        // Download file endpoint
+        corsRoutes.MapGet("ones/{id}", 
+            async (HttpContext context, string id,
+                  [FromServices] Mp3Controller controller, CancellationToken token) =>
+            {
+                await controller.DownloadFile(context, id, token);
+            })
+            .WithName("elevenlabs.mp3.getones")
+            .WithDisplayName("Download MP3 File")
+            .Produces(200)
+            .ProducesProblem(404)
+            .ProducesProblem(500);
 
-            // New endpoint for merging multiple MP3 files
-            //endpoints.MapPost("api/mp3/merge", async (HttpContext context, CancellationToken cancellationToken) =>
-            //{
-            //    var controller = context.RequestServices.GetRequiredService<Mp3Controller>();
-
-            //    // Read the request body to get the list of file IDs to merge
-            //    using var reader = new StreamReader(context.Request.Body);
-            //    var requestBody = await reader.ReadToEndAsync(cancellationToken);
-            //    var fileIds = JsonSerializer.Deserialize<List<string>>(requestBody,
-            //        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-
-            //    await controller.MergeMp3Files(context, fileIds, cancellationToken);
-            //}).WithName(new { Name = "elevenlabs.mp3.merge" });
-        }
+        // Say text endpoint
+        corsRoutes.MapGet("onesay/{id}", 
+            async (HttpContext context, string id,
+                  [FromServices] Mp3Controller controller, CancellationToken token) =>
+            {
+                await controller.SayText(context, id, token);
+            })
+            .WithName("elevenlabs.mp3.getonesay")
+            .WithDisplayName("Say Text")
+            .Produces(200)
+            .ProducesProblem(404)
+            .ProducesProblem(500);
     }
 }

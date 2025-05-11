@@ -185,7 +185,7 @@ namespace MyTts.Services
             try
             {
                 // Convert directly to Memory<byte> if possible to avoid copy
-                return new VoiceClip(voiceClip.ClipData.ToArray());
+                return new VoiceClip(voiceClip.ClipData);
             }
             catch (Exception ex)
             {

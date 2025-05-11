@@ -11,31 +11,31 @@ namespace MyTts.Services
             _logger = logger;
         }
 
-        public Task<T?> GetAsync<T>(string key)
+        public Task<T?> GetAsync<T>(string key, CancellationToken cancellationToken)
         {
             _logger.LogWarning("Redis is not available. Returning default value for key: {Key}", key);
             return Task.FromResult<T?>(default);
         }
 
-        public Task SetAsync<T>(string key, T value, TimeSpan? expiry = null)
+        public Task SetAsync<T>(string key, T value, TimeSpan? expiry = null, CancellationToken cancellationToken = default)
         {
             _logger.LogWarning("Redis is not available. Skipping cache set for key: {Key}", key);
             return Task.CompletedTask;
         }
 
-        Task<bool> IRedisCacheService.RemoveAsync(string key)
+        Task<bool> IRedisCacheService.RemoveAsync(string key, CancellationToken cancellationToken = default)
         {
             _logger.LogWarning("Redis is not available. Skipping cache remove for key: {Key}", key);
             return Task.FromResult(false);
         }
 
-        Task<bool> IRedisCacheService.ExistsAsync(string key)
+        Task<bool> IRedisCacheService.ExistsAsync(string key, CancellationToken cancellationToken = default)
         {
             _logger.LogWarning("Redis is not available. Skipping exists check for key: {Key}", key);
             return Task.FromResult(false);
         }
 
-        Task<bool> IRedisCacheService.IsConnectedAsync()
+        Task<bool> IRedisCacheService.IsConnectedAsync(CancellationToken cancellationToken = default)
         {
             _logger.LogWarning("Redis is not available. Skipping connection check.");
             return Task.FromResult(false);

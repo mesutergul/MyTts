@@ -24,7 +24,7 @@ namespace MyTts.Data.Repositories
             _logger = logger ?? throw new ArgumentNullException(nameof(logger), "Logger cannot be null");
         }
 
-        public virtual async Task<IEnumerable<TEntity>> GetAllAsync()
+        public virtual async Task<IEnumerable<TEntity>> GetAllAsync(CancellationToken cancellationToken)
         {
             if (_dbSet == null)
             {
@@ -35,7 +35,7 @@ namespace MyTts.Data.Repositories
             return await _dbSet.ToListAsync();
         }
 
-        public virtual async Task<TEntity?> GetByIdAsync(int id)
+        public virtual async Task<TEntity?> GetByIdAsync(int id, CancellationToken cancellationToken)
         {
             if (_dbSet == null)
             {
@@ -46,7 +46,7 @@ namespace MyTts.Data.Repositories
             return entity ?? throw new InvalidOperationException($"Entity with id {id} not found");
         }
 
-        public virtual async Task AddAsync(TEntity entity)
+        public virtual async Task AddAsync(TEntity entity, CancellationToken cancellationToken)
         {
             if (_dbSet == null || _context == null)
             {
@@ -57,7 +57,7 @@ namespace MyTts.Data.Repositories
             await _context!.SaveChangesAsync();
         }
 
-        public virtual void Update(TEntity entity)
+        public virtual void Update(TEntity entity, CancellationToken cancellationToken)
         {
             if (_dbSet == null)
             {
@@ -67,7 +67,7 @@ namespace MyTts.Data.Repositories
             _dbSet.Update(entity);
         }
 
-        public virtual void Delete(TEntity entity)
+        public virtual void Delete(TEntity entity, CancellationToken cancellationToken)
         {
             if (_dbSet == null)
             {
@@ -77,17 +77,17 @@ namespace MyTts.Data.Repositories
             _dbSet.Remove(entity);
         }
 
-        public virtual async Task SaveChangesAsync()
+        public virtual async Task SaveChangesAsync(CancellationToken cancellationToken)
         {
             if (_context == null)
             {
                 _logger.LogError("Cannot save changes — database context is not available.");
                 return;
             }
-            await _context.SaveChangesAsync();
+            await _context.SaveChangesAsync(cancellationToken);
         }
 
-        public virtual async Task<TEntity?> FindAsync(Func<TEntity, bool> predicate)
+        public virtual async Task<TEntity?> FindAsync(Func<TEntity, bool> predicate, CancellationToken cancellationToken)
         {
             if (_dbSet == null)
             {
@@ -99,7 +99,7 @@ namespace MyTts.Data.Repositories
             return await Task.FromResult(result ?? null);
         }
 
-        Task<IEnumerable<TEntity>> IRepository<TEntity, TModel>.FindAsync(Func<TEntity, bool> predicate)
+        Task<IEnumerable<TEntity>> IRepository<TEntity, TModel>.FindAsync(Func<TEntity, bool> predicate, CancellationToken cancellationToken)
         {
             if (_dbSet == null)
             {
@@ -109,7 +109,7 @@ namespace MyTts.Data.Repositories
 
             return Task.FromResult(_dbSet.Where(predicate).AsEnumerable());
         }
-        public virtual async Task<bool> ExistByIdAsync(int id)
+        public virtual async Task<bool> ExistByIdAsync(int id, CancellationToken cancellationToken)
         {
             if (_context == null || _dbSet == null)
             {

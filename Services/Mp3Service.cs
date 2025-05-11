@@ -5,13 +5,14 @@ using Microsoft.AspNetCore.Mvc;
 using MyTts.Data.Interfaces;
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;
+using MyTts.Data.Entities;
 
 namespace MyTts.Services
 {
     public class Mp3Service : IMp3Service
     {
         private readonly ILogger<Mp3Service> _logger;
-        private readonly IMp3FileRepository _mp3FileRepository;
+        private readonly IMp3Repository _mp3FileRepository;
         private readonly TtsManager _ttsManager;
         private readonly NewsFeedsService _newsFeedsService;
         private readonly IRedisCacheService? _cache;
@@ -22,57 +23,73 @@ namespace MyTts.Services
 
         public Mp3Service(
             ILogger<Mp3Service> logger,
-            IMp3FileRepository mp3FileRepository,
+            IMp3Repository mp3FileRepository,
             TtsManager ttsManager,
-            IRedisCacheService _cache,
+            IRedisCacheService cache,
             NewsFeedsService newsFeedsService)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _mp3FileRepository = mp3FileRepository ?? throw new ArgumentNullException(nameof(mp3FileRepository));
             _ttsManager = ttsManager ?? throw new ArgumentNullException(nameof(ttsManager));
-            _cache = _cache ?? throw new ArgumentNullException(nameof(_cache));
+            _cache = cache ?? throw new ArgumentNullException(nameof(cache));
             _newsFeedsService = newsFeedsService ?? throw new ArgumentNullException(nameof(newsFeedsService));
             _processingSemaphore = new SemaphoreSlim(MaxConcurrentProcessing);
         }
-        public async Task<IActionResult> CreateMultipleMp3Async(string language, int limit, CancellationToken cancellationToken)
+        public async Task<IActionResult> CreateMultipleMp3Async(string language, int limit, AudioType fileType, CancellationToken cancellationToken)
         {
             try
             {
                 await _processingSemaphore.WaitAsync();
                 var contents = await _newsFeedsService.GetFeedByLanguageAsync(language, limit);
-                await _ttsManager.ProcessContentsAsync(contents);
+                await _ttsManager.ProcessContentsAsync(contents, fileType);
                 return new EmptyResult();
-            }
-            finally
-            {
-                _processingSemaphore.Release();
-            }
-      }
-        public async Task<IMp3> CreateSingleMp3Async(OneRequest request, CancellationToken cancellationToken)
-        {
-            try
-            {
-                var content = await _newsFeedsService.GetFeedUrl(request.News);
-                await CreateSingleMp3Async(content, cancellationToken);
-                return await _mp3FileRepository.LoadMp3MetaByNewsIdAsync<IMp3>(request.News);
-                //await _processingSemaphore.WaitAsync();
-                //var content = await _newsFeedsService.GetFeedUrl(request.News);
-                // (filePath, processor) tu= await _ttsManager.ProcessContentAsync(content, Guid.NewGuid(), cancellationToken);
-                //return await _mp3FileRepository.LoadMp3MetaByPathAsync(tu.filePath);
             }
             finally
             {
                 _processingSemaphore.Release();
             }
         }
-        public async Task<IActionResult> CreateSingleMp3Async(string content, CancellationToken cancellationToken)
+        public async Task<string> CreateSingleMp3Async(OneRequest request, AudioType fileType, CancellationToken cancellationToken)
+        {
+            try
+            {
+               // var content = "May whatever is possible be done to reach an authentic, true and lasting peace as quickly as possible.";
+                //await _newsFeedsService.GetFeedUrl(request.News);
+               // var content = "Make sure you're awaiting all async operations properly, especially if you're using scoped services in async scenarios";
+               // var content = "This is a common issue in ASP.NET Core applications, especially when working with services that need to maintain state or resources across asynchronous operations";
+               //var content = "As the error message indicated, the API accepts only one method of authentication, not both simultaneously.";
+                var content ="I see the issue in your code. The problem is with how you're setting up the Authorization header. Let me fix that for you";
+                return await RequestSingleMp3Async(content, fileType, cancellationToken);
+                // return await _mp3FileRepository.LoadMp3MetaByNewsIdAsync(request.News, fileType, cancellationToken)
+                //     ?? throw new KeyNotFoundException($"MP3 file not found for ID: {request.News}");
+                //await _processingSemaphore.WaitAsync();
+                //var content = await _newsFeedsService.GetFeedUrl(request.News);
+                // (filePath, processor) tu= await _ttsManager.ProcessContentAsync(content, Guid.NewGuid(), cancellationToken);
+                //return await _mp3FileRepository.LoadMp3MetaByPathAsync(tu.filePath);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error creating single MP3 file");
+                throw;
+            }
+            finally
+            {
+                _processingSemaphore.Release();
+            }
+        }
+        public async Task<string> RequestSingleMp3Async(string content, AudioType fileType, CancellationToken cancellationToken)
         {
             try
             {
                 await _processingSemaphore.WaitAsync();
-                var (filePath, processor) = await _ttsManager.ProcessContentAsync(content, Guid.NewGuid(), cancellationToken);
-                await processor.GetStreamForCloudUploadAsync(cancellationToken);
-                return new EmptyResult();
+                var (filePath, processor) = await _ttsManager.ProcessContentAsync(content, Guid.NewGuid(), fileType, cancellationToken);
+                return filePath;
+                // return await processor.GetStreamForCloudUploadAsync(cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error processing single MP3 file");
+                throw;
             }
             finally
             {
@@ -86,24 +103,24 @@ namespace MyTts.Services
                 return await tu.processor.GetStreamForCloudUpload(cancellationToken);
 
          */
-        public async Task<IEnumerable<IMp3>> GetFeedByLanguageAsync(ListRequest listRequest, CancellationToken cancellationToken)
+        public async Task<IEnumerable<Mp3Meta>> GetFeedByLanguageAsync(ListRequest listRequest, CancellationToken cancellationToken)
         {
             var cacheKey = $"feed_{listRequest.Language}";
-            return _cache != null 
-                ? await _cache.GetAsync<IEnumerable<IMp3>>(cacheKey) ?? Enumerable.Empty<IMp3>()
-                : Enumerable.Empty<IMp3>();
+            return _cache != null
+                ? await _cache.GetAsync<IEnumerable<Mp3Meta>>(cacheKey) ?? Enumerable.Empty<Mp3Meta>()
+                : Enumerable.Empty<Mp3Meta>();
         }
-        public async Task<IMp3> GetMp3FileAsync(string id, CancellationToken cancellationToken)
+        public async Task<Mp3Meta> GetMp3FileAsync(string id, AudioType fileType, CancellationToken cancellationToken)
         {
             ArgumentException.ThrowIfNullOrEmpty(id);
-            return await _mp3FileRepository.LoadMp3MetaByNewsIdAsync<IMp3>(id)
+            return await _mp3FileRepository.LoadMp3MetaByNewsIdAsync(id, fileType, cancellationToken)
                 ?? throw new KeyNotFoundException($"MP3 file not found for ID: {id}");
         }
 
-        public async Task<IMp3> GetLastMp3ByLanguageAsync(string language, CancellationToken cancellationToken)
+        public async Task<Mp3Meta> GetLastMp3ByLanguageAsync(string language, AudioType fileType, CancellationToken cancellationToken)
         {
             ArgumentException.ThrowIfNullOrEmpty(language);
-            return await _mp3FileRepository.LoadLatestMp3MetaByLanguageAsync(language);
+            return await _mp3FileRepository.LoadLatestMp3MetaByLanguageAsync(language, fileType, cancellationToken);
         }
         // Fix FileStream properties in all methods
         private FileStreamResult CreateFileStreamResponse(
@@ -112,7 +129,7 @@ namespace MyTts.Services
             Dictionary<string, string> headers,
             int bufferSize = 81920)
         {
-            var result = new FileStreamResult(stream, "audio/mpeg")
+            var result = new FileStreamResult(stream, "audio/mp4")
             {
                 EnableRangeProcessing = true,
                 FileDownloadName = fileName
@@ -172,8 +189,8 @@ namespace MyTts.Services
         {
             return Path.Combine(AudioBasePath, fileName);
         }
-        public async Task<bool> FileExistsAnywhereAsync(string id) {
-            return await _mp3FileRepository.FileExistsAnywhereAsync(id);
+        public async Task<bool> FileExistsAnywhereAsync(string id, AudioType fileType, CancellationToken cancellationToken) {
+            return await _mp3FileRepository.FileExistsAnywhereAsync(id, fileType, cancellationToken);
         }
         /// <summary>
         /// Streams MP3 file by IDto the client, optimized for audio streaming with proper caching
@@ -181,24 +198,25 @@ namespace MyTts.Services
         /// <param name="id"></param>
         /// <param name="cancellationToken"></param>
         /// <returns></returns>
-        public async Task<IActionResult> StreamMp3(string id, CancellationToken cancellationToken = default)
+        public async Task<IActionResult> StreamMp3(string id, AudioType fileType, CancellationToken cancellationToken = default)
         {
             try
             {
                 /// First tries to get the file metadata from cache
                 /// If not in cache, loads and caches it from the repository
                 //var mp3File = await _mp3FileRepository.GetFromCacheAsync<IMp3>($"mp3stream:{id}")
-                //    ?? await _mp3FileRepository.LoadAndCacheMp3File<IMp3>(id);
-              
-                if (!await FileExistsAnywhereAsync(id))
+                //    ?? await _mp3FileRepository.LoadAndCacheMp3File<IMp3>(id, cancellationToken);
+
+                if (!await FileExistsAnywhereAsync(id, fileType, cancellationToken))
                 {
                     _logger.LogWarning("MP3 file metadata not found for ID: {Id}", id);
                     return new NotFoundObjectResult(new { message = "MP3 file not found." });
                 }
-                var mp3File = await _mp3FileRepository.GetFromCacheAsync<IMp3>($"mp3stream:{id}");
+                var mp3File = await _mp3FileRepository.GetFromCacheAsync($"mp3stream:{id}", cancellationToken)
+                    ?? await _mp3FileRepository.LoadMp3MetaByNewsIdAsync(id, fileType, cancellationToken);
                 string filePath = GetAudioFilePath(mp3File.FileUrl);
                 /// Verifies physical file exists
-                if (!await _mp3FileRepository.Mp4FileExistsAsync(filePath))
+                if (!await _mp3FileRepository.Mp4FileExistsAsync(filePath, fileType, cancellationToken))
                 {
                     _logger.LogWarning("MP3 file not found at path: {Path}", filePath);
                     return new NotFoundObjectResult(new { message = "MP3 file not found." });
@@ -217,29 +235,33 @@ namespace MyTts.Services
                 return CreateErrorResponse(ex, "An error occurred while streaming the audio.");
             }
         }
-        private async Task<IMp3?> GetOrLoadMp3File(string id)
+        private async Task<Mp3Meta> GetOrLoadMp3File(string id, AudioType fileType, CancellationToken cancellationToken)
         {
             var cacheKey = $"mp3stream:{id}";
-            return await _mp3FileRepository.GetFromCacheAsync<IMp3>(cacheKey)
-                ?? await _mp3FileRepository.LoadAndCacheMp3File<IMp3>(id);
+            return await _mp3FileRepository.GetFromCacheAsync(cacheKey, cancellationToken)
+                ?? await _mp3FileRepository.LoadAndCacheMp3File(id, fileType, cancellationToken);
         }
-        public async Task<Stream> GetMp4File(string id, CancellationToken cancellationToken)
+         public async Task<byte[]> GetMp3FileBytes(string id, AudioType fileType, CancellationToken cancellationToken)
         {
-          return await _mp3FileRepository.ReadLargeFileAsStreamAsync(id, 81920, cancellationToken);    
+            return await _mp3FileRepository.LoadMp3FileAsync(id, fileType, cancellationToken);
+        }
+        public async Task<Stream> GetAudioFileStream(string id, AudioType fileType, CancellationToken cancellationToken)
+        {
+          return await _mp3FileRepository.ReadLargeFileAsStreamAsync(id, 81920, fileType, cancellationToken);
         }
         /// <summary>
         /// Attempts to load existing file
         ///	If not found, creates new MP3 from content
         /// </summary>
-        private async Task<(Stream FileData, string LocalPath)> GetOrProcessMp3File(string id, CancellationToken cancellationToken)
+        private async Task<(Stream FileData, string LocalPath)> GetOrProcessMp3File(string id, AudioType fileType, CancellationToken cancellationToken)
         {
-            var fileData = await _mp3FileRepository.LoadMp3FileAsync(id, cancellationToken);
+            var fileData = await _mp3FileRepository.LoadMp3FileAsync(id, fileType, cancellationToken);
             var localPath = id;
             Stream? fileStream = null;
             if (fileData == null || fileData.Length == 0)
             {
                 var content = _newsFeedsService.GetFeedUrl(id);
-                (localPath,var processor)= await _ttsManager.ProcessContentAsync(content, Guid.NewGuid(), cancellationToken);
+                (localPath,var processor)= await _ttsManager.ProcessContentAsync(content, Guid.NewGuid(), fileType, cancellationToken);
                 fileStream = await processor.GetStreamForCloudUploadAsync(cancellationToken);
             } else fileStream= new MemoryStream(fileData);
             return (fileStream, localPath);
@@ -253,7 +275,7 @@ namespace MyTts.Services
         }
         private IActionResult CreateDownloadResponse(byte[] fileData, string localPath)
         {
-            return new FileContentResult(fileData, "audio/mpeg")
+            return new FileContentResult(fileData, "audio/mp4")
             {
                 FileDownloadName = Path.GetFileName(localPath),
                 EnableRangeProcessing = true
@@ -269,11 +291,11 @@ namespace MyTts.Services
         /// <param name="id"></param>
         /// <param name="cancellationToken"></param>
         /// <returns></returns>
-        public async Task<IActionResult> DownloadMp3(string id, CancellationToken cancellationToken)
+        public async Task<IActionResult> DownloadMp3(string id, AudioType fileType, CancellationToken cancellationToken)
         {
             try
             {
-                var (fileStream, localPath) = await GetOrProcessMp3File(id, cancellationToken);
+                var (fileStream, localPath) = await GetOrProcessMp3File(id, fileType, cancellationToken);
                 return CreateStreaming(fileStream, localPath);
             }
             catch (Exception ex)
@@ -331,7 +353,7 @@ namespace MyTts.Services
         //         };
         //     }
         // }
-        public async Task<IActionResult> DownloadMp3FromDisk(string id, CancellationToken cancellationToken = default)
+        public async Task<IActionResult> DownloadMp3FromDisk(string id, AudioType fileType, CancellationToken cancellationToken = default)
         {
             try
             {
@@ -347,7 +369,7 @@ namespace MyTts.Services
                 else
                 {
                     // Get file metadata from repository
-                    var mp3File = await _mp3FileRepository.LoadMp3MetaByNewsIdAsync<IMp3>(id);
+                    var mp3File = await _mp3FileRepository.LoadMp3MetaByNewsIdAsync(id, fileType, cancellationToken);
                     if (mp3File == null)
                     {
                         _logger.LogWarning("MP3 file metadata not found for ID: {Id}", id);
@@ -361,7 +383,7 @@ namespace MyTts.Services
                 }
 
                 // Check if file exists
-                if (!await _mp3FileRepository.Mp4FileExistsAsync(filePath))
+                if (!await _mp3FileRepository.Mp4FileExistsAsync(filePath, fileType, cancellationToken))
                 {
                     _logger.LogWarning("MP3 file not found at path: {Path}", filePath);
                     return new NotFoundObjectResult(new { message = "MP3 file not found." });
@@ -385,7 +407,7 @@ namespace MyTts.Services
                     FileOptions.Asynchronous | FileOptions.SequentialScan
                 );
 
-                return new FileStreamResult(stream, "audio/mpeg")
+                return new FileStreamResult(stream, "audio/mp4")
                 {
                     FileDownloadName = Path.GetFileName(filePath),
                     EnableRangeProcessing = true // Enables partial content requests
@@ -425,13 +447,13 @@ namespace MyTts.Services
             await Task.CompletedTask;
         }
 
-        public async Task<IEnumerable<IMp3>> GetMp3FileListAsync(CancellationToken cancellationToken)
+        public async Task<IEnumerable<Mp3Meta>> GetMp3FileListAsync(AudioType fileType, CancellationToken cancellationToken)
         {
             // return await _mp3FileRepository.LoadAllMp3MetaAsync();
             throw new NotImplementedException();
         }
 
-        public async Task<IEnumerable<IMp3>> GetMp3FileListByLanguageAsync(string language, CancellationToken cancellationToken)
+        public async Task<IEnumerable<Mp3Meta>> GetMp3FileListByLanguageAsync(string language, AudioType fileType, CancellationToken cancellationToken)
         {
             ArgumentException.ThrowIfNullOrEmpty(language);
             // return await _mp3FileRepository.LoadMp3MetaByLanguageAsync(language);

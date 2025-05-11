@@ -71,84 +71,84 @@ static void ConfigureServices(IServiceCollection services, IConfiguration config
 public static class ServiceCollectionExtensions
 {
     private static bool TestSqlConnection(string connectionString)
-{
-    try
     {
-        using var conn = new SqlConnection(connectionString);
-        conn.Open();
-        return true;
-    }
-    catch
-    {
-        return false;
-    }
-}
-public static IServiceCollection AddCoreServices(this IServiceCollection services, IConfiguration configuration)
-{
-    var connectionString = configuration.GetConnectionString("DefaultConnection");
-    var dbAvailable = !string.IsNullOrEmpty(connectionString) && TestSqlConnection(connectionString);
-
-    if (dbAvailable)
-    {
-        services.AddDbContext<AppDbContext>(options =>
+        try
         {
-            options.UseSqlServer(connectionString, sqlOptions =>
+            using var conn = new SqlConnection(connectionString);
+            conn.Open();
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+    public static IServiceCollection AddCoreServices(this IServiceCollection services, IConfiguration configuration)
+    {
+        var connectionString = configuration.GetConnectionString("DefaultConnection");
+        var dbAvailable = !string.IsNullOrEmpty(connectionString) && TestSqlConnection(connectionString);
+
+        if (dbAvailable)
+        {
+            services.AddDbContext<AppDbContext>(options =>
             {
-                sqlOptions.EnableRetryOnFailure(3);
-                sqlOptions.CommandTimeout(30);
+                options.UseSqlServer(connectionString, sqlOptions =>
+                {
+                    sqlOptions.EnableRetryOnFailure(3);
+                    sqlOptions.CommandTimeout(30);
+                });
             });
+
+            services.AddScoped(typeof(IRepository<,>), typeof(Repository<,>));
+            services.AddScoped<Mp3MetaRepository>();
+            //services.AddScoped<NewsRepository>();
+
+            services.AddScoped<IRepository<Mp3Meta, IMp3>>(sp => sp.GetRequiredService<Mp3MetaRepository>());
+            //services.AddScoped<IRepository<News, INews>>(sp => sp.GetRequiredService<NewsRepository>());
+
+            // AppDbContextFactory requires AppDbContext, so register it only if available
+            services.AddScoped<IAppDbContextFactory, DefaultAppDbContextFactory>();
+        }
+        else
+        {
+            // Register dummy DbContext to satisfy dependencies
+            services.AddDbContext<AppDbContext>(options => { });
+
+            //services.AddSingleton<IRepository<News, INews>, NullNewsRepository>();
+
+            // In fallback mode, use a dummy factory or skip registration if unused
+            services.AddSingleton<IAppDbContextFactory, NullAppDbContextFactory>();
+            services.AddSingleton<Mp3MetaRepository, NullMp3MetaRepository>();
+        }
+
+        // Prevent AutoMapper from scanning all assemblies (which causes the SqlGuidCaster crash)
+        services.AddAutoMapper(cfg => { }, typeof(Program));
+
+        // Application services
+        services.AddScoped<Mp3Repository>();
+        services.AddScoped<IMp3Repository>(sp => sp.GetRequiredService<Mp3Repository>());
+
+        services.AddScoped<Mp3Service>();
+        services.AddScoped<IMp3Service>(sp => sp.GetRequiredService<Mp3Service>());
+        services.AddScoped<IAudioConversionService, AudioConversionService>();
+
+        services.AddScoped<NewsFeedsService>();
+
+        services.AddSingleton<Mp3StreamMerger>();
+
+        services.AddTransient<Mp3Controller>();
+
+        services.AddLogging(logging =>
+        {
+            logging.AddConsole();
+            logging.AddDebug();
+            logging.AddFilter("Microsoft", LogLevel.Warning);
+            logging.AddFilter("System", LogLevel.Warning);
+            logging.AddFilter("MyTts", LogLevel.Information);
         });
 
-        services.AddScoped(typeof(IRepository<,>), typeof(Repository<,>));
-        services.AddScoped<Mp3MetaRepository>();
-        //services.AddScoped<NewsRepository>();
-
-        services.AddScoped<IRepository<Mp3Meta, IMp3>>(sp => sp.GetRequiredService<Mp3MetaRepository>());
-        //services.AddScoped<IRepository<News, INews>>(sp => sp.GetRequiredService<NewsRepository>());
-
-        // AppDbContextFactory requires AppDbContext, so register it only if available
-        services.AddScoped<IAppDbContextFactory, DefaultAppDbContextFactory>();
+        return services;
     }
-    else
-    {
-        // Register dummy DbContext to satisfy dependencies
-        services.AddDbContext<AppDbContext>(options => { });
-
-        //services.AddSingleton<IRepository<News, INews>, NullNewsRepository>();
-
-        // In fallback mode, use a dummy factory or skip registration if unused
-        services.AddSingleton<IAppDbContextFactory, NullAppDbContextFactory>();
-        services.AddSingleton<Mp3MetaRepository, NullMp3MetaRepository>();
-    }
-
-    // Prevent AutoMapper from scanning all assemblies (which causes the SqlGuidCaster crash)
-    services.AddAutoMapper(cfg => { }, typeof(Program));
-
-    // Application services
-    services.AddScoped<Mp3FileRepository>();
-    services.AddScoped<IMp3FileRepository>(sp => sp.GetRequiredService<Mp3FileRepository>());
-
-    services.AddScoped<Mp3Service>();
-    services.AddScoped<IMp3Service>(sp => sp.GetRequiredService<Mp3Service>());
-    services.AddScoped<IAudioConversionService, AudioConversionService>();
-
-    services.AddScoped<NewsFeedsService>();
-
-    services.AddSingleton<Mp3StreamMerger>();
-
-    services.AddTransient<Mp3Controller>();
-
-    services.AddLogging(logging =>
-    {
-        logging.AddConsole();
-        logging.AddDebug();
-        logging.AddFilter("Microsoft", LogLevel.Warning);
-        logging.AddFilter("System", LogLevel.Warning);
-        logging.AddFilter("MyTts", LogLevel.Information);
-    });
-
-    return services;
-}
     public static IServiceCollection AddStorageServices(this IServiceCollection services, IConfiguration configuration)
     {
         // Configure storage with proper validation
@@ -220,35 +220,48 @@ public static IServiceCollection AddCoreServices(this IServiceCollection service
         //    options.SizeLimit = 1024; // Set a reasonable size limit
         //});
         var redisConfig = configuration.GetSection("Redis").Get<RedisConfig>();
-        bool redisAvailable = false;
         if (redisConfig == null || string.IsNullOrEmpty(redisConfig.ConnectionString))
         {
+            Console.WriteLine("Redis connection string is missing or empty. Using NullRedisCacheService.");
             services.AddSingleton<IRedisCacheService, NullRedisCacheService>();
             return services;
         }
         try
         {
             var options = ConfigurationOptions.Parse(redisConfig.ConnectionString);
+            // Don't need to set these again as they're already in your connection string
+            // But keeping them for clarity
             options.AbortOnConnectFail = false;
             options.ConnectRetry = 3;
             options.ConnectTimeout = 5000;
 
-            using (var testConnection = ConnectionMultiplexer.Connect(options))
+            // Register ConnectionMultiplexer as singleton
+            services.AddSingleton<IConnectionMultiplexer>(sp =>
             {
-                redisAvailable = testConnection.IsConnected;
-                if (!redisAvailable)
+                var connection = ConnectionMultiplexer.Connect(options);
+
+                // Log connection status
+                if (!connection.IsConnected)
                 {
-                    services.AddSingleton<IRedisCacheService, NullRedisCacheService>();
+                    Console.WriteLine("Warning: Created Redis connection but IsConnected is false");
                 }
-                else {
-                    services.AddSingleton<IConnectionMultiplexer>(testConnection);
-                    services.AddSingleton<IRedisCacheService, RedisCacheService>();
+                else
+                {
+                    Console.WriteLine("Successfully connected to Redis");
                 }
-            }
+
+                return connection;
+            });
+
+            // Register the actual Redis cache service
+            services.AddSingleton<IRedisCacheService, RedisCacheService>();
+
+            Console.WriteLine($"Redis service registered with connection to {redisConfig.ConnectionString}");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Redis connection failed: {ex.Message}");
+            Console.WriteLine($"Failed to configure Redis connection: {ex.Message}");
+            Console.WriteLine($"Stack trace: {ex.StackTrace}");
             services.AddSingleton<IRedisCacheService, NullRedisCacheService>();
         }
 
@@ -285,7 +298,7 @@ public static IServiceCollection AddCoreServices(this IServiceCollection service
 
             client.BaseAddress = new Uri(settings.BaseRequestUrlFormat.Replace("{0}", ""));
             client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("xi-api-key", apiKey);
+          //  client.DefaultRequestHeaders.Add("xi-api-key", apiKey);
             client.DefaultRequestHeaders.Add("User-Agent", "MyTts");
             client.Timeout = TimeSpan.FromSeconds(60);
         }).AddTransientHttpErrorPolicy(builder =>
@@ -328,5 +341,5 @@ public static IServiceCollection AddCoreServices(this IServiceCollection service
         });
 
         return services;
-    }  
+    }
 }
