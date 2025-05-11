@@ -10,7 +10,8 @@ public static class ApiRoutes
         var mp3Group = endpoints.MapGroup("api/mp3")
             .WithTags("MP3"); // Add tag for Swagger documentation
 
-        // Routes that require CORS
+        // Routes that require CORS policy
+        // Define a separate group for CORS routes
         var corsRoutes = mp3Group.MapGroup(string.Empty)
             .RequireCors("AllowLocalDevelopment");
 
