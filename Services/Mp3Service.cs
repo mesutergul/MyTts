@@ -35,7 +35,11 @@ namespace MyTts.Services
             _newsFeedsService = newsFeedsService ?? throw new ArgumentNullException(nameof(newsFeedsService));
             _processingSemaphore = new SemaphoreSlim(MaxConcurrentProcessing);
         }
-        public async Task<(Stream audioData, string contentType, string fileName)> CreateMultipleMp3Async(string language, int limit, AudioType fileType, CancellationToken cancellationToken)
+        public async Task<(Stream audioData, string contentType, string fileName)> CreateMultipleMp3Async(
+            string language, 
+            int limit, 
+            AudioType fileType, 
+            CancellationToken cancellationToken)
         {
             try
             {
@@ -485,5 +489,9 @@ namespace MyTts.Services
             await process.WaitForExitAsync();
         }
 
+        public async Task MyTestQuery(CancellationToken cancellationToken)
+        {
+            await _mp3FileRepository.MyTestQuery(cancellationToken);
+        }
     }
 }

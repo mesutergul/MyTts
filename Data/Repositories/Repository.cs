@@ -7,7 +7,7 @@ using AutoMapper; // Ensure the namespace containing BaseEntity is imported
 namespace MyTts.Data.Repositories
 {
     public class Repository<TEntity, TModel> : IRepository<TEntity, TModel>
-    where TEntity : BaseEntity, IMp3
+    where TEntity : BaseEntity
     where TModel : class, IModel
 
     {
@@ -53,11 +53,11 @@ namespace MyTts.Data.Repositories
                 _logger.LogError("Cannot add entity — database context is not available.");
                 return;
             }
-            await _dbSet!.AddAsync(entity);
-            await _context!.SaveChangesAsync();
+            await _dbSet.AddAsync(entity);
+            await SaveChangesAsync(cancellationToken);
         }
 
-        public virtual void Update(TEntity entity, CancellationToken cancellationToken)
+        public virtual async Task Update(TEntity entity, CancellationToken cancellationToken)
         {
             if (_dbSet == null)
             {
@@ -65,9 +65,10 @@ namespace MyTts.Data.Repositories
                 return;
             }
             _dbSet.Update(entity);
+            await SaveChangesAsync(cancellationToken);
         }
 
-        public virtual void Delete(TEntity entity, CancellationToken cancellationToken)
+        public virtual async Task Delete(TEntity entity, CancellationToken cancellationToken)
         {
             if (_dbSet == null)
             {
@@ -75,6 +76,7 @@ namespace MyTts.Data.Repositories
                 return;
             }
             _dbSet.Remove(entity);
+            await SaveChangesAsync(cancellationToken);
         }
 
         public virtual async Task SaveChangesAsync(CancellationToken cancellationToken)
@@ -108,16 +110,6 @@ namespace MyTts.Data.Repositories
             }
 
             return Task.FromResult(_dbSet.Where(predicate).AsEnumerable());
-        }
-        public virtual async Task<bool> ExistByIdAsync(int id, CancellationToken cancellationToken)
-        {
-            if (_context == null || _dbSet == null)
-            {
-                _logger.LogWarning("SQL not available for ExistById check");
-                return false;
-            }
-
-            return await Task.FromResult(_dbSet.Any(entity => entity.FileId == id));
         }
 
     }

@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using MyTts.Config;
 using MyTts.Controllers;
+using MyTts.Data;
 using MyTts.Data.Context;
 using MyTts.Data.Entities;
 using MyTts.Data.Interfaces;
@@ -15,6 +16,12 @@ using MyTts.Storage;
 using Polly;
 using StackExchange.Redis;
 using System.Net.Http.Headers;
+
+FFMpegCore.GlobalFFOptions.Configure(new FFMpegCore.FFOptions
+{
+    BinaryFolder = @"C:\repos\MyTts-main", // ffmpeg.exe'nin bulunduðu klasör
+    TemporaryFilesFolder = Path.GetTempPath()
+});
 
 var builder = WebApplication.CreateBuilder(args);
 // Add services to the container
@@ -101,10 +108,10 @@ public static class ServiceCollectionExtensions
 
             services.AddScoped(typeof(IRepository<,>), typeof(Repository<,>));
             services.AddScoped<Mp3MetaRepository>();
-            //services.AddScoped<NewsRepository>();
+            services.AddScoped<NewsRepository>();
 
             services.AddScoped<IRepository<Mp3Meta, IMp3>>(sp => sp.GetRequiredService<Mp3MetaRepository>());
-            //services.AddScoped<IRepository<News, INews>>(sp => sp.GetRequiredService<NewsRepository>());
+            services.AddScoped<IRepository<News, INews>>(sp => sp.GetRequiredService<NewsRepository>());
 
             // AppDbContextFactory requires AppDbContext, so register it only if available
             services.AddScoped<IAppDbContextFactory, DefaultAppDbContextFactory>();
@@ -114,23 +121,27 @@ public static class ServiceCollectionExtensions
             // Register dummy DbContext to satisfy dependencies
             services.AddDbContext<AppDbContext>(options => { });
 
-            //services.AddSingleton<IRepository<News, INews>, NullNewsRepository>();
+            services.AddSingleton<IRepository<News, INews>, NullNewsRepository>();
 
             // In fallback mode, use a dummy factory or skip registration if unused
             services.AddSingleton<IAppDbContextFactory, NullAppDbContextFactory>();
             services.AddSingleton<Mp3MetaRepository, NullMp3MetaRepository>();
         }
 
-        // Prevent AutoMapper from scanning all assemblies (which causes the SqlGuidCaster crash)
-        services.AddAutoMapper(cfg => { }, typeof(Program));
-
+        services.AddAutoMapper(cfg =>
+        {
+            // Optional: Add any global configuration
+           // cfg.Advanced.AllowAdditiveTypeMapCreation = true;
+        },
+        typeof(Program),
+        typeof(HaberMappingProfile));
         // Application services
         services.AddScoped<Mp3Repository>();
         services.AddScoped<IMp3Repository>(sp => sp.GetRequiredService<Mp3Repository>());
 
         services.AddScoped<Mp3Service>();
         services.AddScoped<IMp3Service>(sp => sp.GetRequiredService<Mp3Service>());
-        services.AddScoped<IAudioConversionService, AudioConversionService>();
+       // services.AddScoped<IAudioConversionService, AudioConversionService>();
 
         services.AddScoped<NewsFeedsService>();
 
@@ -220,7 +231,7 @@ public static class ServiceCollectionExtensions
         //    options.SizeLimit = 1024; // Set a reasonable size limit
         //});
         var redisConfig = configuration.GetSection("Redis").Get<RedisConfig>();
-        if (redisConfig == null || string.IsNullOrEmpty(redisConfig.ConnectionString))
+        if (redisConfig == null || string.IsNullOrEmpty(redisConfig.ConnectionString)||true)
         {
             Console.WriteLine("Redis connection string is missing or empty. Using NullRedisCacheService.");
             services.AddSingleton<IRedisCacheService, NullRedisCacheService>();

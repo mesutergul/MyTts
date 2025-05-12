@@ -14,6 +14,7 @@ using MyTts.Storage;
 using MyTts.Data.Repositories;
 using MyTts.Data.Entities;
 using MyTts.Repositories;
+using static System.Net.Mime.MediaTypeNames;
 
 namespace MyTts.Services
 {
@@ -26,11 +27,13 @@ namespace MyTts.Services
         private readonly ILogger<TtsManager> _logger;
         private readonly Mp3StreamMerger _mp3StreamMerger;
         private readonly SemaphoreSlim _semaphore;
+        private readonly SemaphoreSlim _semaphoreSql;
         private readonly string? _bucketName;
         private readonly JsonSerializerOptions _jsonOptions;
         private readonly StorageConfiguration _storageConfig;
-        private readonly IAudioConversionService _audioConversionService;
-        private readonly Mp3MetaRepository? _mp3MetaRepository;
+        //private readonly IAudioConversionService _audioConversionService;
+        //private readonly Mp3MetaRepository? _mp3MetaRepository;
+        private readonly Mp3Repository _mp3Repository;
         public const string LocalSavePath = "audio";
         private const int MaxConcurrentOperations = 2;
 
@@ -38,10 +41,10 @@ namespace MyTts.Services
             ElevenLabsClient elevenLabsClient,
             IOptions<ElevenLabsConfig> config,
             IOptions<StorageConfiguration> storageConfig,
-            Mp3MetaRepository mp3MetaRepository,
+            Mp3Repository mp3Repository,
             IRedisCacheService cache,
             Mp3StreamMerger mp3StreamMerger,
-            IAudioConversionService audioConversionService,
+            //IAudioConversionService audioConversionService,
             ILogger<TtsManager> logger)
         {
             _elevenLabsClient = elevenLabsClient ?? throw new ArgumentNullException(nameof(elevenLabsClient));
@@ -49,9 +52,10 @@ namespace MyTts.Services
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _mp3StreamMerger = mp3StreamMerger ?? throw new ArgumentNullException(nameof(mp3StreamMerger));
             _cache = cache ?? throw new ArgumentNullException(nameof(cache));
-            _mp3MetaRepository = mp3MetaRepository;
-            _audioConversionService = audioConversionService ?? throw new ArgumentNullException(nameof(audioConversionService));
+            _mp3Repository = mp3Repository;
+            //_audioConversionService = audioConversionService ?? throw new ArgumentNullException(nameof(audioConversionService));
             _semaphore = new SemaphoreSlim(MaxConcurrentOperations);
+            _semaphoreSql = new SemaphoreSlim(1);
             _storageConfig = storageConfig.Value;
             // Initialize Google Cloud Storage
             var gcs = InitializeGoogleCloudStorage(_storageConfig);
@@ -118,7 +122,7 @@ namespace MyTts.Services
             }
         }
         // Optimized version of MergeAudioFilesAsync
-        public async Task<(Stream audioData, string contentType, string fileName)> MergeAudioFilesAsync(List<AudioProcessor> processors, AudioType fileType, CancellationToken cancellationToken = default)
+        public async Task<(Stream audioData, string contentType, string fileName)> MergeAudioFilesAsync(List<AudioProcessor> processors, string basePath, AudioType fileType, CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(processors);
             if (processors.Count == 0)
@@ -135,7 +139,7 @@ namespace MyTts.Services
             }
 
             // Use the optimized Mp3StreamMerger
-            return await _mp3StreamMerger.MergeMp3ByteArraysAsync(processors, fileType, cancellationToken);
+            return await _mp3StreamMerger.MergeMp3ByteArraysAsync(processors, basePath, fileType, cancellationToken);
         }
         // Helper method for single file scenario
         private async Task<(Stream audioData, string contentType, string fileName)> CreateSingleFileResultAsync(AudioProcessor processor, CancellationToken cancellationToken)
@@ -173,7 +177,7 @@ namespace MyTts.Services
                 if (processors.Count > 0)
                 {
                     _logger.LogInformation("Successfully processed {Count} files", processors.Count);
-                    return await MergeAudioFilesAsync(processors, fileType, cancellationToken);
+                    return await MergeAudioFilesAsync(processors, _storageConfig.BasePath, fileType, cancellationToken);
                 }
 
                 _logger.LogWarning("No files were successfully processed");
@@ -204,6 +208,23 @@ namespace MyTts.Services
             finally
             {
                 _semaphore.Release();
+            }
+        }
+        private async Task ProcessSqlWithSemaphoreAsync(
+            Guid id,
+            string text,
+            string localPath,
+            string fileName,
+            CancellationToken cancellationToken)
+        {
+            await _semaphoreSql.WaitAsync(cancellationToken);
+            try
+            {
+                await SaveMetadataSqlAsync(id, text, localPath, fileName, cancellationToken);
+            }
+            finally
+            {
+                _semaphoreSql.Release();
             }
         }
 
@@ -237,8 +258,8 @@ namespace MyTts.Services
                 {
                     SaveLocallyAsync(audioProcessor, localPath, cancellationToken),
                     UploadToCloudAsync(audioProcessor, fileName, cancellationToken),
-                    SaveMetadataSqlAsync(id, text, localPath, fileName, cancellationToken),
-                    StoreMetadataRedisAsync(id, text, localPath, fileName, cancellationToken)
+                    StoreMetadataRedisAsync(id, text, localPath, fileName, cancellationToken),
+                    ProcessSqlWithSemaphoreAsync(id, text, localPath, fileName, cancellationToken)
                 };
 
                 await Task.WhenAll(tasks);
@@ -345,7 +366,7 @@ namespace MyTts.Services
             FileUrl=localPath,
             Language="tr"
             };
-            await _mp3MetaRepository.AddAsync(mp3Meta, cancellationToken).ConfigureAwait(false);
+            await _mp3Repository.SaveMp3MetaToSql(mp3Meta, cancellationToken).ConfigureAwait(false);
             _logger.LogDebug("Saved metadata to SQL via EF for {Id}", id);
         }
 

@@ -26,6 +26,7 @@ namespace MyTts.Services
 
         public async Task<(Stream audioData, string contentType, string fileName)> MergeMp3ByteArraysAsync(
             IReadOnlyList<AudioProcessor> audioProcessors,
+            string basePath,
             AudioType fileType,
             CancellationToken cancellationToken = default)
         {
@@ -48,7 +49,7 @@ namespace MyTts.Services
                     return await CreateSingleFileResultAsync(audioProcessors[0], cancellationToken);
                 }
                 using var outputStream = new MemoryStream();
-                await MergeAudioProcessorsAsync(audioProcessors, outputStream, fileType, cancellationToken).ConfigureAwait(false);
+                await MergeAudioProcessorsAsync(audioProcessors, outputStream, basePath, fileType, cancellationToken).ConfigureAwait(false);
 
                 // Return the stream properly
                 outputStream.Position = 0;
@@ -77,6 +78,7 @@ namespace MyTts.Services
         private async Task MergeAudioProcessorsAsync(
             IReadOnlyList<AudioProcessor> processors,
             MemoryStream outputStream,
+            string basePath,
             AudioType fileType,
             CancellationToken cancellationToken)
         {
@@ -103,7 +105,7 @@ namespace MyTts.Services
                 // Ensure the outputStream contains data before trying to save
                 if (outputStream.Length > 0)
                 {
-                    var outputFilePath = Path.Combine(Path.GetFullPath("."), $"merged_{DateTime.UtcNow:yyyyMMddHHmmss}.{fileType.ToString().ToLower()}");
+                    var outputFilePath = Path.Combine(basePath, $"merged_{DateTime.UtcNow:yyyyMMddHHmmss}.{fileType.ToString().ToLower()}");
                     _logger.LogInformation("Saving merged audio from MemoryStream to file: {FilePath}", outputFilePath);
 
                     // Reset the MemoryStream position to the beginning so we can read from it

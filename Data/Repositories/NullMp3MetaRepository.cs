@@ -45,12 +45,14 @@ namespace MyTts.Data.Repositories
             return Task.CompletedTask;
         }
 
-        public override void Update(Mp3Meta entity, CancellationToken cancellationToken)
+        public override Task Update(Mp3Meta entity, CancellationToken cancellationToken)
         {
+            return Task.CompletedTask;
         }
 
-        public override void Delete(Mp3Meta entity, CancellationToken cancellationToken)
+        public override Task Delete(Mp3Meta entity, CancellationToken cancellationToken)
         {
+            return Task.CompletedTask;
         }
     }
 }

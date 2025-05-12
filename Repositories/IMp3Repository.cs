@@ -21,5 +21,7 @@ namespace MyTts.Repositories
         Task<bool> FileExistsAnywhereAsync(string filePath, AudioType fileType, CancellationToken cancellationToken);
         Task SetToCacheAsync(string key, Mp3Meta value, TimeSpan? expiry = null, CancellationToken cancellationToken = default);
         Task<Stream> ReadLargeFileAsStreamAsync(string fullPath, int bufferSize, AudioType fileType, CancellationToken cancellationToken);
+        Task SaveMp3MetaToSql(Mp3Meta mp3Meta, CancellationToken cancellationToken);
+        Task MyTestQuery(CancellationToken cancellationToken);
     }
 }

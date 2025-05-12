@@ -7,7 +7,6 @@ namespace MyTts.Data.Interfaces
         int FileId { get; set; }
         string FileUrl { get; set; }
         string Language { get; set; }
-        DateTime? CreatedDate { get; set; }
         public bool Enabled { get; set; }
     }
 }

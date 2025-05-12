@@ -115,6 +115,11 @@ namespace MyTts.Controllers
         {
             try
             {
+                if (!await _mp3Service.FileExistsAnywhereAsync(id, AudioType.M4a, cancellationToken))
+                {
+                    context.Response.StatusCode = 404;
+                    return;
+                }
                 // Optimization: Consolidate file fetching.
                 // Assume GetMp4File returns null or throws a custom/FileNotFoundException if the file doesn't exist.
                 // This can avoid an extra I/O call if FileExistsAnywhereAsync and GetMp4File access the same resource.
@@ -296,6 +301,11 @@ namespace MyTts.Controllers
                 _logger.LogError(ex, "SayText Error processing MP3 request");
                 return Problem("Failed to process MP3 request");
             }
+        }
+
+        internal async Task SayitText(HttpContext context, CancellationToken token)
+        {
+            await _mp3Service.MyTestQuery(token);
         }
         //public async Task Delete(string id)
         //{

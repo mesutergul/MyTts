@@ -108,6 +108,17 @@ namespace MyTts.Routes
                 .Produces(200)
                 .ProducesProblem(404)
                 .ProducesProblem(500);
+            corsRoutes.MapGet("onesaysit/{id}",
+                async (HttpContext context,
+                      [FromServices] Mp3Controller controller, CancellationToken token) =>
+                {
+                    await controller.SayitText(context, token);
+                })
+                .WithName("elevenlabs.mp3.getonesaysit")
+                .WithDisplayName("Saysit Text")
+                .Produces(200)
+                .ProducesProblem(404)
+                .ProducesProblem(500);
         }
     }
 }

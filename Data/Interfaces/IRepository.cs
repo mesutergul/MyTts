@@ -15,8 +15,8 @@ namespace MyTts.Data.Interfaces
         Task AddAsync(TEntity entity, CancellationToken cancellationToken);
         Task SaveChangesAsync(CancellationToken cancellationToken);
         Task<IEnumerable<TEntity>> FindAsync(Func<TEntity, bool> predicate, CancellationToken cancellationToken);
-        void Update(TEntity entity, CancellationToken cancellationToken);
-        void Delete(TEntity entity, CancellationToken cancellationToken);
+        Task Update(TEntity entity, CancellationToken cancellationToken);
+        Task Delete(TEntity entity, CancellationToken cancellationToken);
     }
     
 }

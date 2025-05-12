@@ -18,7 +18,8 @@ namespace MyTts.Repositories
         private readonly ConcurrentDictionary<string, SemaphoreSlim> _fileLocks;
         private readonly JsonSerializerSettings _jsonSettings;
         private bool _disposed;
-        private readonly Mp3MetaRepository? _mp3MetaRepository;
+        private readonly Mp3MetaRepository _mp3MetaRepository;
+        private readonly NewsRepository _newsRepository;
 
         private const string DB_CACHE_KEY = "MP3_FILES_DB";
         private const string FILE_CACHE_KEY_PREFIX = "haber";
@@ -29,7 +30,8 @@ namespace MyTts.Repositories
             ILogger<Mp3Repository> logger,
             IConfiguration configuration,
             IRedisCacheService cache,
-            Mp3MetaRepository? mp3MetaRepository)
+            Mp3MetaRepository? mp3MetaRepository,
+            NewsRepository newsRepository)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _cache = cache ?? throw new ArgumentNullException(nameof(cache));
@@ -43,6 +45,7 @@ namespace MyTts.Repositories
                 NullValueHandling = NullValueHandling.Ignore
             };
             _mp3MetaRepository = mp3MetaRepository ?? throw new ArgumentNullException(nameof(mp3MetaRepository));
+            _newsRepository = newsRepository ?? throw new ArgumentNullException(nameof(newsRepository));
             // Initialize directories asynchronously
             InitializeDirectoriesAsync().GetAwaiter().GetResult();
         }
@@ -586,6 +589,26 @@ namespace MyTts.Repositories
         #endregion
 
         #region Database Operations
+
+        public async Task SaveMp3MetaToSql(Mp3Meta mp3Meta, CancellationToken cancellationToken) {
+            try
+            {
+                await _dbLock.WaitAsync();
+                try {
+                    await _mp3MetaRepository.AddAsync(mp3Meta, cancellationToken).ConfigureAwait(false);
+                    _logger.LogDebug("Saved MP3 metadata to SQL: {Mp3Meta}", mp3Meta);
+                }
+                finally
+                {
+                    _dbLock.Release();
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to save MP3 metadata to SQL");
+                throw;
+            }
+        }
         public async Task<Mp3Meta> LoadMp3MetaByNewsIdAsync(string id, AudioType fileType, CancellationToken cancellationToken)
         {
             ArgumentException.ThrowIfNullOrEmpty(id);
@@ -688,6 +711,28 @@ namespace MyTts.Repositories
                     _fileLocks.Clear();
                 }
                 _disposed = true;
+            }
+        }
+
+        public async Task MyTestQuery(CancellationToken cancellationToken)
+        {
+            try
+            {
+                await _dbLock.WaitAsync(cancellationToken);
+                try
+                {
+                    var mp3Files = await _newsRepository.getSummary(20, Models.MansetType.ana_manset, cancellationToken);
+                    _logger.LogDebug("Loaded MP3 files from database");
+                }
+                finally
+                {
+                    _dbLock.Release();
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to execute test query");
+                throw;
             }
         }
     }
