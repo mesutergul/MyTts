@@ -98,7 +98,7 @@ namespace MyTts.Routes
 
             // Say text endpoint
             corsRoutes.MapGet("onesay/{id}",
-                async (HttpContext context, string id,
+                async (HttpContext context, int id,
                       [FromServices] Mp3Controller controller, CancellationToken token) =>
                 {
                     await controller.SayText(context, id, token);

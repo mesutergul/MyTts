@@ -24,5 +24,6 @@ namespace MyTts.Repositories
         Task<Stream> ReadLargeFileAsStreamAsync(string fullPath, int bufferSize, AudioType fileType, CancellationToken cancellationToken);
         Task SaveMp3MetaToSql(Mp3Meta mp3Meta, CancellationToken cancellationToken);
         Task<List<HaberSummaryDto>> GetNewsList(CancellationToken cancellationToken);
+        Task<News> LoadNewsAsync(int news, CancellationToken cancellationToken);
     }
 }

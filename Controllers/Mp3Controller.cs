@@ -281,7 +281,7 @@ namespace MyTts.Controllers
             }
         }
 
-        internal async Task<IActionResult> SayText(HttpContext context, string id, CancellationToken token)
+        internal async Task<IActionResult> SayText(HttpContext context, int id, CancellationToken token)
         {
             var request = new OneRequest
             {
@@ -305,7 +305,7 @@ namespace MyTts.Controllers
 
         internal async Task SayitText(HttpContext context, CancellationToken token)
         {
-            var newsList = await _mp3Service.GetNewsList(token);
+             await _mp3Service.GetNewsList(token);
         }
         //public async Task Delete(string id)
         //{

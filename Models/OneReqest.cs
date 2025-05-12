@@ -5,7 +5,7 @@ namespace MyTts.Models
     /// </summary>
     public class OneRequest
     {
-        public required dynamic News { get; set; }
+        public required int News { get; set; }
         public required string Language { get; set; }
     }
 }

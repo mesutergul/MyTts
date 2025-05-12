@@ -15,6 +15,7 @@ using MyTts.Data.Repositories;
 using MyTts.Data.Entities;
 using MyTts.Repositories;
 using static System.Net.Mime.MediaTypeNames;
+using MyTts.Models;
 
 namespace MyTts.Services
 {
@@ -149,7 +150,8 @@ namespace MyTts.Services
             return (uploadStream, "audio/mpeg", $"single_{Guid.NewGuid()}.mp3");
         }
         // Optimized ProcessContentsAsync
-        public async Task<(Stream audioData, string contentType, string fileName)> ProcessContentsAsync(IEnumerable<string> contents, AudioType fileType, CancellationToken cancellationToken = default)
+        public async Task<(Stream audioData, string contentType, string fileName)> ProcessContentsAsync(
+        IEnumerable<HaberSummaryDto> contents, AudioType fileType, CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(contents);
             var contentsList = contents.ToList(); // Materialize once to avoid multiple enumeration
@@ -166,7 +168,7 @@ namespace MyTts.Services
                 foreach (var content in contentsList)
                 {
                     // Create tasks but don't await them yet
-                    processingTasks.Add(ProcessContentWithSemaphoreAsync(content, Guid.NewGuid(), fileType, cancellationToken));
+                    processingTasks.Add(ProcessContentWithSemaphoreAsync(content.Baslik+content.Ozet, content.IlgiId, fileType, cancellationToken));
                 }
 
                 // Wait for all tasks to complete
@@ -196,7 +198,7 @@ namespace MyTts.Services
         }
         private async Task<(string LocalPath, AudioProcessor Processor)> ProcessContentWithSemaphoreAsync(
             string content,
-            Guid id,
+            int id,
             AudioType fileType,
             CancellationToken cancellationToken)
         {
@@ -211,7 +213,7 @@ namespace MyTts.Services
             }
         }
         private async Task ProcessSqlWithSemaphoreAsync(
-            Guid id,
+            int id,
             string text,
             string localPath,
             string fileName,
@@ -229,7 +231,7 @@ namespace MyTts.Services
         }
 
         // Optimized version of ProcessContentAsync
-        public async Task<(string LocalPath, AudioProcessor FileData)> ProcessContentAsync(string text, Guid id, AudioType fileType, CancellationToken cancellationToken)
+        public async Task<(string LocalPath, AudioProcessor FileData)> ProcessContentAsync(string text, int id, AudioType fileType, CancellationToken cancellationToken)
         {
             var fileName = $"speech_{id}.{fileType.ToString().ToLower()}"; // m4a container for AAC
             var localPath = Path.Combine(LocalSavePath, fileName);
@@ -342,7 +344,7 @@ namespace MyTts.Services
             _logger.LogInformation("Uploaded file to cloud: {FileName}", fileName);
         }
 
-        private async Task StoreMetadataRedisAsync(Guid id, string text, string localPath, string fileName, CancellationToken cancellationToken)
+        private async Task StoreMetadataRedisAsync(int id, string text, string localPath, string fileName, CancellationToken cancellationToken)
         {
             if (_cache == null && await _cache!.IsConnectedAsync()) return;
             var metadata = new AudioMetadata
@@ -358,13 +360,13 @@ namespace MyTts.Services
 
         }
 
-        private async Task SaveMetadataSqlAsync(Guid id, string text, string localPath, string fileName, CancellationToken cancellationToken)
+        private async Task SaveMetadataSqlAsync(int id, string text, string localPath, string fileName, CancellationToken cancellationToken)
         {
             var mp3Meta = new Mp3Meta
             {
-            FileId=1,
-            FileUrl=localPath,
-            Language="tr"
+                FileId=id,
+                FileUrl=localPath,
+                Language="tr"
             };
             await _mp3Repository.SaveMp3MetaToSql(mp3Meta, cancellationToken).ConfigureAwait(false);
             _logger.LogDebug("Saved metadata to SQL via EF for {Id}", id);
@@ -559,7 +561,7 @@ namespace MyTts.Services
 
         private record AudioMetadata
         {
-            public required Guid Id { get; init; }
+            public required int Id { get; init; }
             public required string Text { get; init; }
             public required string LocalPath { get; init; }
             public required string GcsPath { get; init; }

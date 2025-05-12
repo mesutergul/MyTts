@@ -18,7 +18,7 @@ namespace MyTts.Services
         private readonly IRedisCacheService? _cache;
         private const string AudioBasePath = "audio";
         private readonly SemaphoreSlim _processingSemaphore;
-        private const int MaxConcurrentProcessing = 3;
+        private const int MaxConcurrentProcessing = 1;
         private bool _disposed;
 
         public Mp3Service(
@@ -44,6 +44,7 @@ namespace MyTts.Services
             try
             {
                 await _processingSemaphore.WaitAsync();
+                var newsList=await GetNewsList(cancellationToken);
                // var contents = await _newsFeedsService.GetFeedByLanguageAsync(language, limit);
                var contents = new List<string>
                {
@@ -54,7 +55,7 @@ namespace MyTts.Services
                    "I see the issue in your code. The problem is with how you're setting up the Authorization header. Let me fix that for you",
                    "Routes are now grouped by functionality and follow a consistent pattern, making the code easier to read and maintain"
                 };
-               return await _ttsManager.ProcessContentsAsync(contents, fileType);
+               return await _ttsManager.ProcessContentsAsync(newsList, fileType);
 
             }
             finally
@@ -66,14 +67,15 @@ namespace MyTts.Services
         {
             try
             {
+            News news = await _mp3FileRepository.LoadNewsAsync(request.News, cancellationToken);
                // var content = "May whatever is possible be done to reach an authentic, true and lasting peace as quickly as possible.";
                 //await _newsFeedsService.GetFeedUrl(request.News);
                // var content = "Make sure you're awaiting all async operations properly, especially if you're using scoped services in async scenarios";
                // var content = "This is a common issue in ASP.NET Core applications, especially when working with services that need to maintain state or resources across asynchronous operations";
                //var content = "As the error message indicated, the API accepts only one method of authentication, not both simultaneously.";
              //   var content ="I see the issue in your code. The problem is with how you're setting up the Authorization header. Let me fix that for you";
-               var content = "Routes are now grouped by functionality and follow a consistent pattern, making the code easier to read and maintain";
-                return await RequestSingleMp3Async(content, fileType, cancellationToken);
+              // var content = "Routes are now grouped by functionality and follow a consistent pattern, making the code easier to read and maintain";
+                return await RequestSingleMp3Async(news.Id, news.Summary, fileType, cancellationToken);
                 // return await _mp3FileRepository.LoadMp3MetaByNewsIdAsync(request.News, fileType, cancellationToken)
                 //     ?? throw new KeyNotFoundException($"MP3 file not found for ID: {request.News}");
                 //await _processingSemaphore.WaitAsync();
@@ -91,12 +93,12 @@ namespace MyTts.Services
                 _processingSemaphore.Release();
             }
         }
-        public async Task<Stream> RequestSingleMp3Async(string content, AudioType fileType, CancellationToken cancellationToken)
+        public async Task<Stream> RequestSingleMp3Async(int id,string content, AudioType fileType, CancellationToken cancellationToken)
         {
             try
             {
                 await _processingSemaphore.WaitAsync();
-                var (filePath, processor) = await _ttsManager.ProcessContentAsync(content, Guid.NewGuid(), fileType, cancellationToken);
+                var (filePath, processor) = await _ttsManager.ProcessContentAsync(content, id, fileType, cancellationToken);
                 return await processor.GetStreamForCloudUploadAsync(cancellationToken);
             }
             catch (Exception ex)
@@ -268,13 +270,18 @@ namespace MyTts.Services
         /// </summary>
         private async Task<(Stream FileData, string LocalPath)> GetOrProcessMp3File(string id, AudioType fileType, CancellationToken cancellationToken)
         {
+            int parsedId;
+            if (!int.TryParse(id, out parsedId))
+            {
+                _logger.LogWarning("Invalid ID format: {Id}", id);
+            }  
             var fileData = await _mp3FileRepository.LoadMp3FileAsync(id, fileType, cancellationToken);
             var localPath = id;
             Stream? fileStream = null;
             if (fileData == null || fileData.Length == 0)
             {
                 var content = _newsFeedsService.GetFeedUrl(id);
-                (localPath,var processor)= await _ttsManager.ProcessContentAsync(content, Guid.NewGuid(), fileType, cancellationToken);
+                (localPath, var processor)= await _ttsManager.ProcessContentAsync(content, parsedId, fileType, cancellationToken);
                 fileStream = await processor.GetStreamForCloudUploadAsync(cancellationToken);
             } else fileStream= new MemoryStream(fileData);
             return (fileStream, localPath);

@@ -710,6 +710,28 @@ namespace MyTts.Repositories
                 throw;
             }
         }
+        public async Task<News> LoadNewsAsync(int news, CancellationToken cancellationToken)
+        {
+            try
+            {
+                await _dbLock.WaitAsync(cancellationToken);
+                try     
+                {
+                    _logger.LogDebug("Loading MP3 files from database");
+                    return await _newsRepository.GetByIdAsync(news, cancellationToken);
+                }
+                finally
+                {
+                    _dbLock.Release();
+                }
+            }    
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to execute test query");
+                throw;
+            }
+        }
+        
 
         #endregion
 
