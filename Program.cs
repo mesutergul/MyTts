@@ -19,7 +19,7 @@ using System.Net.Http.Headers;
 
 FFMpegCore.GlobalFFOptions.Configure(new FFMpegCore.FFOptions
 {
-    BinaryFolder = @"C:\repos\MyTts-main", // ffmpeg.exe'nin bulunduðu klasör
+    BinaryFolder = @"C:\repos\MyTts-main", // ffmpeg.exe'nin bulunduï¿½u klasï¿½r
     TemporaryFilesFolder = Path.GetTempPath()
 });
 
@@ -121,17 +121,16 @@ public static class ServiceCollectionExtensions
             // Register dummy DbContext to satisfy dependencies
             services.AddDbContext<AppDbContext>(options => { });
 
-            services.AddSingleton<IRepository<News, INews>, NullNewsRepository>();
-
             // In fallback mode, use a dummy factory or skip registration if unused
             services.AddSingleton<IAppDbContextFactory, NullAppDbContextFactory>();
             services.AddSingleton<Mp3MetaRepository, NullMp3MetaRepository>();
+            services.AddSingleton<NewsRepository, NullNewsRepository>();
         }
 
         services.AddAutoMapper(cfg =>
         {
             // Optional: Add any global configuration
-           // cfg.Advanced.AllowAdditiveTypeMapCreation = true;
+            // cfg.Advanced.AllowAdditiveTypeMapCreation = true;
         },
         typeof(Program),
         typeof(HaberMappingProfile));
@@ -141,7 +140,7 @@ public static class ServiceCollectionExtensions
 
         services.AddScoped<Mp3Service>();
         services.AddScoped<IMp3Service>(sp => sp.GetRequiredService<Mp3Service>());
-       // services.AddScoped<IAudioConversionService, AudioConversionService>();
+        // services.AddScoped<IAudioConversionService, AudioConversionService>();
 
         services.AddScoped<NewsFeedsService>();
 
@@ -231,7 +230,7 @@ public static class ServiceCollectionExtensions
         //    options.SizeLimit = 1024; // Set a reasonable size limit
         //});
         var redisConfig = configuration.GetSection("Redis").Get<RedisConfig>();
-        if (redisConfig == null || string.IsNullOrEmpty(redisConfig.ConnectionString)||true)
+        if (redisConfig == null || string.IsNullOrEmpty(redisConfig.ConnectionString) || true)
         {
             Console.WriteLine("Redis connection string is missing or empty. Using NullRedisCacheService.");
             services.AddSingleton<IRedisCacheService, NullRedisCacheService>();
@@ -309,7 +308,7 @@ public static class ServiceCollectionExtensions
 
             client.BaseAddress = new Uri(settings.BaseRequestUrlFormat.Replace("{0}", ""));
             client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-          //  client.DefaultRequestHeaders.Add("xi-api-key", apiKey);
+            //  client.DefaultRequestHeaders.Add("xi-api-key", apiKey);
             client.DefaultRequestHeaders.Add("User-Agent", "MyTts");
             client.Timeout = TimeSpan.FromSeconds(60);
         }).AddTransientHttpErrorPolicy(builder =>
