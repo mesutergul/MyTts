@@ -20,6 +20,6 @@ namespace MyTts.Services
         Task<Stream> GetAudioFileStream(string id, AudioType fileType, CancellationToken cancellationToken);
         Task<bool> FileExistsAnywhereAsync(string filePath, AudioType fileType, CancellationToken cancellationToken);
         Task<byte[]> GetMp3FileBytes(string fileName, AudioType fileType, CancellationToken cancellationToken);
-        Task<List<HaberSummaryDto>> MyTestQuery(CancellationToken cancellationToken);
+        Task<List<HaberSummaryDto>> GetNewsList(CancellationToken cancellationToken);
     }
 }

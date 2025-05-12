@@ -305,7 +305,7 @@ namespace MyTts.Controllers
 
         internal async Task SayitText(HttpContext context, CancellationToken token)
         {
-            var newsList = await _mp3Service.MyTestQuery(token);
+            var newsList = await _mp3Service.GetNewsList(token);
         }
         //public async Task Delete(string id)
         //{

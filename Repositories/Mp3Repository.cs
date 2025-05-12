@@ -689,6 +689,27 @@ namespace MyTts.Repositories
             ArgumentNullException.ThrowIfNull(_cache);
             await _cache.SetAsync(key, value, expiry, cancellationToken);
         }
+        public async Task<List<HaberSummaryDto>> GetNewsList(CancellationToken cancellationToken)
+        {
+            try
+            {
+                await _dbLock.WaitAsync(cancellationToken);
+                try
+                {
+                    _logger.LogDebug("Loading MP3 files from database");
+                    return await _newsRepository.getSummary(20, Models.MansetType.ana_manset, cancellationToken);
+                }
+                finally
+                {
+                    _dbLock.Release();
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to execute test query");
+                throw;
+            }
+        }
 
         #endregion
 
@@ -712,29 +733,6 @@ namespace MyTts.Repositories
                     _fileLocks.Clear();
                 }
                 _disposed = true;
-            }
-        }
-
-        public async Task<List<HaberSummaryDto>> MyTestQuery(CancellationToken cancellationToken)
-        {
-            try
-            {
-                await _dbLock.WaitAsync(cancellationToken);
-                try
-                {
-                    _logger.LogDebug("Loading MP3 files from database");
-                    return await _newsRepository.getSummary(20, Models.MansetType.ana_manset, cancellationToken);
-                    
-                }
-                finally
-                {
-                    _dbLock.Release();
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to execute test query");
-                throw;
             }
         }
     }
