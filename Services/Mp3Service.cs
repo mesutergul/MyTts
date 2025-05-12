@@ -489,9 +489,9 @@ namespace MyTts.Services
             await process.WaitForExitAsync();
         }
 
-        public async Task MyTestQuery(CancellationToken cancellationToken)
+        public async Task<List<HaberSummaryDto>> MyTestQuery(CancellationToken cancellationToken)
         {
-            await _mp3FileRepository.MyTestQuery(cancellationToken);
+            return await _mp3FileRepository.MyTestQuery(cancellationToken);
         }
     }
 }

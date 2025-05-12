@@ -5,6 +5,7 @@ using MyTts.Services;
 using MyTts.Data.Repositories;
 using System.Text;
 using MyTts.Data.Entities;
+using MyTts.Models;
 
 namespace MyTts.Repositories
 {
@@ -714,15 +715,16 @@ namespace MyTts.Repositories
             }
         }
 
-        public async Task MyTestQuery(CancellationToken cancellationToken)
+        public async Task<List<HaberSummaryDto>> MyTestQuery(CancellationToken cancellationToken)
         {
             try
             {
                 await _dbLock.WaitAsync(cancellationToken);
                 try
                 {
-                    var mp3Files = await _newsRepository.getSummary(20, Models.MansetType.ana_manset, cancellationToken);
-                    _logger.LogDebug("Loaded MP3 files from database");
+                    _logger.LogDebug("Loading MP3 files from database");
+                    return await _newsRepository.getSummary(20, Models.MansetType.ana_manset, cancellationToken);
+                    
                 }
                 finally
                 {
