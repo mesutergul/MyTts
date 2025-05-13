@@ -238,9 +238,9 @@ namespace MyTts.Services
                     _logger.LogInformation("Successfully processed {Count} files", processors.Count);
                     var merged = await MergeAudioFilesAsync(processors, _storageConfig.BasePath, fileType, cancellationToken);
                     
-                    int.TryParse(merged.fileName.Substring(10, 9), out var mergedId);
-                    _logger.LogInformation("Merged file ID is {Id}", mergedId);
-                    await ProcessSqlWithSemaphoreAsync(mergedId, merged.fileName, "tr", cancellationToken);
+                    //int.TryParse(merged.fileName.Substring(10, 9), out var mergedId);
+                   // _logger.LogInformation("Merged file ID is {Id}", mergedId);
+                   // await ProcessSqlWithSemaphoreAsync(mergedId, merged.fileName, "tr", cancellationToken);
                     _logger.LogInformation("merged stream id is {fileName}", merged.fileName);
                     return merged;
                 }

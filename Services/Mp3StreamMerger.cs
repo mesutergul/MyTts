@@ -35,7 +35,7 @@ namespace MyTts.Services
             {
                 throw new ArgumentException("No audio processors provided", nameof(audioProcessors));
             }
-            var outputFilePath = $"merged_{DateTime.UtcNow:yyyyMMddHHmm}.{fileType.ToString().ToLower()}";
+            var outputFilePath = $"merged.{fileType.ToString().ToLower()}";
             // Use ValueTask-based pattern for better async efficiency
             var lockTaken = false;
             try
@@ -78,7 +78,7 @@ namespace MyTts.Services
         private async Task MergeAudioProcessorsAsync(
             IReadOnlyList<AudioProcessor> processors,
             MemoryStream outputStream,
-            string basePath,
+            string filePath,
             AudioType fileType,
             CancellationToken cancellationToken)
         {
@@ -106,19 +106,19 @@ namespace MyTts.Services
                 if (outputStream.Length > 0)
                 {
                     
-                    _logger.LogInformation("Saving merged audio from MemoryStream to file: {FilePath}", basePath);
+                    _logger.LogInformation("Saving merged audio from MemoryStream to file: {FilePath}", filePath);
 
                     // Reset the MemoryStream position to the beginning so we can read from it
                     outputStream.Position = 0;
 
                     // Create a FileStream to write the MemoryStream content to disk
                     // FileMode.Create will create the file if it doesn't exist, or overwrite it if it does.
-                    using (var fileStream = new FileStream(basePath, FileMode.Create, FileAccess.Write, FileShare.None))
+                    using (var fileStream = new FileStream(Path.Combine("audio", filePath), FileMode.Create, FileAccess.Write, FileShare.None))
                     {
                         // Copy the content from the MemoryStream to the FileStream asynchronously
                         await outputStream.CopyToAsync(fileStream, cancellationToken);
                     }
-                    _logger.LogInformation("Merged audio successfully saved to {FilePath}", basePath);
+                    _logger.LogInformation("Merged audio successfully saved to {FilePath}", filePath);
                 }
                 else
                 {

@@ -265,12 +265,12 @@ namespace MyTts.Repositories
             string fullPath = GetFullPath(metadataCacheKey, fileType);
             if (isMerged)
             {
-                var tew = await _mp3MetaRepository.GetByColumnAsync(x => x.FileId == id, cancellationToken); ;
-                if (tew == null)
-                {
-                    throw new FileNotFoundException($"File not found for ID: {id}");
-                }
-                fullPath = Path.Combine(_baseStoragePath, tew.FileUrl);
+                //var tew = await _mp3MetaRepository.GetByColumnAsync(x => x.FileId == id, cancellationToken); ;
+                //if (tew == null)
+                //{
+                //    throw new FileNotFoundException($"File not found for ID: {id}");
+                //}
+                fullPath = GetFullPath("merged", fileType);
             }
 
             try

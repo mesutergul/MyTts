@@ -72,18 +72,18 @@ namespace MyTts.Controllers
         /// It is responsible for retrieving an MP3 file by its unique identifier (id) 
         /// and returning it to the client as a downloadable file.
         /// </summary>
-        public async Task GetFilem(HttpContext context, int id, CancellationToken cancellationToken)
+        public async Task GetFilem(HttpContext context, CancellationToken cancellationToken)
         {
             try
             {
 
-                await using var fileStream = await _mp3Service.GetAudioFileStream(id, AudioType.Mp3, true, cancellationToken);
+                await using var fileStream = await _mp3Service.GetAudioFileStream(0, AudioType.Mp3, true, cancellationToken);
 
                 if (fileStream == null || fileStream == Stream.Null)
                 {
-                    _logger.LogWarning("File not found with id: {FileId}. GetMp4File returned null or Stream.Null.", id);
+                    _logger.LogWarning("File not found with name merged. GetMp4File returned null or Stream.Null.");
                     context.Response.StatusCode = StatusCodes.Status404NotFound;
-                    await context.Response.WriteAsync($"File with id '{id}' not found.", cancellationToken);
+                    await context.Response.WriteAsync($"File with name merged not found.", cancellationToken);
                     return;
                 }
 
@@ -103,16 +103,16 @@ namespace MyTts.Controllers
             }
             catch (FileNotFoundException ex) // Catch a specific exception if your service throws it
             {
-                _logger.LogWarning(ex, "File not found exception for id: {FileId}", id);
+                _logger.LogWarning(ex, "File not found exception for merged");
                 if (!context.Response.HasStarted)
                 {
                     context.Response.StatusCode = StatusCodes.Status404NotFound;
-                    await context.Response.WriteAsync($"File with id '{id}' not found.", cancellationToken);
+                    await context.Response.WriteAsync($"File with name merged not found.", cancellationToken);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error streaming file with id: {FileId}", id);
+                _logger.LogError(ex, "File not found exception for merged");
                 if (!context.Response.HasStarted) // Check if headers have already been sent
                 {
                     context.Response.StatusCode = StatusCodes.Status500InternalServerError;

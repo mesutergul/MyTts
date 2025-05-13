@@ -70,11 +70,11 @@ namespace MyTts.Routes
                 .ProducesProblem(404)
                 .ProducesProblem(500);
 
-            corsRoutes.MapGet("merged/{id}",
-                async (HttpContext context, int id,
+            corsRoutes.MapGet("merged",
+                async (HttpContext context,
                       [FromServices] Mp3Controller controller, CancellationToken token) =>
                 {
-                    await controller.GetFilem(context, id, token);
+                    await controller.GetFilem(context, token);
                 })
                 .WithName("elevenlabs.mp3.getmergedone")
                 .WithDisplayName("Get merged MP3 File")
