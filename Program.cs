@@ -140,11 +140,18 @@ public static class ServiceCollectionExtensions
 
         services.AddScoped<Mp3Service>();
         services.AddScoped<IMp3Service>(sp => sp.GetRequiredService<Mp3Service>());
+
+        services.AddScoped<TtsManagerService>();
+        services.AddScoped<ITtsManagerService>(sp => sp.GetRequiredService<TtsManagerService>());
+        
+        services.AddScoped<Mp3StreamMerger>();
+        services.AddScoped<IMp3StreamMerger>(sp => sp.GetRequiredService<Mp3StreamMerger>());
+        
         // services.AddScoped<IAudioConversionService, AudioConversionService>();
 
         services.AddScoped<NewsFeedsService>();
 
-        services.AddSingleton<Mp3StreamMerger>();
+        // services.AddSingleton<Mp3StreamMerger>();
 
         services.AddTransient<Mp3Controller>();
 
@@ -187,7 +194,7 @@ public static class ServiceCollectionExtensions
         });
 
         // Register TtsManager as a singleton with proper disposal
-        services.AddScoped<TtsManager>();
+       // services.AddScoped<TtsManagerService>();
 
         return services;
     }

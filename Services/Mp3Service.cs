@@ -1,24 +1,19 @@
-using MyTts.Data;
 using MyTts.Models;
 using MyTts.Repositories;
 using Microsoft.AspNetCore.Mvc;
-using MyTts.Data.Interfaces;
-using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using MyTts.Data.Entities;
-using Microsoft.VisualBasic.FileIO;
-using Azure.Core;
 
 namespace MyTts.Services
 {
-    public class Mp3Service : IMp3Service
+    public class Mp3Service : IMp3Service, IAsyncDisposable
     {
         private readonly ILogger<Mp3Service> _logger;
         private readonly IMp3Repository _mp3FileRepository;
-        private readonly TtsManager _ttsManager;
+        private readonly ITtsManagerService _ttsManager;
         private readonly NewsFeedsService _newsFeedsService;
         private readonly IRedisCacheService? _cache;
-        private const string AudioBasePath = "audio";
+        private const string LocalSavePath = "audio";
         private readonly SemaphoreSlim _processingSemaphore;
         private const int MaxConcurrentProcessing = 1;
         private bool _disposed;
@@ -26,7 +21,7 @@ namespace MyTts.Services
         public Mp3Service(
             ILogger<Mp3Service> logger,
             IMp3Repository mp3FileRepository,
-            TtsManager ttsManager,
+            ITtsManagerService ttsManager,
             IRedisCacheService cache,
             NewsFeedsService newsFeedsService)
         {
@@ -72,7 +67,7 @@ namespace MyTts.Services
             foreach (var news in newsList)
             {
                 var fileName = $"speech_{news.IlgiId}.{fileType.ToString().ToLower()}"; // m4a container for AAC
-                if (!File.Exists(Path.Combine(TtsManager.LocalSavePath, fileName)))
+                if (!File.Exists(Path.Combine(LocalSavePath, fileName)))
                 {
                     neededNewsList.Add(news);
                 }
@@ -217,7 +212,7 @@ namespace MyTts.Services
         // Update file path handling
         private string GetAudioFilePath(string fileName)
         {
-            return Path.Combine(AudioBasePath, fileName);
+            return Path.Combine(LocalSavePath, fileName);
         }
         public async Task<bool> FileExistsAnywhereAsync(int id, AudioType fileType, CancellationToken cancellationToken) {
             return await _mp3FileRepository.FileExistsAnywhereAsync(id, fileType, cancellationToken);
@@ -406,7 +401,7 @@ namespace MyTts.Services
                         return new NotFoundObjectResult(new { message = "MP3 file not found." });
                     }
 
-                    filePath = Path.Combine(TtsManager.LocalSavePath, mp3File.FileUrl);
+                    filePath = Path.Combine(LocalSavePath, mp3File.FileUrl);
 
                     // Cache the path for future requests
                     await _cache!.SetAsync(cacheKey, filePath, TimeSpan.FromHours(1));

@@ -28,7 +28,7 @@ namespace MyTts.Services
                 
                 // Use optimal buffer size based on expected audio sizes
                 // Using 32KB which is good for audio streaming without excessive memory use
-                await _voiceClip.CopyToAsync(destination, 32768, cancellationToken).ConfigureAwait(false);
+                await _voiceClip.CopyToAsync(destination, 128*1024, cancellationToken).ConfigureAwait(false);
             }
             finally
             {

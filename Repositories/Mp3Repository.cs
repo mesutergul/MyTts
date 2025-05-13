@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using Newtonsoft.Json;
-using MyTts.Data.Interfaces;
 using MyTts.Services;
 using MyTts.Data.Repositories;
 using System.Text;
@@ -142,7 +141,6 @@ namespace MyTts.Repositories
         //}
         public async Task<byte[]> LoadMp3FileAsync(int filePath, AudioType fileType, CancellationToken cancellationToken)
         {
-            ArgumentNullException.ThrowIfNull(filePath);
             try
             {
                 if (await FileExistsAnywhereAsync(filePath, fileType, cancellationToken))
@@ -186,7 +184,6 @@ namespace MyTts.Repositories
         }
         public async Task<byte[]> ReadFileFromDiskAsync(int filePath, AudioType fileType = AudioType.Mp3, CancellationToken cancellationToken = default)
         {
-            ArgumentNullException.ThrowIfNull(filePath);
             string metadataKey = $"{FILE_DETAIL_KEY_PREFIX}_{filePath}";
 
             var fullPath = GetFullPath(metadataKey);
@@ -304,7 +301,6 @@ namespace MyTts.Repositories
         }
         public async Task SaveMp3FileAsync(int filePath, byte[] fileData, AudioType fileType, CancellationToken cancellationToken)
         {
-            ArgumentNullException.ThrowIfNull(filePath);
             ArgumentNullException.ThrowIfNull(fileData);
             string metadataCacheKey = $"{FILE_DETAIL_KEY_PREFIX}_{filePath}";
             string fullPath = GetFullPath(metadataCacheKey);
@@ -502,12 +498,12 @@ namespace MyTts.Repositories
         {
             // Use a unique temporary file name to avoid conflicts
             string tempFilePath = Path.Combine(path, $".write-test-{Guid.NewGuid()}.tmp");
-            FileStream fs = null; // Declare outside try to ensure it's accessible in finally
+           // FileStream? fs; // Declare outside try to ensure it's accessible in finally
 
             try
             {
                 // Attempt to create and write to the file
-                using (fs = new FileStream(tempFilePath, FileMode.Create, FileAccess.Write, FileShare.None))
+                await using (var fs = new FileStream(tempFilePath, FileMode.Create, FileAccess.Write, FileShare.None))
                 {
                     // Optionally, write a small amount of data to fully test write capability
                     byte[] testData = Encoding.UTF8.GetBytes("test");

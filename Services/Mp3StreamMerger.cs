@@ -1,18 +1,10 @@
-﻿using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
-using FFMpegCore;
+﻿using FFMpegCore;
 using FFMpegCore.Pipes;
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Logging;
 using MyTts.Repositories;
 
 namespace MyTts.Services
 {
-    public sealed class Mp3StreamMerger : IAsyncDisposable
+    public sealed class Mp3StreamMerger : IMp3StreamMerger ,IAsyncDisposable
     {
         private readonly ILogger<Mp3StreamMerger> _logger;
         private readonly SemaphoreSlim _mergeLock;
@@ -85,7 +77,7 @@ namespace MyTts.Services
             // Create a list to track resources that need disposal
             var streamPipeSources = new List<StreamPipeSource>(processors.Count);
             var streamsToDispose = new List<Stream>(processors.Count);
-            var codec=fileType.Equals(AudioType.Mp3)?"libmp3lame":"aac";
+            var codec = fileType.Equals(AudioType.Mp3) ? "libmp3lame" : "aac";
             try
             {
                 var ffmpegArgs = await CreateFfmpegArgumentsAsync(processors, streamPipeSources, streamsToDispose, cancellationToken).ConfigureAwait(false);
@@ -105,18 +97,23 @@ namespace MyTts.Services
                 // Ensure the outputStream contains data before trying to save
                 if (outputStream.Length > 0)
                 {
-                    
+                    string fullPath = Path.Combine("audio", filePath);
                     _logger.LogInformation("Saving merged audio from MemoryStream to file: {FilePath}", filePath);
 
                     // Reset the MemoryStream position to the beginning so we can read from it
-                    outputStream.Position = 0;
+                    //  outputStream.Position = 0;
 
                     // Create a FileStream to write the MemoryStream content to disk
                     // FileMode.Create will create the file if it doesn't exist, or overwrite it if it does.
-                    using (var fileStream = new FileStream(Path.Combine("audio", filePath), FileMode.Create, FileAccess.Write, FileShare.None))
+                    await using (var fileStream = new FileStream(
+                                fullPath,
+                                FileMode.Create,
+                                FileAccess.Write,
+                                FileShare.None,
+                                bufferSize: 128*1024,
+                                FileOptions.Asynchronous | FileOptions.SequentialScan))
                     {
-                        // Copy the content from the MemoryStream to the FileStream asynchronously
-                        await outputStream.CopyToAsync(fileStream, cancellationToken);
+                        await outputStream.CopyToAsync(fileStream, 128*1024, cancellationToken).ConfigureAwait(false);
                     }
                     _logger.LogInformation("Merged audio successfully saved to {FilePath}", filePath);
                 }
@@ -185,7 +182,7 @@ namespace MyTts.Services
 
             // Create FFmpeg arguments with the first input
             var args = FFMpegArguments.FromPipeInput(firstPipeSource);
-            var streams = new List<Stream>(processors.Count){firstStream};
+            var streams = new List<Stream>(processors.Count) { firstStream };
 
             // Process remaining streams
             for (int i = 1; i < processors.Count; i++)

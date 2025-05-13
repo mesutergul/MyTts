@@ -8,25 +8,22 @@ using ElevenLabs.TextToSpeech;
 using ElevenLabs.Voices;
 using Google.Cloud.Storage.V1;
 using Microsoft.Extensions.Options;
-using Microsoft.AspNetCore.Mvc;
 using MyTts.Config;
 using MyTts.Storage;
-using MyTts.Data.Repositories;
 using MyTts.Data.Entities;
 using MyTts.Repositories;
-using static System.Net.Mime.MediaTypeNames;
 using MyTts.Models;
 
 namespace MyTts.Services
 {
-    public class TtsManager
+    public class TtsManagerService : ITtsManagerService, IAsyncDisposable
     {
         private readonly ElevenLabsClient _elevenLabsClient;
         private readonly StorageClient? _storageClient;
         private readonly IRedisCacheService? _cache;
         private readonly IOptions<ElevenLabsConfig> _config;
-        private readonly ILogger<TtsManager> _logger;
-        private readonly Mp3StreamMerger _mp3StreamMerger;
+        private readonly ILogger<TtsManagerService> _logger;
+        private readonly IMp3StreamMerger _mp3StreamMerger;
         private readonly SemaphoreSlim _semaphore;
         private readonly SemaphoreSlim _semaphoreSql;
         private readonly string? _bucketName;
@@ -34,19 +31,19 @@ namespace MyTts.Services
         private readonly StorageConfiguration _storageConfig;
         //private readonly IAudioConversionService _audioConversionService;
         //private readonly Mp3MetaRepository? _mp3MetaRepository;
-        private readonly Mp3Repository _mp3Repository;
+        private readonly IMp3Repository _mp3Repository;
         public const string LocalSavePath = "audio";
         private const int MaxConcurrentOperations = 20;
 
-        public TtsManager(
+        public TtsManagerService(
             ElevenLabsClient elevenLabsClient,
             IOptions<ElevenLabsConfig> config,
             IOptions<StorageConfiguration> storageConfig,
-            Mp3Repository mp3Repository,
+            IMp3Repository mp3Repository,
             IRedisCacheService cache,
-            Mp3StreamMerger mp3StreamMerger,
+            IMp3StreamMerger mp3StreamMerger,
             //IAudioConversionService audioConversionService,
-            ILogger<TtsManager> logger)
+            ILogger<TtsManagerService> logger)
         {
             _elevenLabsClient = elevenLabsClient ?? throw new ArgumentNullException(nameof(elevenLabsClient));
             _config = config ?? throw new ArgumentNullException(nameof(config));
@@ -123,7 +120,7 @@ namespace MyTts.Services
             }
         }
         // Optimized version of MergeAudioFilesAsync
-        public async Task<(Stream audioData, string contentType, string fileName)> MergeAudioFilesAsync(List<AudioProcessor> processors, string basePath, AudioType fileType, CancellationToken cancellationToken = default)
+        private async Task<(Stream audioData, string contentType, string fileName)> MergeAudioFilesAsync(List<AudioProcessor> processors, string basePath, AudioType fileType, CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(processors);
             if (processors.Count == 0)
@@ -392,15 +389,17 @@ namespace MyTts.Services
             var fileOptions = FileOptions.Asynchronous | FileOptions.SequentialScan;
             // Directory.CreateDirectory(Path.GetDirectoryName(localPath)!); // Ensure path exists
 
-            await using var fileStream = new FileStream(
+            await using (var fileStream = new FileStream(
                 localPath,
                 FileMode.Create,
                 FileAccess.Write,
                 FileShare.None,
-                bufferSize: 65536,
-                fileOptions);
+                bufferSize: 128*1024,
+                fileOptions))
+                {
+                    await processor.CopyToAsync(fileStream, cancellationToken).ConfigureAwait(false);
+                }
 
-            await processor.CopyToAsync(fileStream, cancellationToken).ConfigureAwait(false);
             _logger.LogInformation("Saved file locally: {LocalPath}", localPath);
         }
 
