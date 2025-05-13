@@ -3,6 +3,7 @@ using MyTts.Repositories;
 using Microsoft.AspNetCore.Mvc;
 using System.Diagnostics;
 using MyTts.Data.Entities;
+using System.Threading.Tasks;
 
 namespace MyTts.Services
 {
@@ -42,6 +43,7 @@ namespace MyTts.Services
             {
                 await _processingSemaphore.WaitAsync();
                 var newsList=await GetNewsList(cancellationToken);
+           //     var neededNewsListByDB = checkNewsListInDB(newsList, fileType, cancellationToken);
                 var neededNewsList = checkNewsList(newsList, fileType, cancellationToken);
                 // var contents = await _newsFeedsService.GetFeedByLanguageAsync(language, limit);
                 //var contents = new List<string>
@@ -61,6 +63,17 @@ namespace MyTts.Services
                 _processingSemaphore.Release();
             }
         }
+
+        private async Task<IEnumerable<HaberSummaryDto>> checkNewsListInDB(List<HaberSummaryDto> newsList, AudioType fileType, CancellationToken cancellationToken)
+        {
+            var idList = newsList.Select(er=>er.IlgiId).ToList();
+            List<int> existings = await GetExistingMetaList(idList, cancellationToken);
+            var neededNewsList = newsList
+                            .Where(h => !idList.Contains(h.IlgiId))
+                            .ToList();
+            return neededNewsList;
+        }
+
         private List<HaberSummaryDto> checkNewsList(List<HaberSummaryDto> newsList, AudioType fileType, CancellationToken cancellationToken)
         {
             var neededNewsList = new List<HaberSummaryDto>();
@@ -504,6 +517,10 @@ namespace MyTts.Services
         public async Task<List<HaberSummaryDto>> GetNewsList(CancellationToken cancellationToken)
         {
             return await _mp3FileRepository.GetNewsList(cancellationToken);
+        }
+        public async Task<List<int>> GetExistingMetaList(List<int> myList, CancellationToken cancellationToken)
+        {
+            return await _mp3FileRepository.GetExistingMetaList(myList,cancellationToken);
         }
     }
 }
