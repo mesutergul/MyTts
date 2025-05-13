@@ -6,6 +6,8 @@ using MyTts.Data.Interfaces;
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using MyTts.Data.Entities;
+using Microsoft.VisualBasic.FileIO;
+using Azure.Core;
 
 namespace MyTts.Services
 {
@@ -45,23 +47,37 @@ namespace MyTts.Services
             {
                 await _processingSemaphore.WaitAsync();
                 var newsList=await GetNewsList(cancellationToken);
-               // var contents = await _newsFeedsService.GetFeedByLanguageAsync(language, limit);
-               var contents = new List<string>
-               {
-                   "May whatever is possible be done to reach an authentic, true and lasting peace as quickly as possible.",
-                   "Make sure you're awaiting all async operations properly, especially if you're using scoped services in async scenarios",
-                   "This is a common issue in ASP.NET Core applications, especially when working with services that need to maintain state or resources across asynchronous operations",
-                   "As the error message indicated, the API accepts only one method of authentication, not both simultaneously.",
-                   "I see the issue in your code. The problem is with how you're setting up the Authorization header. Let me fix that for you",
-                   "Routes are now grouped by functionality and follow a consistent pattern, making the code easier to read and maintain"
-                };
-               return await _ttsManager.ProcessContentsAsync(newsList, fileType);
+                var neededNewsList = checkNewsList(newsList, fileType, cancellationToken);
+                // var contents = await _newsFeedsService.GetFeedByLanguageAsync(language, limit);
+                //var contents = new List<string>
+                //{
+                //    "May whatever is possible be done to reach an authentic, true and lasting peace as quickly as possible.",
+                //    "Make sure you're awaiting all async operations properly, especially if you're using scoped services in async scenarios",
+                //    "This is a common issue in ASP.NET Core applications, especially when working with services that need to maintain state or resources across asynchronous operations",
+                //    "As the error message indicated, the API accepts only one method of authentication, not both simultaneously.",
+                //    "I see the issue in your code. The problem is with how you're setting up the Authorization header. Let me fix that for you",
+                //    "Routes are now grouped by functionality and follow a consistent pattern, making the code easier to read and maintain"
+                // };
+                return await _ttsManager.ProcessContentsAsync(newsList, neededNewsList, language, fileType);
 
             }
             finally
             {
                 _processingSemaphore.Release();
             }
+        }
+        private List<HaberSummaryDto> checkNewsList(List<HaberSummaryDto> newsList, AudioType fileType, CancellationToken cancellationToken)
+        {
+            var neededNewsList = new List<HaberSummaryDto>();
+            foreach (var news in newsList)
+            {
+                var fileName = $"speech_{news.IlgiId}.{fileType.ToString().ToLower()}"; // m4a container for AAC
+                if (!File.Exists(Path.Combine(TtsManager.LocalSavePath, fileName)))
+                {
+                    neededNewsList.Add(news);
+                }
+            }
+            return neededNewsList;
         }
         public async Task<Stream> CreateSingleMp3Async(OneRequest request, AudioType fileType, CancellationToken cancellationToken)
         {
@@ -75,7 +91,7 @@ namespace MyTts.Services
                //var content = "As the error message indicated, the API accepts only one method of authentication, not both simultaneously.";
              //   var content ="I see the issue in your code. The problem is with how you're setting up the Authorization header. Let me fix that for you";
               // var content = "Routes are now grouped by functionality and follow a consistent pattern, making the code easier to read and maintain";
-                return await RequestSingleMp3Async(news.Id, news.Summary, fileType, cancellationToken);
+                return await RequestSingleMp3Async(news.Id, news.Summary, request.Language, fileType, cancellationToken);
                 // return await _mp3FileRepository.LoadMp3MetaByNewsIdAsync(request.News, fileType, cancellationToken)
                 //     ?? throw new KeyNotFoundException($"MP3 file not found for ID: {request.News}");
                 //await _processingSemaphore.WaitAsync();
@@ -93,12 +109,12 @@ namespace MyTts.Services
                 _processingSemaphore.Release();
             }
         }
-        public async Task<Stream> RequestSingleMp3Async(int id,string content, AudioType fileType, CancellationToken cancellationToken)
+        public async Task<Stream> RequestSingleMp3Async(int id,string content, string language, AudioType fileType, CancellationToken cancellationToken)
         {
             try
             {
                 await _processingSemaphore.WaitAsync();
-                var (filePath, processor) = await _ttsManager.ProcessContentAsync(content, id, fileType, cancellationToken);
+                var (filePath, processor) = await _ttsManager.ProcessContentAsync(content, id, language, fileType, cancellationToken);
                 return await processor.GetStreamForCloudUploadAsync(cancellationToken);
             }
             catch (Exception ex)
@@ -125,9 +141,8 @@ namespace MyTts.Services
                 ? await _cache.GetAsync<IEnumerable<Mp3Meta>>(cacheKey) ?? Enumerable.Empty<Mp3Meta>()
                 : Enumerable.Empty<Mp3Meta>();
         }
-        public async Task<Mp3Meta> GetMp3FileAsync(string id, AudioType fileType, CancellationToken cancellationToken)
+        public async Task<Mp3Meta> GetMp3FileAsync(int id, AudioType fileType, CancellationToken cancellationToken)
         {
-            ArgumentException.ThrowIfNullOrEmpty(id);
             return await _mp3FileRepository.LoadMp3MetaByNewsIdAsync(id, fileType, cancellationToken)
                 ?? throw new KeyNotFoundException($"MP3 file not found for ID: {id}");
         }
@@ -204,7 +219,7 @@ namespace MyTts.Services
         {
             return Path.Combine(AudioBasePath, fileName);
         }
-        public async Task<bool> FileExistsAnywhereAsync(string id, AudioType fileType, CancellationToken cancellationToken) {
+        public async Task<bool> FileExistsAnywhereAsync(int id, AudioType fileType, CancellationToken cancellationToken) {
             return await _mp3FileRepository.FileExistsAnywhereAsync(id, fileType, cancellationToken);
         }
         /// <summary>
@@ -213,7 +228,7 @@ namespace MyTts.Services
         /// <param name="id"></param>
         /// <param name="cancellationToken"></param>
         /// <returns></returns>
-        public async Task<IActionResult> StreamMp3(string id, AudioType fileType, CancellationToken cancellationToken = default)
+        public async Task<IActionResult> StreamMp3(int id, AudioType fileType, CancellationToken cancellationToken = default)
         {
             try
             {
@@ -250,38 +265,33 @@ namespace MyTts.Services
                 return CreateErrorResponse(ex, "An error occurred while streaming the audio.");
             }
         }
-        private async Task<Mp3Meta> GetOrLoadMp3File(string id, AudioType fileType, CancellationToken cancellationToken)
+        private async Task<Mp3Meta> GetOrLoadMp3File(int id, AudioType fileType, CancellationToken cancellationToken)
         {
             var cacheKey = $"mp3stream:{id}";
             return await _mp3FileRepository.GetFromCacheAsync(cacheKey, cancellationToken)
                 ?? await _mp3FileRepository.LoadAndCacheMp3File(id, fileType, cancellationToken);
         }
-         public async Task<byte[]> GetMp3FileBytes(string id, AudioType fileType, CancellationToken cancellationToken)
+         public async Task<byte[]> GetMp3FileBytes(int id, AudioType fileType, CancellationToken cancellationToken)
         {
             return await _mp3FileRepository.LoadMp3FileAsync(id, fileType, cancellationToken);
         }
-        public async Task<Stream> GetAudioFileStream(string id, AudioType fileType, CancellationToken cancellationToken)
+        public async Task<Stream> GetAudioFileStream(int id, AudioType fileType, bool isMerged, CancellationToken cancellationToken)
         {
-          return await _mp3FileRepository.ReadLargeFileAsStreamAsync(id, 81920, fileType, cancellationToken);
+          return await _mp3FileRepository.ReadLargeFileAsStreamAsync(id, 81920, fileType, isMerged, cancellationToken);
         }
         /// <summary>
         /// Attempts to load existing file
         ///	If not found, creates new MP3 from content
         /// </summary>
-        private async Task<(Stream FileData, string LocalPath)> GetOrProcessMp3File(string id, AudioType fileType, CancellationToken cancellationToken)
-        {
-            int parsedId;
-            if (!int.TryParse(id, out parsedId))
-            {
-                _logger.LogWarning("Invalid ID format: {Id}", id);
-            }  
+        private async Task<(Stream FileData, string LocalPath)> GetOrProcessMp3File(int id, string language, AudioType fileType, CancellationToken cancellationToken)
+        { 
             var fileData = await _mp3FileRepository.LoadMp3FileAsync(id, fileType, cancellationToken);
-            var localPath = id;
+            string localPath="";
             Stream? fileStream = null;
             if (fileData == null || fileData.Length == 0)
             {
-                var content = _newsFeedsService.GetFeedUrl(id);
-                (localPath, var processor)= await _ttsManager.ProcessContentAsync(content, parsedId, fileType, cancellationToken);
+                var content = _newsFeedsService.GetFeedUrl("tr");
+                (localPath, var processor)= await _ttsManager.ProcessContentAsync(content, id, language, fileType, cancellationToken);
                 fileStream = await processor.GetStreamForCloudUploadAsync(cancellationToken);
             } else fileStream= new MemoryStream(fileData);
             return (fileStream, localPath);
@@ -311,11 +321,11 @@ namespace MyTts.Services
         /// <param name="id"></param>
         /// <param name="cancellationToken"></param>
         /// <returns></returns>
-        public async Task<IActionResult> DownloadMp3(string id, AudioType fileType, CancellationToken cancellationToken)
+        public async Task<IActionResult> DownloadMp3(int id, string language, AudioType fileType, CancellationToken cancellationToken)
         {
             try
             {
-                var (fileStream, localPath) = await GetOrProcessMp3File(id, fileType, cancellationToken);
+                var (fileStream, localPath) = await GetOrProcessMp3File(id, language, fileType, cancellationToken);
                 return CreateStreaming(fileStream, localPath);
             }
             catch (Exception ex)
@@ -373,7 +383,7 @@ namespace MyTts.Services
         //         };
         //     }
         // }
-        public async Task<IActionResult> DownloadMp3FromDisk(string id, AudioType fileType, CancellationToken cancellationToken = default)
+        public async Task<IActionResult> DownloadMp3FromDisk(int id, AudioType fileType, CancellationToken cancellationToken = default)
         {
             try
             {

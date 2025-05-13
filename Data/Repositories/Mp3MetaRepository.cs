@@ -2,6 +2,9 @@ using MyTts.Data.Context;
 using MyTts.Data.Interfaces;
 using AutoMapper;
 using MyTts.Models;
+using Microsoft.EntityFrameworkCore;
+using System.Linq.Expressions;
+using MyTts.Data.Entities;
 
 namespace MyTts.Data.Repositories
 {
@@ -21,6 +24,20 @@ namespace MyTts.Data.Repositories
 
             return await Task.FromResult(_dbSet.Any(entity => entity.FileId == id));
         }
+        public virtual async Task<Mp3Meta> GetByColumnAsync(
+            Expression<Func<Mp3Meta, bool>> predicate,
+            CancellationToken cancellationToken)
+        {
+            if (_dbSet == null)
+            {
+                _logger.LogWarning("DbSet is not available. Skipping column-based find.");
+                return null;
+            }
+
+            var entity = await _dbSet.FirstOrDefaultAsync(predicate, cancellationToken);
+            return entity ?? throw new InvalidOperationException($"Entity not found matching predicate.");
+        }
+
 
     }
 }

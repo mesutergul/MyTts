@@ -59,13 +59,25 @@ namespace MyTts.Routes
 
             // Get file endpoint
             corsRoutes.MapGet("one/{id}",
-                async (HttpContext context, string id,
+                async (HttpContext context, int id,
                       [FromServices] Mp3Controller controller, CancellationToken token) =>
                 {
                     await controller.GetFile(context, id, token);
                 })
                 .WithName("elevenlabs.mp3.getone")
                 .WithDisplayName("Get MP3 File")
+                .Produces(200)
+                .ProducesProblem(404)
+                .ProducesProblem(500);
+
+            corsRoutes.MapGet("merged/{id}",
+                async (HttpContext context, int id,
+                      [FromServices] Mp3Controller controller, CancellationToken token) =>
+                {
+                    await controller.GetFilem(context, id, token);
+                })
+                .WithName("elevenlabs.mp3.getmergedone")
+                .WithDisplayName("Get merged MP3 File")
                 .Produces(200)
                 .ProducesProblem(404)
                 .ProducesProblem(500);
@@ -85,7 +97,7 @@ namespace MyTts.Routes
 
             // Download file endpoint
             corsRoutes.MapGet("ones/{id}",
-                async (HttpContext context, string id,
+                async (HttpContext context, int id,
                       [FromServices] Mp3Controller controller, CancellationToken token) =>
                 {
                     await controller.DownloadFile(context, id, token);
@@ -109,10 +121,10 @@ namespace MyTts.Routes
                 .ProducesProblem(404)
                 .ProducesProblem(500);
             corsRoutes.MapGet("onesaysit/{id}",
-                async (HttpContext context,
+                async (HttpContext context, int id,
                       [FromServices] Mp3Controller controller, CancellationToken token) =>
                 {
-                    await controller.SayitText(context, token);
+                    await controller.SayitText(context, id, token);
                 })
                 .WithName("elevenlabs.mp3.getonesaysit")
                 .WithDisplayName("Saysit Text")

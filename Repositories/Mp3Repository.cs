@@ -23,7 +23,8 @@ namespace MyTts.Repositories
         private readonly NewsRepository _newsRepository;
 
         private const string DB_CACHE_KEY = "MP3_FILES_DB";
-        private const string FILE_CACHE_KEY_PREFIX = "haber";
+        private const string FILE_DETAIL_KEY_PREFIX = "speech";
+        private const string FILE_MERGED_KEY_PREFIX = "merged";
         private static readonly TimeSpan DB_CACHE_DURATION = TimeSpan.FromMinutes(45);
         private static readonly TimeSpan FILE_CACHE_DURATION = TimeSpan.FromMinutes(60);
 
@@ -66,26 +67,21 @@ namespace MyTts.Repositories
                 throw;
             }
         }
-        public async Task<bool> Mp3FileExistsInSqlAsync(string id, CancellationToken cancellationToken)
+        public async Task<bool> Mp3FileExistsInSqlAsync(int id, CancellationToken cancellationToken)
         {
-            int parsedId;
             if (_mp3MetaRepository == null)
             {
                 _logger.LogWarning("SQL repository not registered. Skipping DB check.");
                 return false;
             }
-            if (!int.TryParse(id, out parsedId))
-            {
-                _logger.LogWarning("Invalid ID format: {Id}", id);
-                return false;
-            }
-            ArgumentOutOfRangeException.ThrowIfLessThan(parsedId, 1);
+
+            ArgumentOutOfRangeException.ThrowIfLessThan(id, 1);
             try
             {
                 await _dbLock.WaitAsync();
                 try
                 {
-                    var exist = await _mp3MetaRepository.ExistByIdAsync(parsedId, cancellationToken);
+                    var exist = await _mp3MetaRepository.ExistByIdAsync(id, cancellationToken);
                     return exist;
                     // if (!exists)
                     //     throw new KeyNotFoundException($"MP3 file not found for path: {id}");
@@ -144,7 +140,7 @@ namespace MyTts.Repositories
         //    }
         //    return Array.Empty<byte>();
         //}
-        public async Task<byte[]> LoadMp3FileAsync(string filePath, AudioType fileType, CancellationToken cancellationToken)
+        public async Task<byte[]> LoadMp3FileAsync(int filePath, AudioType fileType, CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(filePath);
             try
@@ -166,9 +162,9 @@ namespace MyTts.Repositories
                 throw;
             }
         }
-        public async Task<bool> FileExistsAnywhereAsync(string filePath, AudioType fileType, CancellationToken cancellationToken)
+        public async Task<bool> FileExistsAnywhereAsync(int filePath, AudioType fileType, CancellationToken cancellationToken)
         {
-            string metadataCacheKey = $"{FILE_CACHE_KEY_PREFIX}-{filePath}";
+            string metadataCacheKey = $"{FILE_DETAIL_KEY_PREFIX}-{filePath}";
 
             // Check metadata cache first
             if (await Mp3FileExistsInCacheAsync(metadataCacheKey, cancellationToken))
@@ -188,10 +184,10 @@ namespace MyTts.Repositories
 
             return false;
         }
-        private async Task<byte[]> ReadFileFromDiskAsync(string filePath, AudioType fileType = AudioType.Mp3, CancellationToken cancellationToken = default)
+        public async Task<byte[]> ReadFileFromDiskAsync(int filePath, AudioType fileType = AudioType.Mp3, CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(filePath);
-            string metadataKey = $"{FILE_CACHE_KEY_PREFIX}-{filePath}";
+            string metadataKey = $"{FILE_DETAIL_KEY_PREFIX}_{filePath}";
 
             var fullPath = GetFullPath(metadataKey);
             const int bufferSize = 81920; // Optimal buffer size for large files
@@ -263,10 +259,19 @@ namespace MyTts.Repositories
         /// <summary>
         /// Opens a large file as a stream for efficient reading with cancellation support
         /// </summary>
-        public async Task<Stream> ReadLargeFileAsStreamAsync(string filePath, int bufferSize, AudioType fileType, CancellationToken cancellationToken)
+        public async Task<Stream> ReadLargeFileAsStreamAsync(int id, int bufferSize, AudioType fileType, bool isMerged, CancellationToken cancellationToken)
         {
-            string metadataCacheKey = $"{FILE_CACHE_KEY_PREFIX}-{filePath}";
+            string metadataCacheKey = $"{FILE_DETAIL_KEY_PREFIX}_{id}";
             string fullPath = GetFullPath(metadataCacheKey, fileType);
+            if (isMerged)
+            {
+                var tew = await _mp3MetaRepository.GetByColumnAsync(x => x.FileId == id, cancellationToken); ;
+                if (tew == null)
+                {
+                    throw new FileNotFoundException($"File not found for ID: {id}");
+                }
+                fullPath = Path.Combine(_baseStoragePath, tew.FileUrl);
+            }
 
             try
             {
@@ -297,16 +302,17 @@ namespace MyTts.Repositories
                 throw new IOException($"Failed to open file stream: {fullPath}", ex);
             }
         }
-        public async Task SaveMp3FileAsync(string filePath, byte[] fileData, AudioType fileType, CancellationToken cancellationToken)
+        public async Task SaveMp3FileAsync(int filePath, byte[] fileData, AudioType fileType, CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(filePath);
             ArgumentNullException.ThrowIfNull(fileData);
-
-            var fileLock = await GetFileLockAsync(filePath);
+            string metadataCacheKey = $"{FILE_DETAIL_KEY_PREFIX}_{filePath}";
+            string fullPath = GetFullPath(metadataCacheKey);
+            var fileLock = await GetFileLockAsync(fullPath);
             await fileLock.WaitAsync();
             try
             {
-                string fullPath = GetFullPath(filePath);
+                
                 string directory = Path.GetDirectoryName(fullPath)!;
                 Directory.CreateDirectory(directory);
 
@@ -323,7 +329,7 @@ namespace MyTts.Repositories
                 File.Move(tempPath, fullPath);
 
                 // Update cache
-                string cacheKey = $"{FILE_CACHE_KEY_PREFIX}{filePath}";
+                string cacheKey = $"{FILE_DETAIL_KEY_PREFIX}{filePath}";
                 await _cache.SetAsync(cacheKey, fileData, FILE_CACHE_DURATION);
             }
             catch (Exception ex)
@@ -344,11 +350,12 @@ namespace MyTts.Repositories
             await fileLock.WaitAsync();
             try
             {
+                string metadataKey = $"{FILE_DETAIL_KEY_PREFIX}_{filePath}";
                 string fullPath = GetFullPath(filePath);
                 if (File.Exists(fullPath))
                 {
                     File.Delete(fullPath);
-                    string cacheKey = $"{FILE_CACHE_KEY_PREFIX}{filePath}";
+                    string cacheKey = $"{FILE_DETAIL_KEY_PREFIX}{filePath}";
                     await _cache.RemoveAsync(cacheKey);
                 }
             }
@@ -573,12 +580,12 @@ namespace MyTts.Repositories
         {
             return Path.Combine(_baseStoragePath, filePath + "." + fileType.ToString().ToLower());
         }
-        public async Task<Mp3Meta?> LoadMp3MetaByPathAsync(string filePath, AudioType fileType, CancellationToken cancellationToken)
+        public async Task<Mp3Meta?> LoadMp3MetaByPathAsync(int filePath, AudioType fileType, CancellationToken cancellationToken)
         {
             try
             {
                 var mp3Files = await LoadListMp3MetadatasAsync(fileType, cancellationToken);
-                return mp3Files.FirstOrDefault(f => f.FileUrl == filePath);
+                return mp3Files.FirstOrDefault(f => f.FileUrl == filePath.ToString());
             }
             catch (Exception ex)
             {
@@ -610,16 +617,15 @@ namespace MyTts.Repositories
                 throw;
             }
         }
-        public async Task<Mp3Meta> LoadMp3MetaByNewsIdAsync(string id, AudioType fileType, CancellationToken cancellationToken)
+        public async Task<Mp3Meta> LoadMp3MetaByNewsIdAsync(int id, AudioType fileType, CancellationToken cancellationToken)
         {
-            ArgumentException.ThrowIfNullOrEmpty(id);
 
             try
             {
                 await _dbLock.WaitAsync();
                 try
                 {
-                    var mp3File = await _mp3MetaRepository.GetByIdAsync(int.Parse(id), cancellationToken)
+                    var mp3File = await _mp3MetaRepository.GetByIdAsync(id, cancellationToken)
                         ?? throw new KeyNotFoundException($"MP3 file not found for ID: {id}");
 
                     _logger.LogDebug("Found MP3 metadata for ID: {Id}", id);
@@ -670,7 +676,7 @@ namespace MyTts.Repositories
                 throw;
             }
         }
-        public async Task<Mp3Meta?> LoadAndCacheMp3File(string id, AudioType fileType, CancellationToken cancellationToken)
+        public async Task<Mp3Meta?> LoadAndCacheMp3File(int id, AudioType fileType, CancellationToken cancellationToken)
         {
             var mp3File = await LoadMp3MetaByNewsIdAsync(id, fileType, cancellationToken);
             if (mp3File != null)

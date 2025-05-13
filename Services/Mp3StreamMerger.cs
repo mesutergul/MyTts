@@ -35,7 +35,7 @@ namespace MyTts.Services
             {
                 throw new ArgumentException("No audio processors provided", nameof(audioProcessors));
             }
-
+            var outputFilePath = $"merged_{DateTime.UtcNow:yyyyMMddHHmm}.{fileType.ToString().ToLower()}";
             // Use ValueTask-based pattern for better async efficiency
             var lockTaken = false;
             try
@@ -46,15 +46,15 @@ namespace MyTts.Services
                 if (audioProcessors.Count == 1)
                 {
                     _logger.LogInformation("Only one processor provided - returning directly");
-                    return await CreateSingleFileResultAsync(audioProcessors[0], cancellationToken);
+                    return await CreateSingleFileResultAsync(audioProcessors[0], outputFilePath, cancellationToken);
                 }
                 using var outputStream = new MemoryStream();
-                await MergeAudioProcessorsAsync(audioProcessors, outputStream, basePath, fileType, cancellationToken).ConfigureAwait(false);
+                await MergeAudioProcessorsAsync(audioProcessors, outputStream, outputFilePath, fileType, cancellationToken).ConfigureAwait(false);
 
                 // Return the stream properly
                 outputStream.Position = 0;
                 _logger.LogInformation("Merged audio processors successfully");
-                return (outputStream, "audio/mpeg", $"merged_{DateTime.UtcNow:yyyyMMddHHmmss}.mp3");
+                return (outputStream, "audio/mpeg", outputFilePath);
             }
             catch (OperationCanceledException)
             {
@@ -105,20 +105,20 @@ namespace MyTts.Services
                 // Ensure the outputStream contains data before trying to save
                 if (outputStream.Length > 0)
                 {
-                    var outputFilePath = Path.Combine(basePath, $"merged_{DateTime.UtcNow:yyyyMMddHHmmss}.{fileType.ToString().ToLower()}");
-                    _logger.LogInformation("Saving merged audio from MemoryStream to file: {FilePath}", outputFilePath);
+                    
+                    _logger.LogInformation("Saving merged audio from MemoryStream to file: {FilePath}", basePath);
 
                     // Reset the MemoryStream position to the beginning so we can read from it
                     outputStream.Position = 0;
 
                     // Create a FileStream to write the MemoryStream content to disk
                     // FileMode.Create will create the file if it doesn't exist, or overwrite it if it does.
-                    using (var fileStream = new FileStream(outputFilePath, FileMode.Create, FileAccess.Write, FileShare.None))
+                    using (var fileStream = new FileStream(basePath, FileMode.Create, FileAccess.Write, FileShare.None))
                     {
                         // Copy the content from the MemoryStream to the FileStream asynchronously
                         await outputStream.CopyToAsync(fileStream, cancellationToken);
                     }
-                    _logger.LogInformation("Merged audio successfully saved to {FilePath}", outputFilePath);
+                    _logger.LogInformation("Merged audio successfully saved to {FilePath}", basePath);
                 }
                 else
                 {
@@ -166,10 +166,10 @@ namespace MyTts.Services
             }
         }
 
-        private async Task<(Stream audioData, string contentType, string fileName)> CreateSingleFileResultAsync(AudioProcessor processor, CancellationToken cancellationToken)
+        private async Task<(Stream audioData, string contentType, string fileName)> CreateSingleFileResultAsync(AudioProcessor processor, string outputFilePath, CancellationToken cancellationToken)
         {
             var stream = await processor.GetStreamForCloudUploadAsync(cancellationToken);
-            return (stream, "audio/mpeg", $"audio_{DateTime.UtcNow:yyyyMMddHHmmss}.mp3");
+            return (stream, "audio/mpeg", outputFilePath);
         }
         private static async Task<FFMpegArguments> CreateFfmpegArgumentsAsync(
             IReadOnlyList<AudioProcessor> processors,

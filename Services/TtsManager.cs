@@ -36,7 +36,7 @@ namespace MyTts.Services
         //private readonly Mp3MetaRepository? _mp3MetaRepository;
         private readonly Mp3Repository _mp3Repository;
         public const string LocalSavePath = "audio";
-        private const int MaxConcurrentOperations = 2;
+        private const int MaxConcurrentOperations = 20;
 
         public TtsManager(
             ElevenLabsClient elevenLabsClient,
@@ -151,35 +151,98 @@ namespace MyTts.Services
         }
         // Optimized ProcessContentsAsync
         public async Task<(Stream audioData, string contentType, string fileName)> ProcessContentsAsync(
-        IEnumerable<HaberSummaryDto> contents, AudioType fileType, CancellationToken cancellationToken = default)
+        IEnumerable<HaberSummaryDto> allNews, IEnumerable<HaberSummaryDto> neededNews, string language, AudioType fileType, CancellationToken cancellationToken = default)
         {
-            ArgumentNullException.ThrowIfNull(contents);
-            var contentsList = contents.ToList(); // Materialize once to avoid multiple enumeration
-
-            if (!contentsList.Any())
+            ArgumentNullException.ThrowIfNull(neededNews);
+            var allNewsList = allNews.ToList();
+            var contentsNeededList = neededNews.ToList(); // Materialize once to avoid multiple enumeration
+            var referenceIds = contentsNeededList.Select(p => p.IlgiId).ToHashSet();
+            var contentsSavedList = allNews
+                .Where(p => !referenceIds.Contains(p.IlgiId))
+                .ToList();
+            if (!contentsNeededList.Any() && !contentsSavedList.Any())
             {
                 return (null, "", "");
             }
 
             try
             {
-                var processingTasks = new List<Task<(string LocalPath, AudioProcessor Processor)>>(contentsList.Count);
+                var processingNeededTasks = new List<Task<(string LocalPath, AudioProcessor Processor)>>(contentsNeededList.Count);
+                var processingSavedTasks = new List<Task<(string LocalPath, AudioProcessor Processor)>>(contentsSavedList.Count);
+                // Create a dictionary to map IDs to their list indices
+                var neededIds = new Dictionary<int, int>();
+                var savedIds = new Dictionary<int, int>();
 
-                foreach (var content in contentsList)
+                for (int i = 0; i < contentsNeededList.Count; i++)
                 {
+                    var content = contentsNeededList[i];
+                    neededIds[content.IlgiId] = i;
                     // Create tasks but don't await them yet
-                    processingTasks.Add(ProcessContentWithSemaphoreAsync(content.Baslik+content.Ozet, content.IlgiId, fileType, cancellationToken));
+                    processingNeededTasks.Add(ProcessContentWithSemaphoreAsync(content.Baslik + content.Ozet, content.IlgiId, language, fileType, cancellationToken));
                 }
-
+                for (int i = 0; i < contentsSavedList.Count; i++)
+                {
+                    var content = contentsSavedList[i];
+                    savedIds[content.IlgiId] = i;
+                    // Create tasks but don't await them yet
+                    processingSavedTasks.Add(ProcessSavedContentAsync(content.IlgiId, fileType, cancellationToken));
+                }
+                var resultsSaved = await Task.WhenAll(processingSavedTasks);
                 // Wait for all tasks to complete
-                var results = await Task.WhenAll(processingTasks);
+                var resultsNeeded = await Task.WhenAll(processingNeededTasks);
 
                 // Extract the processors
-                var processors = results.Select(r => r.Processor).ToList();
+                var processors = new List<AudioProcessor>(allNewsList.Count);
+                // Create a lookup map for quick access to results
+                var neededDict = new Dictionary<int, AudioProcessor>();
+                var savedDict = new Dictionary<int, AudioProcessor>();
+                // var processors = results.Select(r => r.Processor).ToList();
+                foreach (var result in resultsNeeded)
+                {
+                    if (int.TryParse(result.LocalPath, out int ilgiId))
+                    {
+                        neededDict[ilgiId] = result.Processor;
+                    }
+                }
+                foreach (var result in resultsSaved)
+                {
+                    if (int.TryParse(result.LocalPath, out int ilgiId))
+                    {
+                        savedDict[ilgiId] = result.Processor;
+                    }
+                }
+                foreach (var news in allNewsList)
+                {
+                    int ilgiId = news.IlgiId;
+
+                    if (neededDict.TryGetValue(ilgiId, out var neededProcessor))
+                    {
+                        processors.Add(neededProcessor);
+                    }
+                    else if (savedDict.TryGetValue(ilgiId, out var savedProcessor))
+                    {
+                        processors.Add(savedProcessor);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("No processor found for news item with ID {IlgiId}", ilgiId);
+                        // Consider what to do when no processor is found:
+                        // 1. Skip (current behavior)
+                        // 2. Add a placeholder processor
+                        // 3. Throw an exception
+                    }
+                }
+
                 if (processors.Count > 0)
                 {
                     _logger.LogInformation("Successfully processed {Count} files", processors.Count);
-                    return await MergeAudioFilesAsync(processors, _storageConfig.BasePath, fileType, cancellationToken);
+                    var merged = await MergeAudioFilesAsync(processors, _storageConfig.BasePath, fileType, cancellationToken);
+                    
+                    int.TryParse(merged.fileName.Substring(10, 9), out var mergedId);
+                    _logger.LogInformation("Merged file ID is {Id}", mergedId);
+                    await ProcessSqlWithSemaphoreAsync(mergedId, merged.fileName, "tr", cancellationToken);
+                    _logger.LogInformation("merged stream id is {fileName}", merged.fileName);
+                    return merged;
                 }
 
                 _logger.LogWarning("No files were successfully processed");
@@ -196,16 +259,34 @@ namespace MyTts.Services
                 throw;
             }
         }
+
+        private async Task<(string LocalPath, AudioProcessor Processor)> ProcessSavedContentAsync(int ilgiId, AudioType fileType, CancellationToken cancellationToken)
+        {
+            try
+            {
+                byte[] stream = await _mp3Repository.ReadFileFromDiskAsync(ilgiId, fileType, cancellationToken);
+                var voiceClip = new VoiceClip(stream);
+                var audioProcessor = new AudioProcessor(voiceClip);
+                return (ilgiId.ToString(), audioProcessor);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error processing saved content {Id}", ilgiId);
+                throw;
+            }
+        }
+
         private async Task<(string LocalPath, AudioProcessor Processor)> ProcessContentWithSemaphoreAsync(
             string content,
             int id,
+            string language,
             AudioType fileType,
             CancellationToken cancellationToken)
         {
             await _semaphore.WaitAsync(cancellationToken);
             try
             {
-                return await ProcessContentAsync(content, id, fileType, cancellationToken);
+                return await ProcessContentAsync(content, id, language, fileType, cancellationToken);
             }
             finally
             {
@@ -214,24 +295,31 @@ namespace MyTts.Services
         }
         private async Task ProcessSqlWithSemaphoreAsync(
             int id,
-            string text,
             string localPath,
-            string fileName,
+            string language,
             CancellationToken cancellationToken)
         {
-            await _semaphoreSql.WaitAsync(cancellationToken);
             try
             {
-                await SaveMetadataSqlAsync(id, text, localPath, fileName, cancellationToken);
+                await _semaphoreSql.WaitAsync(cancellationToken);
+                try
+                {
+                    await SaveMetadataSqlAsync(id, localPath, language, cancellationToken);
+                }
+                finally
+                {
+                    _semaphoreSql.Release();
+                }
             }
-            finally
+            catch (Exception ex)
             {
-                _semaphoreSql.Release();
+                _logger.LogError(ex, "Error processing SQL with semaphore for {Id} at SaveMetadataSqlAsync", id);
+                throw;
             }
         }
-
         // Optimized version of ProcessContentAsync
-        public async Task<(string LocalPath, AudioProcessor FileData)> ProcessContentAsync(string text, int id, AudioType fileType, CancellationToken cancellationToken)
+        public async Task<(string LocalPath, AudioProcessor FileData)> ProcessContentAsync(
+            string text, int id, string language, AudioType fileType, CancellationToken cancellationToken)
         {
             var fileName = $"speech_{id}.{fileType.ToString().ToLower()}"; // m4a container for AAC
             var localPath = Path.Combine(LocalSavePath, fileName);
@@ -261,7 +349,7 @@ namespace MyTts.Services
                     SaveLocallyAsync(audioProcessor, localPath, cancellationToken),
                     UploadToCloudAsync(audioProcessor, fileName, cancellationToken),
                     StoreMetadataRedisAsync(id, text, localPath, fileName, cancellationToken),
-                    ProcessSqlWithSemaphoreAsync(id, text, localPath, fileName, cancellationToken)
+                    ProcessSqlWithSemaphoreAsync(id, fileName, language, cancellationToken)
                 };
 
                 await Task.WhenAll(tasks);
@@ -360,13 +448,13 @@ namespace MyTts.Services
 
         }
 
-        private async Task SaveMetadataSqlAsync(int id, string text, string localPath, string fileName, CancellationToken cancellationToken)
+        private async Task SaveMetadataSqlAsync(int id, string localPath, string language, CancellationToken cancellationToken)
         {
             var mp3Meta = new Mp3Meta
             {
                 FileId=id,
                 FileUrl=localPath,
-                Language="tr"
+                Language=language
             };
             await _mp3Repository.SaveMp3MetaToSql(mp3Meta, cancellationToken).ConfigureAwait(false);
             _logger.LogDebug("Saved metadata to SQL via EF for {Id}", id);
