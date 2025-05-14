@@ -113,7 +113,7 @@ namespace MyTts.Services
                                 bufferSize: 128*1024,
                                 FileOptions.Asynchronous | FileOptions.SequentialScan))
                     {
-                        await outputStream.CopyToAsync(fileStream, 64*1024, cancellationToken).ConfigureAwait(false);
+                        await outputStream.CopyToAsync(fileStream, 128*1024, cancellationToken).ConfigureAwait(false);
                     }
                     _logger.LogInformation("Merged audio successfully saved to {FilePath}", filePath);
                 }

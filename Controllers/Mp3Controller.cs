@@ -21,17 +21,17 @@ namespace MyTts.Controllers
         /// <summary>
         /// Creates multiple MP3 files based on the specified language and limit.   
         /// </summary>
-        public async Task<IActionResult> Feed(HttpContext context, string language, int limit, CancellationToken cancellationToken)
+        public async Task Feed(HttpContext context, string language, int limit, CancellationToken cancellationToken)
         {
             try
             {
                 await _mp3Service.CreateMultipleMp3Async(language, limit, AudioType.Mp3, cancellationToken);
-                return Ok(language);
+                await context.Response.WriteAsync("Processed request of creation of voice files successfully.", cancellationToken);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error processing MP3 list request");
-                return Problem("Failed to process MP3 list request");
+                await context.Response.WriteAsync("An error occurred while streaming the file.", cancellationToken);
             }
         }
         /// <summary>
