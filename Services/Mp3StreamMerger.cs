@@ -98,10 +98,10 @@ namespace MyTts.Services
                 if (outputStream.Length > 0)
                 {
                     string fullPath = Path.Combine("audio", filePath);
-                    _logger.LogInformation("Saving merged audio from MemoryStream to file: {FilePath}", filePath);
+                    _logger.LogInformation("Saving merged audio from MemoryStream to file: {FilePath}, length: {length}", filePath, outputStream.Length);
 
                     // Reset the MemoryStream position to the beginning so we can read from it
-                    //  outputStream.Position = 0;
+                    outputStream.Position = 0;
 
                     // Create a FileStream to write the MemoryStream content to disk
                     // FileMode.Create will create the file if it doesn't exist, or overwrite it if it does.
@@ -113,7 +113,7 @@ namespace MyTts.Services
                                 bufferSize: 128*1024,
                                 FileOptions.Asynchronous | FileOptions.SequentialScan))
                     {
-                        await outputStream.CopyToAsync(fileStream, 128*1024, cancellationToken).ConfigureAwait(false);
+                        await outputStream.CopyToAsync(fileStream, 64*1024, cancellationToken).ConfigureAwait(false);
                     }
                     _logger.LogInformation("Merged audio successfully saved to {FilePath}", filePath);
                 }

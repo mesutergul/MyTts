@@ -33,7 +33,7 @@ namespace MyTts.Services
         //private readonly Mp3MetaRepository? _mp3MetaRepository;
         private readonly IMp3Repository _mp3Repository;
         public const string LocalSavePath = "audio";
-        private const int MaxConcurrentOperations = 20;
+        private const int MaxConcurrentOperations = 10;
 
         public TtsManagerService(
             ElevenLabsClient elevenLabsClient,
