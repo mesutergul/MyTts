@@ -152,15 +152,16 @@ namespace MyTts.Services
         }
         // Optimized ProcessContentsAsync
         public async Task<(Stream audioData, string contentType, string fileName)> ProcessContentsAsync(
-        IEnumerable<HaberSummaryDto> allNews, IEnumerable<HaberSummaryDto> neededNews, string language, AudioType fileType, CancellationToken cancellationToken = default)
+        IEnumerable<HaberSummaryDto> allNews, IEnumerable<HaberSummaryDto> neededNews, IEnumerable<HaberSummaryDto> savedNews, string language, AudioType fileType, CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(neededNews);
             var allNewsList = allNews.ToList();
             var contentsNeededList = neededNews.ToList(); // Materialize once to avoid multiple enumeration
             var referenceIds = contentsNeededList.Select(p => p.IlgiId).ToHashSet();
-            var contentsSavedList = allNews
-                .Where(p => !referenceIds.Contains(p.IlgiId))
-                .ToList();
+            //var contentsSavedList = allNews
+            //    .Where(p => !referenceIds.Contains(p.IlgiId))
+            //    .ToList();
+            var contentsSavedList=savedNews.ToList();
             _logger.LogInformation("Processing {Count} needed and {SavedCount} saved contents", contentsNeededList.Count, contentsSavedList.Count);
             if (!contentsNeededList.Any() && !contentsSavedList.Any())
             {
@@ -201,16 +202,11 @@ namespace MyTts.Services
                 // var processors = results.Select(r => r.Processor).ToList();
                 foreach (var result in resultsNeeded)
                 {
-                    
-                        neededDict[result.id] = result.Processor;
-                    
+                    neededDict[result.id] = result.Processor;                  
                 }
                 foreach (var result in resultsSaved)
-                {
-                   
-                    
-                        savedDict[result.id] = result.Processor;
-                    
+                {           
+                    savedDict[result.id] = result.Processor;                   
                 }
                 foreach (var news in allNewsList)
                 {

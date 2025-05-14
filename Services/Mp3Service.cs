@@ -43,8 +43,8 @@ namespace MyTts.Services
             {
                 await _processingSemaphore.WaitAsync();
                 var newsList=await GetNewsList(cancellationToken);
-           //     var neededNewsListByDB = checkNewsListInDB(newsList, fileType, cancellationToken);
-                var neededNewsList = checkNewsList(newsList, fileType, cancellationToken);
+                // var (neededNewsListByDB, savedNewsListByDB) = checkNewsListInDB(newsList, fileType, cancellationToken);
+                var (neededNewsList, savedNewsList) = checkNewsList(newsList, fileType, cancellationToken);
                 // var contents = await _newsFeedsService.GetFeedByLanguageAsync(language, limit);
                 //var contents = new List<string>
                 //{
@@ -55,7 +55,7 @@ namespace MyTts.Services
                 //    "I see the issue in your code. The problem is with how you're setting up the Authorization header. Let me fix that for you",
                 //    "Routes are now grouped by functionality and follow a consistent pattern, making the code easier to read and maintain"
                 // };
-                return await _ttsManager.ProcessContentsAsync(newsList, neededNewsList, language, fileType);
+                return await _ttsManager.ProcessContentsAsync(newsList, neededNewsList, savedNewsList, language, fileType);
 
             }
             finally
@@ -64,19 +64,23 @@ namespace MyTts.Services
             }
         }
 
-        private async Task<IEnumerable<HaberSummaryDto>> checkNewsListInDB(List<HaberSummaryDto> newsList, AudioType fileType, CancellationToken cancellationToken)
+        private async Task<(IEnumerable<HaberSummaryDto> neededNewsList, IEnumerable<HaberSummaryDto> savedNewsList)> checkNewsListInDB(List<HaberSummaryDto> newsList, AudioType fileType, CancellationToken cancellationToken)
         {
             var idList = newsList.Select(er=>er.IlgiId).ToList();
             List<int> existings = await GetExistingMetaList(idList, cancellationToken);
             var neededNewsList = newsList
                             .Where(h => !idList.Contains(h.IlgiId))
                             .ToList();
-            return neededNewsList;
+            var savedNewsList = newsList
+                            .Where(h => idList.Contains(h.IlgiId))
+                            .ToList();
+            return (neededNewsList, savedNewsList);
         }
 
-        private List<HaberSummaryDto> checkNewsList(List<HaberSummaryDto> newsList, AudioType fileType, CancellationToken cancellationToken)
+        private (List<HaberSummaryDto> neededNewsList, List<HaberSummaryDto> savedNewsList) checkNewsList(List<HaberSummaryDto> newsList, AudioType fileType, CancellationToken cancellationToken)
         {
             var neededNewsList = new List<HaberSummaryDto>();
+            var savedNewsList = new List<HaberSummaryDto>();
             foreach (var news in newsList)
             {
                 var fileName = $"speech_{news.IlgiId}.{fileType.ToString().ToLower()}"; // m4a container for AAC
@@ -84,8 +88,12 @@ namespace MyTts.Services
                 {
                     neededNewsList.Add(news);
                 }
+                else
+                {
+                    savedNewsList.Add(news);
+                }
             }
-            return neededNewsList;
+            return (neededNewsList, savedNewsList);
         }
         public async Task<Stream> CreateSingleMp3Async(OneRequest request, AudioType fileType, CancellationToken cancellationToken)
         {
