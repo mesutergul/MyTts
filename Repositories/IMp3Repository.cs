@@ -7,6 +7,7 @@ namespace MyTts.Repositories
 {
     public interface IMp3Repository : IDisposable
     {
+        string GetFullPath(string filePath, AudioType fileType);
         Task<byte[]> LoadMp3FileAsync(int filePath, AudioType fileType, CancellationToken cancellationToken);
         Task SaveMp3FileAsync(int filePath, byte[] fileData, AudioType fileType, CancellationToken cancellationToken);
         Task<List<Mp3Meta>> LoadListMp3MetadatasAsync(AudioType fileType, CancellationToken cancellationToken);

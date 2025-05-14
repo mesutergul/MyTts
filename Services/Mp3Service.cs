@@ -294,7 +294,7 @@ namespace MyTts.Services
         private async Task<(Stream FileData, string LocalPath)> GetOrProcessMp3File(int id, string language, AudioType fileType, CancellationToken cancellationToken)
         { 
             var fileData = await _mp3FileRepository.LoadMp3FileAsync(id, fileType, cancellationToken);
-            string localPath="";
+            int localPath=0;
             Stream? fileStream = null;
             if (fileData == null || fileData.Length == 0)
             {
@@ -302,7 +302,7 @@ namespace MyTts.Services
                 (localPath, var processor)= await _ttsManager.ProcessContentAsync(content, id, language, fileType, cancellationToken);
                 fileStream = await processor.GetStreamForCloudUploadAsync(cancellationToken);
             } else fileStream= new MemoryStream(fileData);
-            return (fileStream, localPath);
+            return (fileStream, localPath.ToString());
         }
 
         private IActionResult CreateStreamResponse(string filePath, string fileName)

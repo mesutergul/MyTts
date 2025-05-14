@@ -6,7 +6,7 @@ namespace MyTts.Services{
     {
         Task<(Stream audioData, string contentType, string fileName)> ProcessContentsAsync(
         IEnumerable<HaberSummaryDto> allNews, IEnumerable<HaberSummaryDto> neededNews, string language, AudioType fileType, CancellationToken cancellationToken = default);
-        Task<(string LocalPath, AudioProcessor FileData)> ProcessContentAsync(
+        Task<(int id, AudioProcessor FileData)> ProcessContentAsync(
             string text, int id, string language, AudioType fileType, CancellationToken cancellationToken  = default);
     }
 }

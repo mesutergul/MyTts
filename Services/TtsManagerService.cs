@@ -120,7 +120,11 @@ namespace MyTts.Services
             }
         }
         // Optimized version of MergeAudioFilesAsync
-        private async Task<(Stream audioData, string contentType, string fileName)> MergeAudioFilesAsync(List<AudioProcessor> processors, string basePath, AudioType fileType, CancellationToken cancellationToken = default)
+        private async Task<(Stream audioData, string contentType, string fileName)> MergeAudioFilesAsync
+            (List<AudioProcessor> processors, 
+            string basePath, 
+            AudioType fileType, 
+            CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(processors);
             if (processors.Count == 0)
@@ -157,15 +161,16 @@ namespace MyTts.Services
             var contentsSavedList = allNews
                 .Where(p => !referenceIds.Contains(p.IlgiId))
                 .ToList();
+            _logger.LogInformation("Processing {Count} needed and {SavedCount} saved contents", contentsNeededList.Count, contentsSavedList.Count);
             if (!contentsNeededList.Any() && !contentsSavedList.Any())
             {
                 return (null, "", "");
             }
-
+               
             try
             {
-                var processingNeededTasks = new List<Task<(string LocalPath, AudioProcessor Processor)>>(contentsNeededList.Count);
-                var processingSavedTasks = new List<Task<(string LocalPath, AudioProcessor Processor)>>(contentsSavedList.Count);
+                var processingNeededTasks = new List<Task<(int id, AudioProcessor Processor)>>(contentsNeededList.Count);
+                var processingSavedTasks = new List<Task<(int id, AudioProcessor Processor)>>(contentsSavedList.Count);
                 // Create a dictionary to map IDs to their list indices
                 var neededIds = new Dictionary<int, int>();
                 var savedIds = new Dictionary<int, int>();
@@ -196,17 +201,16 @@ namespace MyTts.Services
                 // var processors = results.Select(r => r.Processor).ToList();
                 foreach (var result in resultsNeeded)
                 {
-                    if (int.TryParse(result.LocalPath, out int ilgiId))
-                    {
-                        neededDict[ilgiId] = result.Processor;
-                    }
+                    
+                        neededDict[result.id] = result.Processor;
+                    
                 }
                 foreach (var result in resultsSaved)
                 {
-                    if (int.TryParse(result.LocalPath, out int ilgiId))
-                    {
-                        savedDict[ilgiId] = result.Processor;
-                    }
+                   
+                    
+                        savedDict[result.id] = result.Processor;
+                    
                 }
                 foreach (var news in allNewsList)
                 {
@@ -257,14 +261,18 @@ namespace MyTts.Services
             }
         }
 
-        private async Task<(string LocalPath, AudioProcessor Processor)> ProcessSavedContentAsync(int ilgiId, AudioType fileType, CancellationToken cancellationToken)
+        private async Task<(int id, AudioProcessor Processor)> ProcessSavedContentAsync
+        (
+            int ilgiId, 
+            AudioType fileType, 
+            CancellationToken cancellationToken)
         {
             try
             {
                 byte[] stream = await _mp3Repository.ReadFileFromDiskAsync(ilgiId, fileType, cancellationToken);
                 var voiceClip = new VoiceClip(stream);
                 var audioProcessor = new AudioProcessor(voiceClip);
-                return (ilgiId.ToString(), audioProcessor);
+                return (ilgiId, audioProcessor);
             }
             catch (Exception ex)
             {
@@ -273,7 +281,7 @@ namespace MyTts.Services
             }
         }
 
-        private async Task<(string LocalPath, AudioProcessor Processor)> ProcessContentWithSemaphoreAsync(
+        private async Task<(int id, AudioProcessor Processor)> ProcessContentWithSemaphoreAsync(
             string content,
             int id,
             string language,
@@ -315,11 +323,11 @@ namespace MyTts.Services
             }
         }
         // Optimized version of ProcessContentAsync
-        public async Task<(string LocalPath, AudioProcessor FileData)> ProcessContentAsync(
+        public async Task<(int id, AudioProcessor FileData)> ProcessContentAsync(
             string text, int id, string language, AudioType fileType, CancellationToken cancellationToken)
         {
-            var fileName = $"speech_{id}.{fileType.ToString().ToLower()}"; // m4a container for AAC
-            var localPath = Path.Combine(LocalSavePath, fileName);
+            var fileName = $"speech_{id}"; // m4a container for AAC
+            var localPath = _mp3Repository.GetFullPath(fileName, fileType);
 
             try
             {
@@ -352,7 +360,7 @@ namespace MyTts.Services
                 await Task.WhenAll(tasks);
 
                 _logger.LogInformation("Processed content {Id}: {FileName}", id, fileName);
-                return (localPath, audioProcessor);
+                return (id, audioProcessor);
             }
             catch (Exception ex)
             {

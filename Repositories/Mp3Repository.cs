@@ -36,8 +36,8 @@ namespace MyTts.Repositories
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _cache = cache ?? throw new ArgumentNullException(nameof(cache));
-            _baseStoragePath = configuration["Storage:BasePath"] ?? "C:\\repos\\audio";
-            _metadataPath = configuration["Storage:MetadataPath"] ?? "C:\\repos\\audiometa\\mp3files.json";
+            _baseStoragePath = Path.GetFullPath(configuration["Storage:BasePath"]) ?? "C:\\repos\\audio";
+            _metadataPath = Path.GetFullPath(configuration["Storage:MetadataPath"]) ?? "C:\\repos\\audiometa\\mp3files.json";
             _dbLock = new SemaphoreSlim(1, 1);
             _fileLocks = new ConcurrentDictionary<string, SemaphoreSlim>();
             _jsonSettings = new JsonSerializerSettings
@@ -269,7 +269,11 @@ namespace MyTts.Repositories
                 //}
                 fullPath = GetFullPath("merged", fileType);
             }
-
+            if (!File.Exists(fullPath))
+            {
+                _logger.LogError("File not found: " + fullPath);
+                throw new FileNotFoundException("Cannot open file: " + fullPath);
+            }
             try
             {
                 var fileStream = new FileStream(
@@ -282,7 +286,7 @@ namespace MyTts.Repositories
                 );
 
                 // Position stream at beginning
-                await fileStream.FlushAsync(cancellationToken);
+             //   await fileStream.FlushAsync(cancellationToken);
                 fileStream.Position = 0;
 
                 // The caller is now responsible for disposing the stream
@@ -572,9 +576,13 @@ namespace MyTts.Repositories
 
         #region File Operations
         
-        private string GetFullPath(string filePath, AudioType fileType = AudioType.Mp3)
+        public string GetFullPath(string filePath, AudioType fileType = AudioType.Mp3)
         {
             return Path.Combine(_baseStoragePath, filePath + "." + fileType.ToString().ToLower());
+        }
+        public string GetFullPath(string filePath)
+        {
+            return Path.Combine(_baseStoragePath, filePath);
         }
         public async Task<Mp3Meta?> LoadMp3MetaByPathAsync(int filePath, AudioType fileType, CancellationToken cancellationToken)
         {
@@ -599,8 +607,13 @@ namespace MyTts.Repositories
             {
                 await _dbLock.WaitAsync();
                 try {
-                    await _mp3MetaRepository.AddAsync(mp3Meta, cancellationToken).ConfigureAwait(false);
-                    _logger.LogDebug("Saved MP3 metadata to SQL: {Mp3Meta}", mp3Meta);
+                    var exist = await _mp3MetaRepository.ExistByIdAsync(mp3Meta.FileId, cancellationToken);
+                    if (!exist)
+                    {
+                        await _mp3MetaRepository.AddAsync(mp3Meta, cancellationToken).ConfigureAwait(false);
+                        _logger.LogDebug("Saved MP3 metadata to SQL: {Mp3Meta}", mp3Meta);
+                    }
+                    else _logger.LogDebug("MP3 metadata already exists in SQL: {Mp3Meta}", mp3Meta);
                 }
                 finally
                 {
@@ -714,24 +727,25 @@ namespace MyTts.Repositories
         }
         public async Task<News> LoadNewsAsync(int news, CancellationToken cancellationToken)
         {
-            try
-            {
-                await _dbLock.WaitAsync(cancellationToken);
-                try     
-                {
-                    _logger.LogDebug("Loading MP3 files from database");
-                    return await _newsRepository.GetByIdAsync(news, cancellationToken);
-                }
-                finally
-                {
-                    _dbLock.Release();
-                }
-            }    
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to execute test query");
-                throw;
-            }
+        //    try
+        //    {
+        //        await _dbLock.WaitAsync(cancellationToken);
+        //        try     
+        //        {
+        //            _logger.LogDebug("Loading MP3 files from database");
+        //            return await _newsRepository.GetByIdAsync(news, cancellationToken);
+        //        }
+        //        finally
+        //        {
+        //            _dbLock.Release();
+        //        }
+        //    }    
+        //    catch (Exception ex)
+        //    {
+        //        _logger.LogError(ex, "Failed to execute test query");
+        //        throw;
+        //    }
+        return new News() ;
         }
         public async Task<List<int>> GetExistingMetaList(List<int> myList, CancellationToken cancellationToken)
         {

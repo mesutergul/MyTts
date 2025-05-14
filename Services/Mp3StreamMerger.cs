@@ -1,5 +1,6 @@
 ﻿using FFMpegCore;
 using FFMpegCore.Pipes;
+using Microsoft.Extensions.Configuration;
 using MyTts.Repositories;
 
 namespace MyTts.Services
@@ -8,11 +9,13 @@ namespace MyTts.Services
     {
         private readonly ILogger<Mp3StreamMerger> _logger;
         private readonly SemaphoreSlim _mergeLock;
+        private readonly string _baseStoragePath;
         private bool _disposed;
 
-        public Mp3StreamMerger(ILogger<Mp3StreamMerger> logger)
+        public Mp3StreamMerger(ILogger<Mp3StreamMerger> logger, IConfiguration configuration)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _baseStoragePath = Path.GetFullPath(configuration["Storage:BasePath"]) ?? "C:\\repos\\audio";
             _mergeLock = new SemaphoreSlim(1, 1);
         }
 
@@ -27,7 +30,7 @@ namespace MyTts.Services
             {
                 throw new ArgumentException("No audio processors provided", nameof(audioProcessors));
             }
-            var outputFilePath = $"merged.{fileType.ToString().ToLower()}";
+            var outputFilePath = $"merged";
             // Use ValueTask-based pattern for better async efficiency
             var lockTaken = false;
             try
@@ -97,7 +100,7 @@ namespace MyTts.Services
                 // Ensure the outputStream contains data before trying to save
                 if (outputStream.Length > 0)
                 {
-                    string fullPath = Path.Combine("audio", filePath);
+                    string fullPath=  Path.Combine(_baseStoragePath, filePath + "." + fileType.ToString().ToLower());
                     _logger.LogInformation("Saving merged audio from MemoryStream to file: {FilePath}, length: {length}", filePath, outputStream.Length);
 
                     // Reset the MemoryStream position to the beginning so we can read from it
