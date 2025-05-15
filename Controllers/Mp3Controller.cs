@@ -101,6 +101,12 @@ namespace MyTts.Controllers
                 }
                 await fileStream.CopyToAsync(context.Response.Body, cancellationToken);
             }
+            catch (OperationCanceledException)
+            {
+                if (context.Response.HasStarted) _logger.LogDebug("Ýstemci cevabý aldýktan sonra baðlantýyý kapattý. Exception bastýrýlýyor.");
+                else _logger.LogWarning("Ýþlem iptal edildi: istemci baðlantýyý sonlandýrdý.");
+                await context.Response.WriteAsync($"istemci baðlantýyý sonlandýrdý.", cancellationToken);
+            }
             catch (FileNotFoundException ex) // Catch a specific exception if your service throws it
             {
                 _logger.LogWarning(ex, "File not found exception for merged");
@@ -149,7 +155,14 @@ namespace MyTts.Controllers
                     // Most stream providers that give you Length will have Position at 0 if it's a fresh stream.
                     // fileStream.Position = 0;
                 }
-                await fileStream.CopyToAsync(context.Response.Body, cancellationToken);            }
+                await fileStream.CopyToAsync(context.Response.Body, cancellationToken);           
+            }
+            catch (OperationCanceledException)
+            {
+                if (context.Response.HasStarted) _logger.LogDebug("Ýstemci cevabý aldýktan sonra baðlantýyý kapattý. Exception bastýrýlýyor.");
+                else _logger.LogWarning("Ýþlem iptal edildi: istemci baðlantýyý sonlandýrdý.");
+                await context.Response.WriteAsync($"istemci baðlantýyý sonlandýrdý.", cancellationToken);
+            }
             catch (FileNotFoundException ex) // Catch a specific exception if your service throws it
             {
                 _logger.LogWarning(ex, "File not found exception for id: {FileId}", id);
