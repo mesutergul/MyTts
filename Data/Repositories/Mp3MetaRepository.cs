@@ -8,9 +8,9 @@ using MyTts.Data.Entities;
 
 namespace MyTts.Data.Repositories
 {
-    public class Mp3MetaRepository : Repository<Mp3Meta, IMp3>, IMp3MetaRepository
+    public class Mp3MetaRepository : Repository<AppDbContext,Mp3Meta, Mp3Dto>, IMp3MetaRepository
     {
-        public Mp3MetaRepository(IAppDbContextFactory contextFactory, IMapper? mapper, ILogger<Mp3MetaRepository> logger) : base(contextFactory, mapper, logger) { }
+        public Mp3MetaRepository(IGenericDbContextFactory<AppDbContext> contextFactory, IMapper? mapper, ILogger<Mp3MetaRepository> logger) : base(contextFactory, mapper, logger) { }
 
         // Mp3File'a özel metodları burada implemente edebilirsin
 

@@ -6,7 +6,7 @@ using MyTts.Data.Interfaces;
 namespace MyTts.Data.Entities
 {
     [Table("Haber_Ses_Dosyalari")]
-    public class Mp3Meta : BaseEntity, IMp3
+    public class Mp3Meta : BaseEntity
     {       
         [Column("haber_id")]
         public required int FileId { get; set; }

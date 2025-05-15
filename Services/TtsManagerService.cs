@@ -453,13 +453,13 @@ namespace MyTts.Services
 
         private async Task SaveMetadataSqlAsync(int id, string localPath, string language, CancellationToken cancellationToken)
         {
-            var mp3Meta = new Mp3Meta
+            var mp3Dto = new Mp3Dto
             {
                 FileId=id,
                 FileUrl=localPath,
                 Language=language
             };
-            await _mp3Repository.SaveMp3MetaToSql(mp3Meta, cancellationToken).ConfigureAwait(false);
+            await _mp3Repository.SaveMp3MetaToSql(mp3Dto, cancellationToken).ConfigureAwait(false);
             _logger.LogDebug("Saved metadata to SQL via EF for {Id}", id);
         }
 

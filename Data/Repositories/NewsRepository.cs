@@ -8,9 +8,9 @@ using MyTts.Models;
 
 namespace MyTts.Data.Repositories
 {
-    public class NewsRepository : Repository<News, INews>, INewsRepository
+    public class NewsRepository : Repository<AppDbContext , News, INews>, INewsRepository
     {
-        public NewsRepository(IAppDbContextFactory contextFactory, IMapper? mapper, ILogger<NewsRepository> logger) : base(contextFactory, mapper, logger) { }
+        public NewsRepository(IGenericDbContextFactory<AppDbContext> contextFactory, IMapper? mapper, ILogger<NewsRepository> logger) : base(contextFactory, mapper, logger) { }
         // News'a özel metodları burada implemente edebilirsin
         public async Task<List<HaberSummaryDto>> getSummary(int top, MansetType mansetType, CancellationToken token)
         {
@@ -19,6 +19,7 @@ namespace MyTts.Data.Repositories
                 _logger.LogWarning("DbSet is not available. Skipping GetById check.");
                 return new List<HaberSummaryDto>();
             }
+            _logger.LogInformation("Connected to: " + _context.Database.GetDbConnection().Database);
             var query = await _context.HaberKonumlari
                 .Include(k => k.News) // Ensure navigation property is loaded
                 .Where(k => k.KonumAdi == "ana manşet")

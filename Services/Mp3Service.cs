@@ -150,20 +150,20 @@ namespace MyTts.Services
                 return await tu.processor.GetStreamForCloudUpload(cancellationToken);
 
          */
-        public async Task<IEnumerable<Mp3Meta>> GetFeedByLanguageAsync(ListRequest listRequest, CancellationToken cancellationToken)
+        public async Task<IEnumerable<Mp3Dto>> GetFeedByLanguageAsync(ListRequest listRequest, CancellationToken cancellationToken)
         {
             var cacheKey = $"feed_{listRequest.Language}";
             return _cache != null
-                ? await _cache.GetAsync<IEnumerable<Mp3Meta>>(cacheKey) ?? Enumerable.Empty<Mp3Meta>()
-                : Enumerable.Empty<Mp3Meta>();
+                ? await _cache.GetAsync<IEnumerable<Mp3Dto>>(cacheKey) ?? Enumerable.Empty<Mp3Dto>()
+                : Enumerable.Empty<Mp3Dto>();
         }
-        public async Task<Mp3Meta> GetMp3FileAsync(int id, AudioType fileType, CancellationToken cancellationToken)
+        public async Task<Mp3Dto> GetMp3FileAsync(int id, AudioType fileType, CancellationToken cancellationToken)
         {
             return await _mp3FileRepository.LoadMp3MetaByNewsIdAsync(id, fileType, cancellationToken)
                 ?? throw new KeyNotFoundException($"MP3 file not found for ID: {id}");
         }
 
-        public async Task<Mp3Meta> GetLastMp3ByLanguageAsync(string language, AudioType fileType, CancellationToken cancellationToken)
+        public async Task<Mp3Dto> GetLastMp3ByLanguageAsync(string language, AudioType fileType, CancellationToken cancellationToken)
         {
             ArgumentException.ThrowIfNullOrEmpty(language);
             return await _mp3FileRepository.LoadLatestMp3MetaByLanguageAsync(language, fileType, cancellationToken);
@@ -281,7 +281,7 @@ namespace MyTts.Services
                 return CreateErrorResponse(ex, "An error occurred while streaming the audio.");
             }
         }
-        private async Task<Mp3Meta> GetOrLoadMp3File(int id, AudioType fileType, CancellationToken cancellationToken)
+        private async Task<Mp3Dto> GetOrLoadMp3File(int id, AudioType fileType, CancellationToken cancellationToken)
         {
             var cacheKey = $"mp3stream:{id}";
             return await _mp3FileRepository.GetFromCacheAsync(cacheKey, cancellationToken)
@@ -493,13 +493,13 @@ namespace MyTts.Services
             await Task.CompletedTask;
         }
 
-        public async Task<IEnumerable<Mp3Meta>> GetMp3FileListAsync(AudioType fileType, CancellationToken cancellationToken)
+        public async Task<IEnumerable<Mp3Dto>> GetMp3FileListAsync(AudioType fileType, CancellationToken cancellationToken)
         {
             // return await _mp3FileRepository.LoadAllMp3MetaAsync();
             throw new NotImplementedException();
         }
 
-        public async Task<IEnumerable<Mp3Meta>> GetMp3FileListByLanguageAsync(string language, AudioType fileType, CancellationToken cancellationToken)
+        public async Task<IEnumerable<Mp3Dto>> GetMp3FileListByLanguageAsync(string language, AudioType fileType, CancellationToken cancellationToken)
         {
             ArgumentException.ThrowIfNullOrEmpty(language);
             // return await _mp3FileRepository.LoadMp3MetaByLanguageAsync(language);

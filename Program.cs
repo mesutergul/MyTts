@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Internal;
 using Microsoft.Extensions.Options;
 using MyTts.Config;
 using MyTts.Controllers;
@@ -9,6 +10,7 @@ using MyTts.Data.Context;
 using MyTts.Data.Entities;
 using MyTts.Data.Interfaces;
 using MyTts.Data.Repositories;
+using MyTts.Models;
 using MyTts.Repositories;
 using MyTts.Routes;
 using MyTts.Services;
@@ -90,71 +92,72 @@ public static class ServiceCollectionExtensions
             return false;
         }
     }
+
+    public static IServiceCollection AddSqlServerDbContext<TContext>(this IServiceCollection services, string connectionString)
+    where TContext : DbContext
+    {
+        return services.AddDbContextFactory<TContext>(options =>
+        {
+            options.UseSqlServer(connectionString, sqlOptions =>
+            {
+                sqlOptions.EnableRetryOnFailure(3);
+                sqlOptions.CommandTimeout(30);
+            });
+        });
+    }
+  
     public static IServiceCollection AddCoreServices(this IServiceCollection services, IConfiguration configuration)
     {
         var connectionString = configuration.GetConnectionString("DefaultConnection");
+        var dunyaDb = configuration.GetConnectionString("DunyaDb");
+
         var dbAvailable = !string.IsNullOrEmpty(connectionString) && TestSqlConnection(connectionString);
 
         if (dbAvailable)
         {
-            services.AddDbContext<AppDbContext>(options =>
-            {
-                options.UseSqlServer(connectionString, sqlOptions =>
-                {
-                    sqlOptions.EnableRetryOnFailure(3);
-                    sqlOptions.CommandTimeout(30);
-                });
-            });
+            services.AddSqlServerDbContext<AppDbContext>(connectionString);
+            services.AddSqlServerDbContext<DunyaDbContext>(dunyaDb);
 
-            services.AddScoped(typeof(IRepository<,>), typeof(Repository<,>));
+            services.AddScoped<IGenericDbContextFactory<AppDbContext>, AppDbContextFactory>();
+            services.AddScoped<IGenericDbContextFactory<DunyaDbContext>, DunyaDbContextFactory>();
+
             services.AddScoped<Mp3MetaRepository>();
-            services.AddScoped<NewsRepository>();
+            services.AddScoped<IRepository<Mp3Meta, Mp3Dto>>(sp => sp.GetRequiredService<Mp3MetaRepository>());
+            services.AddScoped<NewsRepository>()
+                   .AddScoped<IRepository<News, INews>>(sp => sp.GetRequiredService<NewsRepository>());
 
-            services.AddScoped<IRepository<Mp3Meta, IMp3>>(sp => sp.GetRequiredService<Mp3MetaRepository>());
-            services.AddScoped<IRepository<News, INews>>(sp => sp.GetRequiredService<NewsRepository>());
-
-            // AppDbContextFactory requires AppDbContext, so register it only if available
-            services.AddScoped<IAppDbContextFactory, DefaultAppDbContextFactory>();
         }
         else
         {
-            // Register dummy DbContext to satisfy dependencies
+            // Fallback - no DB
             services.AddDbContext<AppDbContext>(options => { });
+            services.AddDbContext<DunyaDbContext>(options => { });
 
-            // In fallback mode, use a dummy factory or skip registration if unused
             services.AddSingleton<IAppDbContextFactory, NullAppDbContextFactory>();
             services.AddSingleton<Mp3MetaRepository, NullMp3MetaRepository>();
             services.AddSingleton<NewsRepository, NullNewsRepository>();
         }
 
-        services.AddAutoMapper(cfg =>
-        {
-            // Optional: Add any global configuration
-            // cfg.Advanced.AllowAdditiveTypeMapCreation = true;
-        },
-        typeof(Program),
-        typeof(HaberMappingProfile));
+        // AutoMapper config
+        services.AddAutoMapper(cfg => { }, typeof(Program), typeof(HaberMappingProfile), typeof(Mp3MappingProfile));
+
         // Application services
-        services.AddScoped<Mp3Repository>();
-        services.AddScoped<IMp3Repository>(sp => sp.GetRequiredService<Mp3Repository>());
+        services.AddScoped<Mp3Repository>()
+                .AddScoped<IMp3Repository>(sp => sp.GetRequiredService<Mp3Repository>());
 
-        services.AddScoped<Mp3Service>();
-        services.AddScoped<IMp3Service>(sp => sp.GetRequiredService<Mp3Service>());
+        services.AddScoped<Mp3Service>()
+                .AddScoped<IMp3Service>(sp => sp.GetRequiredService<Mp3Service>());
 
-        services.AddScoped<TtsManagerService>();
-        services.AddScoped<ITtsManagerService>(sp => sp.GetRequiredService<TtsManagerService>());
-        
-        services.AddScoped<Mp3StreamMerger>();
-        services.AddScoped<IMp3StreamMerger>(sp => sp.GetRequiredService<Mp3StreamMerger>());
-        
-        // services.AddScoped<IAudioConversionService, AudioConversionService>();
+        services.AddScoped<TtsManagerService>()
+                .AddScoped<ITtsManagerService>(sp => sp.GetRequiredService<TtsManagerService>());
+
+        services.AddScoped<Mp3StreamMerger>()
+                .AddScoped<IMp3StreamMerger>(sp => sp.GetRequiredService<Mp3StreamMerger>());
 
         services.AddScoped<NewsFeedsService>();
-
-        // services.AddSingleton<Mp3StreamMerger>();
-
         services.AddTransient<Mp3Controller>();
 
+        // Logging config
         services.AddLogging(logging =>
         {
             logging.AddConsole();
@@ -166,6 +169,7 @@ public static class ServiceCollectionExtensions
 
         return services;
     }
+
     public static IServiceCollection AddStorageServices(this IServiceCollection services, IConfiguration configuration)
     {
         // Configure storage with proper validation

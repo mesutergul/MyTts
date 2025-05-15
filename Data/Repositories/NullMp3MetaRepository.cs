@@ -7,13 +7,15 @@ using System.Threading.Tasks;
 using AutoMapper;
 using MyTts.Data.Interfaces;
 using Microsoft.Extensions.Logging;
+using MyTts.Data.Context;
+using MyTts.Models;
 
 namespace MyTts.Data.Repositories
 {
     public class NullMp3MetaRepository : Mp3MetaRepository
     {
         public NullMp3MetaRepository(
-             IAppDbContextFactory factory, // Inject IAppDbContextFactory
+             IGenericDbContextFactory<AppDbContext> factory, // Inject IAppDbContextFactory
              IMapper mapper,               // Inject IMapper
              ILogger<NullMp3MetaRepository> logger)
              : base(factory, mapper, logger) // Pass the injected dependencies to the base
@@ -25,17 +27,17 @@ namespace MyTts.Data.Repositories
             return Task.FromResult(false);
         }
 
-        public override Task<IEnumerable<Mp3Meta>> GetAllAsync(CancellationToken cancellationToken)
+        public override Task<List<Mp3Dto>> GetAllAsync(CancellationToken cancellationToken)
         {
-            return Task.FromResult<IEnumerable<Mp3Meta>>(new List<Mp3Meta>());
+            return Task.FromResult<List<Mp3Dto>>(new List<Mp3Dto>());
         }
 
-        public override Task<Mp3Meta> GetByIdAsync(int id, CancellationToken cancellationToken)
+        public override Task<Mp3Dto> GetByIdAsync(int id, CancellationToken cancellationToken)
         {
-            return Task.FromResult<Mp3Meta>(null);
+            return Task.FromResult<Mp3Dto>(null);
         }
 
-        public override Task AddAsync(Mp3Meta entity, CancellationToken cancellationToken)
+        public override Task AddAsync(Mp3Dto entity, CancellationToken cancellationToken)
         {
             return Task.CompletedTask;
         }
@@ -45,12 +47,12 @@ namespace MyTts.Data.Repositories
             return Task.CompletedTask;
         }
 
-        public override Task Update(Mp3Meta entity, CancellationToken cancellationToken)
+        public override Task Update(Mp3Dto entity, CancellationToken cancellationToken)
         {
             return Task.CompletedTask;
         }
 
-        public override Task Delete(Mp3Meta entity, CancellationToken cancellationToken)
+        public override Task Delete(Mp3Dto entity, CancellationToken cancellationToken)
         {
             return Task.CompletedTask;
         }

@@ -1,4 +1,5 @@
 using AutoMapper;
+using MyTts.Data.Context;
 using MyTts.Data.Entities;
 using MyTts.Data.Interfaces;
 
@@ -7,7 +8,7 @@ namespace MyTts.Data.Repositories
     public class NullNewsRepository : NewsRepository 
     {
     public NullNewsRepository(
-             IAppDbContextFactory factory, // Inject IAppDbContextFactory
+             IGenericDbContextFactory<AppDbContext> factory, // Inject IAppDbContextFactory
              IMapper mapper,               // Inject IMapper
              ILogger<NullNewsRepository> logger)
              : base(factory, mapper, logger) // Pass the injected dependencies to the base

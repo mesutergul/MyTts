@@ -375,10 +375,10 @@ namespace MyTts.Repositories
             return Task.FromResult(_fileLocks.GetOrAdd(filePath, _ => new SemaphoreSlim(1, 1)));
         }
 
-        public async Task<List<Mp3Meta>> LoadListMp3MetadatasAsync(AudioType fileType, CancellationToken cancellationToken)
+        public async Task<List<Mp3Dto>> LoadListMp3MetadatasAsync(AudioType fileType, CancellationToken cancellationToken)
         {
             // Try get from cache first
-            var cachedData = await _cache.GetAsync<List<Mp3Meta>>(DB_CACHE_KEY, cancellationToken);
+            var cachedData = await _cache.GetAsync<List<Mp3Dto>>(DB_CACHE_KEY, cancellationToken);
             if (cachedData != null)
             {
                 _logger.LogDebug("Cache hit for MP3 metadata database");
@@ -389,7 +389,7 @@ namespace MyTts.Repositories
             try
             {
                 // Double-check cache after acquiring lock
-                cachedData = await _cache.GetAsync<List<Mp3Meta>>(DB_CACHE_KEY, cancellationToken);
+                cachedData = await _cache.GetAsync<List<Mp3Dto>>(DB_CACHE_KEY, cancellationToken);
                 if (cachedData != null)
                 {
                     return cachedData;
@@ -398,14 +398,14 @@ namespace MyTts.Repositories
                 // Load from file if not in cache
                 if (!File.Exists(_metadataPath))
                 {
-                    var emptyList = new List<Mp3Meta>();
+                    var emptyList = new List<Mp3Dto>();
                     await _cache.SetAsync(DB_CACHE_KEY, emptyList, DB_CACHE_DURATION);
                     return emptyList;
                 }
 
                 var json = await File.ReadAllTextAsync(_metadataPath);
-                var mp3Files = JsonConvert.DeserializeObject<List<Mp3Meta>>(json, _jsonSettings)
-                    ?? new List<Mp3Meta>();
+                var mp3Files = JsonConvert.DeserializeObject<List<Mp3Dto>>(json, _jsonSettings)
+                    ?? new List<Mp3Dto>();
 
                 // Cache the loaded data
                 await _cache.SetAsync(DB_CACHE_KEY, mp3Files, DB_CACHE_DURATION);
@@ -424,7 +424,7 @@ namespace MyTts.Repositories
             }
         }
 
-        public async Task SaveMp3MetadatasAsync(List<Mp3Meta> mp3Files, AudioType fileType, CancellationToken cancellationToken)
+        public async Task SaveMp3MetadatasAsync(List<Mp3Dto> mp3Files, AudioType fileType, CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(mp3Files);
 
@@ -584,7 +584,7 @@ namespace MyTts.Repositories
         {
             return Path.Combine(_baseStoragePath, filePath);
         }
-        public async Task<Mp3Meta?> LoadMp3MetaByPathAsync(int filePath, AudioType fileType, CancellationToken cancellationToken)
+        public async Task<Mp3Dto?> LoadMp3MetaByPathAsync(int filePath, AudioType fileType, CancellationToken cancellationToken)
         {
             try
             {
@@ -602,18 +602,18 @@ namespace MyTts.Repositories
 
         #region Database Operations
 
-        public async Task SaveMp3MetaToSql(Mp3Meta mp3Meta, CancellationToken cancellationToken) {
+        public async Task SaveMp3MetaToSql(Mp3Dto mp3Dto, CancellationToken cancellationToken) {
             try
             {
                 await _dbLock.WaitAsync();
                 try {
-                    var exist = await _mp3MetaRepository.ExistByIdAsync(mp3Meta.FileId, cancellationToken);
+                    var exist = await _mp3MetaRepository.ExistByIdAsync(mp3Dto.FileId, cancellationToken);
                     if (!exist)
                     {
-                        await _mp3MetaRepository.AddAsync(mp3Meta, cancellationToken).ConfigureAwait(false);
-                        _logger.LogDebug("Saved MP3 metadata to SQL: {Mp3Meta}", mp3Meta);
+                        await _mp3MetaRepository.AddAsync(mp3Dto, cancellationToken).ConfigureAwait(false);
+                        _logger.LogDebug("Saved MP3 metadata to SQL: {Mp3Meta}", mp3Dto);
                     }
-                    else _logger.LogDebug("MP3 metadata already exists in SQL: {Mp3Meta}", mp3Meta);
+                    else _logger.LogDebug("MP3 metadata already exists in SQL: {Mp3Meta}", mp3Dto);
                 }
                 finally
                 {
@@ -622,11 +622,11 @@ namespace MyTts.Repositories
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to save MP3 metadata to SQL");
+                _logger.LogError(ex, "Failed to save MP3 metadata to SQL :{dto}", mp3Dto);
                 throw;
             }
         }
-        public async Task<Mp3Meta> LoadMp3MetaByNewsIdAsync(int id, AudioType fileType, CancellationToken cancellationToken)
+        public async Task<Mp3Dto> LoadMp3MetaByNewsIdAsync(int id, AudioType fileType, CancellationToken cancellationToken)
         {
 
             try
@@ -653,7 +653,7 @@ namespace MyTts.Repositories
             }
         }
 
-        public async Task<Mp3Meta> LoadLatestMp3MetaByLanguageAsync(string language, AudioType fileType, CancellationToken cancellationToken)
+        public async Task<Mp3Dto> LoadLatestMp3MetaByLanguageAsync(string language, AudioType fileType, CancellationToken cancellationToken)
         {
             try
             {
@@ -671,7 +671,7 @@ namespace MyTts.Repositories
             }
         }
 
-        public async Task SaveSingleMp3MetaAsync(Mp3Meta mp3File, AudioType fileType, CancellationToken cancellationToken)
+        public async Task SaveSingleMp3MetaAsync(Mp3Dto mp3File, AudioType fileType, CancellationToken cancellationToken)
         {
             try
             {
@@ -685,7 +685,7 @@ namespace MyTts.Repositories
                 throw;
             }
         }
-        public async Task<Mp3Meta?> LoadAndCacheMp3File(int id, AudioType fileType, CancellationToken cancellationToken)
+        public async Task<Mp3Dto?> LoadAndCacheMp3File(int id, AudioType fileType, CancellationToken cancellationToken)
         {
             var mp3File = await LoadMp3MetaByNewsIdAsync(id, fileType, cancellationToken);
             if (mp3File != null)
@@ -694,12 +694,12 @@ namespace MyTts.Repositories
             }
             return mp3File;
         }
-        public async Task<Mp3Meta?> GetFromCacheAsync(string key, CancellationToken cancellationToken)
+        public async Task<Mp3Dto?> GetFromCacheAsync(string key, CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(_cache);
-            return await _cache.GetAsync<Mp3Meta>(key, cancellationToken);
+            return await _cache.GetAsync<Mp3Dto>(key, cancellationToken);
         }
-        public async Task SetToCacheAsync(string key, Mp3Meta value, TimeSpan? expiry = null, CancellationToken cancellationToken = default)
+        public async Task SetToCacheAsync(string key, Mp3Dto value, TimeSpan? expiry = null, CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(_cache);
             await _cache.SetAsync(key, value, expiry, cancellationToken);
