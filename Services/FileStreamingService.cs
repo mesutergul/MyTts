@@ -42,6 +42,7 @@ namespace MyTts.Services
                 }
 
                 await fileStream.CopyToAsync(context.Response.Body, 64 * 1024, cancellationToken);
+                _logger.LogInformation("Successfully streamed file: {FileName}, Size: {FileSize} bytes", fileName, fileStream.Length);
             }
             catch (OperationCanceledException)
             {
@@ -81,5 +82,4 @@ namespace MyTts.Services
             }
         }
     }
-
 }
