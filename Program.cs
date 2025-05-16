@@ -145,7 +145,8 @@ public static class ServiceCollectionExtensions
 
             // Register repositories with proper order
             services.AddScoped<Mp3MetaRepository>()
-                   .AddScoped<IMp3MetaRepository>(sp => sp.GetRequiredService<Mp3MetaRepository>());
+                   .AddScoped<IMp3MetaRepository>(sp => sp.GetRequiredService<Mp3MetaRepository>())
+                   .AddScoped<IRepository<Mp3Meta, Mp3Dto>>(sp => sp.GetRequiredService<Mp3MetaRepository>());
 
             services.AddScoped<NewsRepository>()
                    .AddScoped<INewsRepository>(sp => sp.GetRequiredService<NewsRepository>())
@@ -165,7 +166,8 @@ public static class ServiceCollectionExtensions
             
             // Register null repositories with proper order
             services.AddScoped<NullMp3MetaRepository>()
-                   .AddScoped<IMp3MetaRepository>(sp => sp.GetRequiredService<NullMp3MetaRepository>());
+                   .AddScoped<IMp3MetaRepository>(sp => sp.GetRequiredService<NullMp3MetaRepository>())
+                   .AddScoped<IRepository<Mp3Meta, Mp3Dto>>(sp => sp.GetRequiredService<NullMp3MetaRepository>());
 
             services.AddScoped<NullNewsRepository>()
                    .AddScoped<INewsRepository>(sp => sp.GetRequiredService<NullNewsRepository>())
