@@ -145,11 +145,8 @@ public static class ServiceCollectionExtensions
 
             //services.AddScoped(
             //    typeof(IRepository<,>),
-            //    typeof(Repository<,,>)
+            //    typeof(AppRepository<,>)
             //);
-
-            //services.AddScoped<IGenericDbContextFactory<AppDbContext>, AppDbContextFactory>();
-            //services.AddScoped<IGenericDbContextFactory<DunyaDbContext>, DunyaDbContextFactory>();
 
             services.AddScoped<Mp3MetaRepository>();
             services.AddScoped<IRepository<Mp3Meta, Mp3Dto>>(sp => sp.GetRequiredService<Mp3MetaRepository>());
