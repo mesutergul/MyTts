@@ -1,6 +1,8 @@
+using AutoMapper;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Internal;
 using Microsoft.Extensions.Options;
 using MyTts.Config;
@@ -93,19 +95,36 @@ public static class ServiceCollectionExtensions
         }
     }
 
-    public static IServiceCollection AddSqlServerDbContext<TContext>(this IServiceCollection services, string connectionString)
-    where TContext : DbContext
+    public static IServiceCollection AddSqlServerDbContext<TContext>(
+     this IServiceCollection services,
+     string connectionString,
+     Action<SqlServerDbContextOptionsBuilder>? sqlOptionsAction = null,
+     Action<DbContextOptionsBuilder>? optionsBuilderAction = null)
+     where TContext : DbContext
     {
         return services.AddDbContextFactory<TContext>(options =>
         {
-            options.UseSqlServer(connectionString, sqlOptions =>
+            options.UseSqlServer(connectionString, sqlOpts =>
             {
-                sqlOptions.EnableRetryOnFailure(3);
-                sqlOptions.CommandTimeout(30);
+                sqlOpts.EnableRetryOnFailure(3);
+                sqlOpts.CommandTimeout(30);
+                sqlOptionsAction?.Invoke(sqlOpts); // extra config here
             });
+
+            optionsBuilderAction?.Invoke(options); // e.g., options.EnableDetailedErrors()
         });
     }
-  
+    public static IServiceCollection AddInMemoryDbContext<TContext>(
+        this IServiceCollection services,
+        string dbName)
+        where TContext : DbContext
+    {
+        return services.AddDbContextFactory<TContext>(options =>
+        {
+            options.UseInMemoryDatabase(dbName);
+        });
+    }
+
     public static IServiceCollection AddCoreServices(this IServiceCollection services, IConfiguration configuration)
     {
         var connectionString = configuration.GetConnectionString("DefaultConnection");
@@ -118,8 +137,19 @@ public static class ServiceCollectionExtensions
             services.AddSqlServerDbContext<AppDbContext>(connectionString);
             services.AddSqlServerDbContext<DunyaDbContext>(dunyaDb);
 
-            services.AddScoped<IGenericDbContextFactory<AppDbContext>, AppDbContextFactory>();
-            services.AddScoped<IGenericDbContextFactory<DunyaDbContext>, DunyaDbContextFactory>();
+            // 2) Register your open-generic adapter:
+            services.AddScoped(
+                typeof(IGenericDbContextFactory<>),
+                typeof(GenericDbContextFactory<>)
+            );
+
+            //services.AddScoped(
+            //    typeof(IRepository<,>),
+            //    typeof(Repository<,,>)
+            //);
+
+            //services.AddScoped<IGenericDbContextFactory<AppDbContext>, AppDbContextFactory>();
+            //services.AddScoped<IGenericDbContextFactory<DunyaDbContext>, DunyaDbContextFactory>();
 
             services.AddScoped<Mp3MetaRepository>();
             services.AddScoped<IRepository<Mp3Meta, Mp3Dto>>(sp => sp.GetRequiredService<Mp3MetaRepository>());
@@ -130,12 +160,19 @@ public static class ServiceCollectionExtensions
         else
         {
             // Fallback - no DB
-            services.AddDbContext<AppDbContext>(options => { });
-            services.AddDbContext<DunyaDbContext>(options => { });
+            services.AddInMemoryDbContext<AppDbContext>("InMemoryAppDb");
+            services.AddInMemoryDbContext<DunyaDbContext>("InMemoryDunyaDb");
+        
+            services.AddScoped<IMapper, NullMapper>();
+            services.AddScoped<ILogger<NullMp3MetaRepository>, Logger<NullMp3MetaRepository>>();
+            services.AddScoped<ILogger<NullNewsRepository>, Logger<NullNewsRepository>>();
 
-            services.AddSingleton<IAppDbContextFactory, NullAppDbContextFactory>();
-            services.AddSingleton<Mp3MetaRepository, NullMp3MetaRepository>();
-            services.AddSingleton<NewsRepository, NullNewsRepository>();
+            services.AddSingleton(typeof(IGenericDbContextFactory<>), typeof(NullGenericDbContextFactory<>));
+            services.AddScoped<Mp3MetaRepository, NullMp3MetaRepository>();
+            services.AddScoped<NewsRepository, NullNewsRepository>();
+            services.AddScoped<IRepository<Mp3Meta, Mp3Dto>, NullMp3MetaRepository>(sp => sp.GetRequiredService<NullMp3MetaRepository>());
+            services.AddScoped<IRepository<News, INews>, NullNewsRepository>(sp => sp.GetRequiredService<NullNewsRepository>());
+
         }
 
         // AutoMapper config

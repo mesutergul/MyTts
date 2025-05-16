@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Net.Http.Headers;
+using MyTts.Helpers;
 using MyTts.Models;
 using MyTts.Repositories;
 using MyTts.Services;
@@ -74,115 +75,32 @@ namespace MyTts.Controllers
         /// </summary>
         public async Task GetFilem(HttpContext context, CancellationToken cancellationToken)
         {
-            try
-            {
+            var stream = await _mp3Service.GetAudioFileStream(0, AudioType.Mp3, true, cancellationToken);
 
-                await using var fileStream = await _mp3Service.GetAudioFileStream(0, AudioType.Mp3, true, cancellationToken);
+            var fileName = $"merged.mp3";
 
-                if (fileStream == null || fileStream == Stream.Null)
-                {
-                    _logger.LogWarning("File not found with name merged. GetMp4File returned null or Stream.Null.");
-                    context.Response.StatusCode = StatusCodes.Status404NotFound;
-                    await context.Response.WriteAsync($"File with name merged not found.", cancellationToken);
-                    return;
-                }
-
-                context.Response.StatusCode = StatusCodes.Status200OK;
-                context.Response.ContentType = "audio/mpeg"; // "audio/mp4" or "audio/mpeg" for MP3
-                // Use constants for header names for type safety and to avoid magic strings.
-                context.Response.Headers[HeaderNames.CacheControl] = "no-cache"; // Or "public, max-age=xxxx" if caching is desired
-
-                if (fileStream.CanSeek)
-                {
-                    context.Response.ContentLength = fileStream.Length;
-                    // Ensure stream is at the beginning if its position was changed by checking Length.
-                    // Most stream providers that give you Length will have Position at 0 if it's a fresh stream.
-                    // fileStream.Position = 0;
-                }
-                await fileStream.CopyToAsync(context.Response.Body, cancellationToken);
-            }
-            catch (OperationCanceledException)
-            {
-                if (context.Response.HasStarted) _logger.LogDebug("Ýstemci cevabý aldýktan sonra baðlantýyý kapattý. Exception bastýrýlýyor.");
-                else _logger.LogWarning("Ýþlem iptal edildi: istemci baðlantýyý sonlandýrdý.");
-                await context.Response.WriteAsync($"istemci baðlantýyý sonlandýrdý.", cancellationToken);
-            }
-            catch (FileNotFoundException ex) // Catch a specific exception if your service throws it
-            {
-                _logger.LogWarning(ex, "File not found exception for merged");
-                if (!context.Response.HasStarted)
-                {
-                    context.Response.StatusCode = StatusCodes.Status404NotFound;
-                    await context.Response.WriteAsync($"File with name merged not found.", cancellationToken);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "File not found exception for merged");
-                if (!context.Response.HasStarted) // Check if headers have already been sent
-                {
-                    context.Response.StatusCode = StatusCodes.Status500InternalServerError;
-                    // Avoid sending detailed error information to the client in production
-                    await context.Response.WriteAsync("An error occurred while streaming the file.", cancellationToken);
-                }
-                // If response has started, the connection will likely be aborted, or client receives partial content.
-            }
+            await FileStreamingHelper.StreamFileAsync(
+                context,
+                stream,
+                fileName,
+                "audio/mpeg",
+                _logger,
+                cancellationToken
+            );
         }
         public async Task GetFile(HttpContext context, int id, CancellationToken cancellationToken)
         {
-            try
-            {
+            var stream = await _mp3Service.GetAudioFileStream(id, AudioType.Mp3, false, cancellationToken);
+            var fileName = $"speech_{id}.mp3";
 
-                await using var fileStream = await _mp3Service.GetAudioFileStream(id, AudioType.Mp3, false, cancellationToken);
-
-                if (fileStream == null || fileStream == Stream.Null)
-                {
-                    _logger.LogWarning("File not found with id: {FileId}. GetMp4File returned null or Stream.Null.", id);
-                    context.Response.StatusCode = StatusCodes.Status404NotFound;
-                    await context.Response.WriteAsync($"File with id '{id}' not found.", cancellationToken);
-                    return;
-                }
-
-                context.Response.StatusCode = StatusCodes.Status200OK;
-                context.Response.ContentType = "audio/mpeg"; // "audio/mp4" or "audio/mpeg" for MP3
-                // Use constants for header names for type safety and to avoid magic strings.
-                context.Response.Headers[HeaderNames.CacheControl] = "no-cache"; // Or "public, max-age=xxxx" if caching is desired
-
-                if (fileStream.CanSeek)
-                {
-                    context.Response.ContentLength = fileStream.Length;
-                    // Ensure stream is at the beginning if its position was changed by checking Length.
-                    // Most stream providers that give you Length will have Position at 0 if it's a fresh stream.
-                    // fileStream.Position = 0;
-                }
-                await fileStream.CopyToAsync(context.Response.Body, cancellationToken);           
-            }
-            catch (OperationCanceledException)
-            {
-                if (context.Response.HasStarted) _logger.LogDebug("Ýstemci cevabý aldýktan sonra baðlantýyý kapattý. Exception bastýrýlýyor.");
-                else _logger.LogWarning("Ýþlem iptal edildi: istemci baðlantýyý sonlandýrdý.");
-                await context.Response.WriteAsync($"istemci baðlantýyý sonlandýrdý.", cancellationToken);
-            }
-            catch (FileNotFoundException ex) // Catch a specific exception if your service throws it
-            {
-                _logger.LogWarning(ex, "File not found exception for id: {FileId}", id);
-                if (!context.Response.HasStarted)
-                {
-                    context.Response.StatusCode = StatusCodes.Status404NotFound;
-                    await context.Response.WriteAsync($"File with id '{id}' not found.", cancellationToken);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error streaming file with id: {FileId}", id);
-                if (!context.Response.HasStarted) // Check if headers have already been sent
-                {
-                    context.Response.StatusCode = StatusCodes.Status500InternalServerError;
-                    // Avoid sending detailed error information to the client in production
-                    await context.Response.WriteAsync("An error occurred while streaming the file.", cancellationToken);
-                }
-                // If response has started, the connection will likely be aborted, or client receives partial content.
-            }
+            await FileStreamingHelper.StreamFileAsync(
+                context,
+                stream,
+                fileName,
+                "audio/mpeg",
+                _logger,
+                cancellationToken
+            );
         }
 
         /// <summary>
