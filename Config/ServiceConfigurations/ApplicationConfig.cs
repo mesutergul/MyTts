@@ -16,7 +16,7 @@ public static class ApplicationConfig
         services.AddScoped<IFileStreamingService, FileStreamingService>();
         services.AddScoped<ITtsManagerService, TtsManagerService>();
         services.AddScoped<IMp3StreamMerger, Mp3StreamMerger>();
-        services.AddScoped<NewsFeedsService>();
+        services.AddScoped<INewsFeedsService, NewsFeedsService>();
         services.AddScoped<IRedisCacheService, RedisCacheService>();
 
         // Register ElevenLabs client

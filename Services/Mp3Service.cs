@@ -12,7 +12,7 @@ namespace MyTts.Services
         private readonly ILogger<Mp3Service> _logger;
         private readonly IMp3Repository _mp3FileRepository;
         private readonly ITtsManagerService _ttsManager;
-        private readonly NewsFeedsService _newsFeedsService;
+        private readonly INewsFeedsService _newsFeedsService;
         private readonly IRedisCacheService? _cache;
         private const string LocalSavePath = "audio";
         private readonly SemaphoreSlim _processingSemaphore;
@@ -24,7 +24,7 @@ namespace MyTts.Services
             IMp3Repository mp3FileRepository,
             ITtsManagerService ttsManager,
             IRedisCacheService cache,
-            NewsFeedsService newsFeedsService)
+            INewsFeedsService newsFeedsService)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _mp3FileRepository = mp3FileRepository ?? throw new ArgumentNullException(nameof(mp3FileRepository));
