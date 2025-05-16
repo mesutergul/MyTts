@@ -142,9 +142,9 @@ public static class ServiceCollectionExtensions
                 typeof(IGenericDbContextFactory<>),
                 typeof(GenericDbContextFactory<>)
             );
-
-            services.AddScoped<Mp3MetaRepository>();
-            services.AddScoped<IRepository<Mp3Meta, Mp3Dto>>(sp => sp.GetRequiredService<Mp3MetaRepository>());
+            services.AddScoped<IMp3MetaRepository, Mp3MetaRepository>();
+            //services.AddScoped<Mp3MetaRepository>();
+            //services.AddScoped<IRepository<Mp3Meta, Mp3Dto>>(sp => sp.GetRequiredService<Mp3MetaRepository>());
             services.AddScoped<NewsRepository>()
                    .AddScoped<IRepository<News, INews>>(sp => sp.GetRequiredService<NewsRepository>());
         }
