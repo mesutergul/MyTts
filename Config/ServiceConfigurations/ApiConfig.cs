@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using MyTts.Controllers;
 using MyTts.Services;
+using MyTts.Services.Interfaces;
 
 namespace MyTts.Config.ServiceConfigurations;
 

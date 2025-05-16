@@ -1,12 +1,9 @@
-﻿namespace MyTts.Services
+﻿using FFMpegCore;
+using MyTts.Services.Interfaces;
+using System.Diagnostics;
+
+namespace MyTts.Services
 {
-    using System.Diagnostics;
-
-    public interface IAudioConversionService
-    {
-        Task<string> ConvertMp3ToM4aAsync(byte[] mp3Data, CancellationToken cancellationToken);
-    }
-
     public class AudioConversionService : IAudioConversionService
     {
         private readonly ILogger<AudioConversionService> _logger;
@@ -50,5 +47,4 @@
             return tempM4a;
         }
     }
-
 }

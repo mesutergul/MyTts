@@ -1,7 +1,8 @@
+using Microsoft.Extensions.Options;
+using MyTts.Config;
+using MyTts.Services.Interfaces;
 using StackExchange.Redis;
 using System.Text.Json;
-using MyTts.Config;
-using Microsoft.Extensions.Options;
 
 namespace MyTts.Services
 {

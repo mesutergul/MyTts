@@ -1,10 +1,9 @@
-
 using Microsoft.AspNetCore.Mvc;
 using MyTts.Data.Entities;
 using MyTts.Data.Interfaces;
 using MyTts.Models;
 using MyTts.Repositories;
-namespace MyTts.Services
+namespace MyTts.Services.Interfaces
 {
     public interface IMp3Service
     {

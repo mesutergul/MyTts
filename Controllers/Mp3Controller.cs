@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using MyTts.Models;
 using MyTts.Repositories;
-using MyTts.Services;
+using MyTts.Services.Interfaces;
 
 namespace MyTts.Controllers
 {

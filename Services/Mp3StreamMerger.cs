@@ -2,10 +2,11 @@
 using FFMpegCore.Pipes;
 using Microsoft.Extensions.Configuration;
 using MyTts.Repositories;
+using MyTts.Services.Interfaces;
 
 namespace MyTts.Services
 {
-    public sealed class Mp3StreamMerger : IMp3StreamMerger ,IAsyncDisposable
+    public sealed class Mp3StreamMerger : IMp3StreamMerger, IAsyncDisposable
     {
         private readonly ILogger<Mp3StreamMerger> _logger;
         private readonly SemaphoreSlim _mergeLock;

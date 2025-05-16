@@ -1,6 +1,6 @@
 using MyTts.Repositories;
 
-namespace MyTts.Services
+namespace MyTts.Services.Interfaces
 {
     public interface IMp3StreamMerger{
         Task<(Stream audioData, string contentType, string fileName)> MergeMp3ByteArraysAsync(

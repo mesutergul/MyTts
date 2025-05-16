@@ -1,4 +1,4 @@
-﻿namespace MyTts.Services
+﻿namespace MyTts.Services.Interfaces
 {
     public interface IFileStreamingService
     {

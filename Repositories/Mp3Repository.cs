@@ -6,6 +6,7 @@ using MyTts.Data.Interfaces;
 using System.Text;
 using MyTts.Data.Entities;
 using MyTts.Models;
+using MyTts.Services.Interfaces;
 
 namespace MyTts.Repositories
 {
