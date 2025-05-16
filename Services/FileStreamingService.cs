@@ -1,22 +1,28 @@
 ﻿using Microsoft.Net.Http.Headers;
 
-namespace MyTts.Helpers
+namespace MyTts.Services
 {
-    public static class FileStreamingHelper
+    public class FileStreamingService : IFileStreamingService
     {
-        public static async Task StreamFileAsync(
+        private readonly ILogger<FileStreamingService> _logger;
+
+        public FileStreamingService(ILogger<FileStreamingService> logger)
+        {
+            _logger = logger;
+        }
+
+        public async Task StreamAsync(
             HttpContext context,
             Stream fileStream,
             string fileName,
             string contentType = "application/octet-stream",
-            ILogger logger = null,
             CancellationToken cancellationToken = default)
         {
             if (fileStream == null || fileStream == Stream.Null)
             {
                 context.Response.StatusCode = StatusCodes.Status404NotFound;
                 await context.Response.WriteAsync("File not found.", cancellationToken);
-                logger?.LogWarning("File stream is null or Stream.Null for file: {FileName}", fileName);
+                _logger.LogWarning("File stream is null for: {FileName}", fileName);
                 return;
             }
 
@@ -24,14 +30,10 @@ namespace MyTts.Helpers
             {
                 context.Response.StatusCode = StatusCodes.Status200OK;
                 context.Response.ContentType = contentType;
-
+                context.Response.Headers[HeaderNames.CacheControl] = "no-cache";
                 if (!string.IsNullOrWhiteSpace(fileName))
-                {
                     context.Response.Headers[HeaderNames.ContentDisposition] =
                         $"inline; filename=\"{fileName}\"";
-                }
-
-                context.Response.Headers[HeaderNames.CacheControl] = "no-cache";
 
                 if (fileStream.CanSeek)
                 {
@@ -43,15 +45,12 @@ namespace MyTts.Helpers
             }
             catch (OperationCanceledException)
             {
-                if (context.Response.HasStarted)
-                    logger?.LogDebug("Client cancelled the request after response started for file: {FileName}", fileName);
-                else
-                    logger?.LogWarning("Client cancelled the request before response started for file: {FileName}", fileName);
-                // No further response writing
+                var phase = context.Response.HasStarted ? "after" : "before";
+                _logger.LogDebug("Client cancelled {Phase} response for {FileName}", phase, fileName);
             }
             catch (FileNotFoundException ex)
             {
-                logger?.LogWarning(ex, "File not found: {FileName}", fileName);
+                _logger.LogWarning(ex, "File not found: {FileName}", fileName);
                 if (!context.Response.HasStarted)
                 {
                     context.Response.StatusCode = StatusCodes.Status404NotFound;
@@ -60,7 +59,7 @@ namespace MyTts.Helpers
             }
             catch (IOException ex)
             {
-                logger?.LogError(ex, "IO error while streaming file: {FileName}", fileName);
+                _logger.LogError(ex, "IO error streaming: {FileName}", fileName);
                 if (!context.Response.HasStarted)
                 {
                     context.Response.StatusCode = StatusCodes.Status500InternalServerError;
@@ -69,7 +68,7 @@ namespace MyTts.Helpers
             }
             catch (Exception ex)
             {
-                logger?.LogError(ex, "Unexpected error while streaming file: {FileName}", fileName);
+                _logger.LogError(ex, "Unexpected error streaming: {FileName}", fileName);
                 if (!context.Response.HasStarted)
                 {
                     context.Response.StatusCode = StatusCodes.Status500InternalServerError;
@@ -78,8 +77,9 @@ namespace MyTts.Helpers
             }
             finally
             {
-                await fileStream.DisposeAsync(); // dispose edilen stream sorumluluğu buraya taşındı
+                await fileStream.DisposeAsync();
             }
         }
     }
+
 }

@@ -143,16 +143,10 @@ public static class ServiceCollectionExtensions
                 typeof(GenericDbContextFactory<>)
             );
 
-            //services.AddScoped(
-            //    typeof(IRepository<,>),
-            //    typeof(AppRepository<,>)
-            //);
-
             services.AddScoped<Mp3MetaRepository>();
             services.AddScoped<IRepository<Mp3Meta, Mp3Dto>>(sp => sp.GetRequiredService<Mp3MetaRepository>());
             services.AddScoped<NewsRepository>()
                    .AddScoped<IRepository<News, INews>>(sp => sp.GetRequiredService<NewsRepository>());
-
         }
         else
         {
@@ -187,6 +181,8 @@ public static class ServiceCollectionExtensions
 
         services.AddScoped<Mp3StreamMerger>()
                 .AddScoped<IMp3StreamMerger>(sp => sp.GetRequiredService<Mp3StreamMerger>());
+
+        services.AddScoped<IFileStreamingService, FileStreamingService>();
 
         services.AddScoped<NewsFeedsService>();
         services.AddTransient<Mp3Controller>();

@@ -1,7 +1,4 @@
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Net.Http.Headers;
-using MyTts.Helpers;
 using MyTts.Models;
 using MyTts.Repositories;
 using MyTts.Services;
@@ -10,12 +7,13 @@ namespace MyTts.Controllers
 {
     public class Mp3Controller : ControllerBase
     {
-        private readonly IMp3Service _mp3Service;
         private readonly ILogger<Mp3Controller> _logger;
-
-        public Mp3Controller(IMp3Service mp3Service, ILogger<Mp3Controller> logger)
+        private readonly IMp3Service _mp3Service;
+        private readonly IFileStreamingService _streamer;
+        public Mp3Controller(IMp3Service mp3Service, IFileStreamingService streamer, ILogger<Mp3Controller> logger)
         {
             _mp3Service = mp3Service ?? throw new ArgumentNullException(nameof(mp3Service));
+            _streamer = streamer ?? throw new ArgumentNullException(nameof(streamer));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
         //Works Fine
@@ -79,12 +77,11 @@ namespace MyTts.Controllers
 
             var fileName = $"merged.mp3";
 
-            await FileStreamingHelper.StreamFileAsync(
+            await _streamer.StreamAsync(
                 context,
                 stream,
                 fileName,
                 "audio/mpeg",
-                _logger,
                 cancellationToken
             );
         }
@@ -93,12 +90,11 @@ namespace MyTts.Controllers
             var stream = await _mp3Service.GetAudioFileStream(id, AudioType.Mp3, false, cancellationToken);
             var fileName = $"speech_{id}.mp3";
 
-            await FileStreamingHelper.StreamFileAsync(
+            await _streamer.StreamAsync(
                 context,
                 stream,
                 fileName,
                 "audio/mpeg",
-                _logger,
                 cancellationToken
             );
         }
