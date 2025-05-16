@@ -146,6 +146,7 @@ public static class ServiceCollectionExtensions
             //services.AddScoped<Mp3MetaRepository>();
             //services.AddScoped<IRepository<Mp3Meta, Mp3Dto>>(sp => sp.GetRequiredService<Mp3MetaRepository>());
             services.AddScoped<NewsRepository>()
+                   .AddScoped<INewsRepository>(sp => sp.GetRequiredService<NewsRepository>())
                    .AddScoped<IRepository<News, INews>>(sp => sp.GetRequiredService<NewsRepository>());
         }
         else
@@ -163,6 +164,7 @@ public static class ServiceCollectionExtensions
             services.AddScoped<NewsRepository, NullNewsRepository>();
             services.AddScoped<IRepository<Mp3Meta, Mp3Dto>, NullMp3MetaRepository>(sp => sp.GetRequiredService<NullMp3MetaRepository>());
             services.AddScoped<IRepository<News, INews>, NullNewsRepository>(sp => sp.GetRequiredService<NullNewsRepository>());
+            services.AddScoped<INewsRepository, NullNewsRepository>(sp => sp.GetRequiredService<NullNewsRepository>());
 
         }
 

@@ -20,7 +20,7 @@ namespace MyTts.Repositories
         private readonly JsonSerializerSettings _jsonSettings;
         private bool _disposed;
         private readonly IMp3MetaRepository _mp3MetaRepository;
-        private readonly NewsRepository _newsRepository;
+        private readonly INewsRepository _newsRepository;
 
         private const string DB_CACHE_KEY = "MP3_FILES_DB";
         private const string FILE_DETAIL_KEY_PREFIX = "speech";
@@ -33,7 +33,7 @@ namespace MyTts.Repositories
             IConfiguration configuration,
             IRedisCacheService cache,
             IMp3MetaRepository mp3MetaRepository,
-            NewsRepository newsRepository)
+            INewsRepository newsRepository)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _cache = cache ?? throw new ArgumentNullException(nameof(cache));
