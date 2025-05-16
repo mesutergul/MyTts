@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using Newtonsoft.Json;
 using MyTts.Services;
 using MyTts.Data.Repositories;
+using MyTts.Data.Interfaces;
 using System.Text;
 using MyTts.Data.Entities;
 using MyTts.Models;
@@ -18,7 +19,7 @@ namespace MyTts.Repositories
         private readonly ConcurrentDictionary<string, SemaphoreSlim> _fileLocks;
         private readonly JsonSerializerSettings _jsonSettings;
         private bool _disposed;
-        private readonly Mp3MetaRepository _mp3MetaRepository;
+        private readonly IMp3MetaRepository _mp3MetaRepository;
         private readonly NewsRepository _newsRepository;
 
         private const string DB_CACHE_KEY = "MP3_FILES_DB";
@@ -31,7 +32,7 @@ namespace MyTts.Repositories
             ILogger<Mp3Repository> logger,
             IConfiguration configuration,
             IRedisCacheService cache,
-            Mp3MetaRepository? mp3MetaRepository,
+            IMp3MetaRepository mp3MetaRepository,
             NewsRepository newsRepository)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
