@@ -13,7 +13,6 @@ public static class ApplicationConfig
         
         // Register services
         services.AddScoped<IMp3Service, Mp3Service>();
-        services.AddScoped<IFileStreamingService, FileStreamingService>();
         services.AddScoped<ITtsManagerService, TtsManagerService>();
         services.AddScoped<IMp3StreamMerger, Mp3StreamMerger>();
         services.AddScoped<INewsFeedsService, NewsFeedsService>();

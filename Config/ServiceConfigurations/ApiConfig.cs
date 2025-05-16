@@ -23,7 +23,6 @@ public static class ApiConfig
         });
 
         // Register services
-        services.AddScoped<IMp3Service, Mp3Service>();
         services.AddScoped<IFileStreamingService, FileStreamingService>();
 
         // Add API Explorer and Controllers
