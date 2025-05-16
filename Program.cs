@@ -137,14 +137,16 @@ public static class ServiceCollectionExtensions
             services.AddSqlServerDbContext<AppDbContext>(connectionString);
             services.AddSqlServerDbContext<DunyaDbContext>(dunyaDb);
 
-            // 2) Register your open-generic adapter:
+            // Register the DbContext factory first
             services.AddScoped(
                 typeof(IGenericDbContextFactory<>),
                 typeof(GenericDbContextFactory<>)
             );
-            services.AddScoped<IMp3MetaRepository, Mp3MetaRepository>();
-            //services.AddScoped<Mp3MetaRepository>();
-            //services.AddScoped<IRepository<Mp3Meta, Mp3Dto>>(sp => sp.GetRequiredService<Mp3MetaRepository>());
+
+            // Register repositories with proper order
+            services.AddScoped<Mp3MetaRepository>()
+                   .AddScoped<IMp3MetaRepository>(sp => sp.GetRequiredService<Mp3MetaRepository>());
+
             services.AddScoped<NewsRepository>()
                    .AddScoped<INewsRepository>(sp => sp.GetRequiredService<NewsRepository>())
                    .AddScoped<IRepository<News, INews>>(sp => sp.GetRequiredService<NewsRepository>());
@@ -160,18 +162,20 @@ public static class ServiceCollectionExtensions
             services.AddScoped<ILogger<NullNewsRepository>, Logger<NullNewsRepository>>();
 
             services.AddSingleton(typeof(IGenericDbContextFactory<>), typeof(NullGenericDbContextFactory<>));
-            services.AddScoped<Mp3MetaRepository, NullMp3MetaRepository>();
-            services.AddScoped<NewsRepository, NullNewsRepository>();
-            services.AddScoped<IRepository<Mp3Meta, Mp3Dto>, NullMp3MetaRepository>(sp => sp.GetRequiredService<NullMp3MetaRepository>());
-            services.AddScoped<IRepository<News, INews>, NullNewsRepository>(sp => sp.GetRequiredService<NullNewsRepository>());
-            services.AddScoped<INewsRepository, NullNewsRepository>(sp => sp.GetRequiredService<NullNewsRepository>());
+            
+            // Register null repositories with proper order
+            services.AddScoped<NullMp3MetaRepository>()
+                   .AddScoped<IMp3MetaRepository>(sp => sp.GetRequiredService<NullMp3MetaRepository>());
 
+            services.AddScoped<NullNewsRepository>()
+                   .AddScoped<INewsRepository>(sp => sp.GetRequiredService<NullNewsRepository>())
+                   .AddScoped<IRepository<News, INews>>(sp => sp.GetRequiredService<NullNewsRepository>());
         }
 
         // AutoMapper config
         services.AddAutoMapper(cfg => { }, typeof(Program), typeof(HaberMappingProfile), typeof(Mp3MappingProfile));
 
-        // Application services
+        // Application services - these should come after repository registration
         services.AddScoped<Mp3Repository>()
                 .AddScoped<IMp3Repository>(sp => sp.GetRequiredService<Mp3Repository>());
 
