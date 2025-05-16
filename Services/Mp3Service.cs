@@ -44,7 +44,7 @@ namespace MyTts.Services
                 await _processingSemaphore.WaitAsync();
                 var newsList=await GetNewsList(cancellationToken);
                 // var (neededNewsListByDB, savedNewsListByDB) = checkNewsListInDB(newsList, fileType, cancellationToken);
-                var (neededNewsList, savedNewsList) = checkNewsList(newsList, fileType, cancellationToken);
+                var (neededNewsList, savedNewsList) = await checkNewsList(newsList, fileType, cancellationToken);
                 // var contents = await _newsFeedsService.GetFeedByLanguageAsync(language, limit);
                 //var contents = new List<string>
                 //{
@@ -77,14 +77,14 @@ namespace MyTts.Services
             return (neededNewsList, savedNewsList);
         }
 
-        private (List<HaberSummaryDto> neededNewsList, List<HaberSummaryDto> savedNewsList) checkNewsList(List<HaberSummaryDto> newsList, AudioType fileType, CancellationToken cancellationToken)
+        private async Task<(List<HaberSummaryDto> neededNewsList, List<HaberSummaryDto> savedNewsList)> checkNewsList(List<HaberSummaryDto> newsList, AudioType fileType, CancellationToken cancellationToken)
         {
             var neededNewsList = new List<HaberSummaryDto>();
             var savedNewsList = new List<HaberSummaryDto>();
             foreach (var news in newsList)
             {
                 var fileName = $"speech_{news.IlgiId}.{fileType.ToString().ToLower()}"; // m4a container for AAC
-                if (!File.Exists(Path.Combine(LocalSavePath, fileName)))
+                if (!await _mp3FileRepository.FileExistsAnywhereAsync(news.IlgiId, fileType, cancellationToken))
                 {
                     neededNewsList.Add(news);
                 }

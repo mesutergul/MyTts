@@ -195,7 +195,7 @@ namespace MyTts.Repositories
         {
             string metadataKey = $"{FILE_DETAIL_KEY_PREFIX}_{filePath}";
 
-            var fullPath = GetFullPath(metadataKey);
+            var fullPath = GetFullPath(metadataKey, fileType);
             const int bufferSize = 81920; // Optimal buffer size for large files
 
             try
@@ -316,7 +316,7 @@ namespace MyTts.Repositories
         {
             ArgumentNullException.ThrowIfNull(fileData);
             string metadataCacheKey = $"{FILE_DETAIL_KEY_PREFIX}_{filePath}";
-            string fullPath = GetFullPath(metadataCacheKey);
+            string fullPath = GetFullPath(metadataCacheKey, fileType);
             var fileLock = await GetFileLockAsync(fullPath);
             await fileLock.WaitAsync();
             try
@@ -360,7 +360,7 @@ namespace MyTts.Repositories
             try
             {
                 string metadataKey = $"{FILE_DETAIL_KEY_PREFIX}_{filePath}";
-                string fullPath = GetFullPath(filePath);
+                string fullPath = GetFullPath(filePath, AudioType.Mp3);
                 if (File.Exists(fullPath))
                 {
                     File.Delete(fullPath);
@@ -405,7 +405,7 @@ namespace MyTts.Repositories
                 }
 
                 // Load from file if not in cache
-                if (!File.Exists(_metadataPath))
+                if (!File.Exists(GetFullPath(_metadataPath, fileType)))
                 {
                     var emptyList = new List<Mp3Dto>();
                     await _cache.SetAsync(DB_CACHE_KEY, emptyList, DB_CACHE_DURATION);
@@ -588,10 +588,6 @@ namespace MyTts.Repositories
         public string GetFullPath(string filePath, AudioType fileType = AudioType.Mp3)
         {
             return Path.Combine(_baseStoragePath, filePath + "." + fileType.ToString().ToLower());
-        }
-        public string GetFullPath(string filePath)
-        {
-            return Path.Combine(_baseStoragePath, filePath);
         }
         public async Task<Mp3Dto?> LoadMp3MetaByPathAsync(int filePath, AudioType fileType, CancellationToken cancellationToken)
         {
