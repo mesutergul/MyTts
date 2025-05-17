@@ -162,26 +162,28 @@ namespace MyTts.Repositories
                 throw;
             }
         }
-        public async Task<bool> FileExistsAnywhereAsync(int filePath, AudioType fileType, CancellationToken cancellationToken)
+        public async Task<bool> FileExistsAnywhereAsync(int id, AudioType fileType, CancellationToken cancellationToken)
         {
-            string metadataCacheKey = $"{FILE_DETAIL_KEY_PREFIX}_{filePath}";
-            // string fullPath = GetFullPath(metadataCacheKey, fileType);
-            // Check metadata cache first
-            if (await Mp3FileExistsInCacheAsync(metadataCacheKey, cancellationToken))
+            string cacheKey = $"{FILE_DETAIL_KEY_PREFIX}_{id}";
+
+            // Check if file exists in cache
+            if (await Mp3FileExistsInCacheAsync(cacheKey, cancellationToken))
             {
                 return true;
             }
 
-            // Check database
-            if (await Mp3FileExistsInSqlAsync(filePath, cancellationToken) || await Mp4FileExistsAsync(metadataCacheKey, fileType, cancellationToken)) // TODO: Get actual ID
+            // Check if file exists in database or disk
+            if (await Mp3FileExistsInSqlAsync(id, cancellationToken) || await Mp4FileExistsAsync(cacheKey, fileType, cancellationToken))
             {
+                // Update cache
                 if (_cache != null)
                 {
-                    await _cache.SetAsync(metadataCacheKey, true, FILE_CACHE_DURATION);
+                    await _cache.SetAsync(cacheKey, true, FILE_CACHE_DURATION);
                 }
                 return true;
             }
-            _logger.LogCritical("FileExistsAnywhereAsync can not find : {file}", metadataCacheKey);
+
+            _logger.LogWarning("File not found: {CacheKey}", cacheKey);
             return false;
         }
         public async Task<byte[]> ReadFileFromDiskAsync(int filePath, AudioType fileType = AudioType.Mp3, CancellationToken cancellationToken = default)
