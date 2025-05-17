@@ -34,6 +34,7 @@ namespace MyTts.Services
         private readonly IMp3Repository _mp3Repository;
         public const string LocalSavePath = "audio";
         private const int MaxConcurrentOperations = 10;
+        private readonly Random _random = new Random();
 
         public TtsManagerService(
             ElevenLabsClient elevenLabsClient,
@@ -140,8 +141,16 @@ namespace MyTts.Services
                 return await CreateSingleFileResultAsync(processors[0], cancellationToken);
             }
 
+            // Get the break audio file path
+            string breakAudioPath = Path.Combine(_storageConfig.BasePath, "break.mp3");
+            if (!File.Exists(breakAudioPath))
+            {
+                _logger.LogWarning("Break audio file not found at {Path}, merging without breaks", breakAudioPath);
+                breakAudioPath = null;
+            }
+
             // Use the optimized Mp3StreamMerger
-            return await _mp3StreamMerger.MergeMp3ByteArraysAsync(processors, basePath, fileType, cancellationToken);
+            return await _mp3StreamMerger.MergeMp3ByteArraysAsync(processors, basePath, fileType, breakAudioPath, cancellationToken);
         }
         // Helper method for single file scenario
         private async Task<(Stream audioData, string contentType, string fileName)> CreateSingleFileResultAsync(AudioProcessor processor, CancellationToken cancellationToken)
@@ -327,10 +336,22 @@ namespace MyTts.Services
 
             try
             {
-                // var voice = Voice.Arnold;
-                // Fetch voice and create request in parallel if CreateTtsRequestAsync doesn't depend on voice
+                // Get the voice configuration for the specified language
+                if (!_config.Value.Feed.TryGetValue(language, out var languageConfig))
+                {
+                    throw new InvalidOperationException($"No voice configuration found for language: {language}");
+                }
+
+                // Get a random voice for the language
+                var voices = languageConfig.Voices.ToList();
+                var randomVoice = voices[_random.Next(voices.Count)];
+                var voiceId = randomVoice.Value;
+                
+                _logger.LogInformation("Selected voice {VoiceName} ({VoiceId}) for language {Language}", randomVoice.Key, voiceId, language);
+                
+                // Fetch voice and create request in parallel
                 var voiceTask = _elevenLabsClient.VoicesEndpoint
-                    .GetVoiceAsync(_config.Value.VoiceId, withSettings: false, cancellationToken);
+                    .GetVoiceAsync(voiceId, withSettings: false, cancellationToken);
 
                 var requestTask = voiceTask.ContinueWith(async vt =>
                 {
@@ -813,15 +834,24 @@ namespace MyTts.Services
             }
         }
 
-        private async Task<string?> ProcessChunkAsync(string chunk, Guid id, CancellationToken cancellationToken)
+        private async Task<string?> ProcessChunkAsync(string chunk, Guid id, string language, CancellationToken cancellationToken)
         {
             var chunkFileName = $"chunk_{Guid.NewGuid()}_{id}.mp3";
-            var chunkPath = Path.Combine(TempPath, chunkFileName);
+            var chunkPath = Path.Combine(LocalSavePath, chunkFileName);
 
             try
             {
+                // Get the voice configuration for the specified language
+                if (!_config.Value.Feed.TryGetValue(language, out var languageConfig))
+                {
+                    throw new InvalidOperationException($"No voice configuration found for language: {language}");
+                }
+
+                // Get the first available voice for the language
+                var voiceId = languageConfig.Voices.First().Value;
+
                 var voice = await _elevenLabsClient.VoicesEndpoint
-                    .GetVoiceAsync(_config.Value.VoiceId, false, cancellationToken);
+                    .GetVoiceAsync(voiceId, false, cancellationToken);
 
                 var request = await CreateTtsRequestAsync(voice, chunk);
 

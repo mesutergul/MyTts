@@ -28,7 +28,7 @@ namespace MyTts.Config
         [Range(0.1, 5.0)]
         public float Speed { get; set; } = 1.0f;
 
-        public Dictionary<string, VoiceConfig> Feed { get; set; } = new();
+        public Dictionary<string, LanguageVoiceConfig> Feed { get; set; } = new();
 
         public ValidateOptionsResult Validate(string? name, ElevenLabsConfig options)
         {
@@ -51,10 +51,13 @@ namespace MyTts.Config
 
             if (options.Speed < 0.1 || options.Speed > 5.0)
                 errors.Add("Speed must be between 0.1 and 5.0");
+
             if (options.Style < 0 || options.Style > 1)
                 errors.Add("Style must be between 0 and 1");
+
             if (options.Boost != true && options.Boost != false)
                 errors.Add("Boost must be true or false");
+
             if (options.Feed == null || options.Feed.Count == 0)
                 errors.Add("Feed must contain at least one entry");
             else
@@ -63,8 +66,9 @@ namespace MyTts.Config
                 {
                     if (string.IsNullOrEmpty(feed.Key))
                         errors.Add("Feed key cannot be null or empty");
-                    if (string.IsNullOrEmpty(feed.Value.Voice))
-                        errors.Add($"Voice is required for feed '{feed.Key}'");
+                    
+                    if (feed.Value.Voices == null || feed.Value.Voices.Count == 0)
+                        errors.Add($"Voices configuration is required for language '{feed.Key}'");
                 }
             }
 
@@ -74,9 +78,8 @@ namespace MyTts.Config
         }
     }
 
-    public class VoiceConfig
+    public class LanguageVoiceConfig
     {
-        [Required]
-        public string Voice { get; set; } = string.Empty;
+        public Dictionary<string, string> Voices { get; set; } = new();
     }
 }
