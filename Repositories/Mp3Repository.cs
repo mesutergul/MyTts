@@ -79,28 +79,20 @@ namespace MyTts.Repositories
             ArgumentOutOfRangeException.ThrowIfLessThan(id, 1);
             try
             {
-                if (_mp3MetaRepository is not NullMp3MetaRepository)
+                await _dbLock.WaitAsync();
+                try
                 {
-                    await _dbLock.WaitAsync();
-                    try
-                    {
-                        var exist = await _mp3MetaRepository.ExistByIdAsync(id, cancellationToken);
-                        return exist;
-                        // if (!exists)
-                        //     throw new KeyNotFoundException($"MP3 file not found for path: {id}");
+                    var exist = await _mp3MetaRepository.ExistByIdAsync(id, cancellationToken);
+                    return exist;
+                    // if (!exists)
+                    //     throw new KeyNotFoundException($"MP3 file not found for path: {id}");
 
-                        // _logger.LogDebug("Found MP3 metadata for path: {id}", id);
-                        //   return true;
-                    }
-                    finally
-                    {
-                        _dbLock.Release();
-                    }
+                    // _logger.LogDebug("Found MP3 metadata for path: {id}", id);
+                    //   return true;
                 }
-                else
+                finally
                 {
-                    _logger.LogWarning("MP3 metadata repository is not available.");
-                    return false;
+                    _dbLock.Release();
                 }
             }
             catch (Exception ex) when (ex is not KeyNotFoundException)
@@ -172,8 +164,8 @@ namespace MyTts.Repositories
         }
         public async Task<bool> FileExistsAnywhereAsync(int filePath, AudioType fileType, CancellationToken cancellationToken)
         {
-            string metadataCacheKey = $"{FILE_DETAIL_KEY_PREFIX}-{filePath}";
-
+            string metadataCacheKey = $"{FILE_DETAIL_KEY_PREFIX}_{filePath}";
+            // string fullPath = GetFullPath(metadataCacheKey, fileType);
             // Check metadata cache first
             if (await Mp3FileExistsInCacheAsync(metadataCacheKey, cancellationToken))
             {
@@ -189,7 +181,7 @@ namespace MyTts.Repositories
                 }
                 return true;
             }
-
+            _logger.LogCritical("FileExistsAnywhereAsync can not find : {file}", metadataCacheKey);
             return false;
         }
         public async Task<byte[]> ReadFileFromDiskAsync(int filePath, AudioType fileType = AudioType.Mp3, CancellationToken cancellationToken = default)
@@ -339,7 +331,7 @@ namespace MyTts.Repositories
                 File.Move(tempPath, fullPath);
 
                 // Update cache
-                string cacheKey = $"{FILE_DETAIL_KEY_PREFIX}{filePath}";
+                string cacheKey = $"{FILE_DETAIL_KEY_PREFIX}_{filePath}";
                 await _cache.SetAsync(cacheKey, fileData, FILE_CACHE_DURATION);
             }
             catch (Exception ex)
@@ -365,7 +357,7 @@ namespace MyTts.Repositories
                 if (File.Exists(fullPath))
                 {
                     File.Delete(fullPath);
-                    string cacheKey = $"{FILE_DETAIL_KEY_PREFIX}{filePath}";
+                    string cacheKey = $"{FILE_DETAIL_KEY_PREFIX}_{filePath}";
                     await _cache.RemoveAsync(cacheKey);
                 }
             }
@@ -611,28 +603,20 @@ namespace MyTts.Repositories
         public async Task SaveMp3MetaToSql(Mp3Dto mp3Dto, CancellationToken cancellationToken) {
             try
             {
-                if (_mp3MetaRepository is not NullMp3MetaRepository)
+                await _dbLock.WaitAsync();
+                try
                 {
-
-                    await _dbLock.WaitAsync();
-                    try
+                    var exist = await _mp3MetaRepository.ExistByIdAsync(mp3Dto.FileId, cancellationToken);
+                    if (!exist)
                     {
-                        var exist = await _mp3MetaRepository.ExistByIdAsync(mp3Dto.FileId, cancellationToken);
-                        if (!exist)
-                        {
-                            await _mp3MetaRepository.AddAsync(mp3Dto, cancellationToken).ConfigureAwait(false);
-                            _logger.LogDebug("Saved MP3 metadata to SQL: {Mp3Meta}", mp3Dto);
-                        }
-                        else _logger.LogDebug("MP3 metadata already exists in SQL: {Mp3Meta}", mp3Dto);
+                        await _mp3MetaRepository.AddAsync(mp3Dto, cancellationToken).ConfigureAwait(false);
+                        _logger.LogDebug("Saved MP3 metadata to SQL: {Mp3Meta}", mp3Dto);
                     }
-                    finally
-                    {
-                        _dbLock.Release();
-                    }
+                    else _logger.LogDebug("MP3 metadata already exists in SQL: {Mp3Meta}", mp3Dto);
                 }
-                else
+                finally
                 {
-                    _logger.LogWarning("MP3 metadata repository is not available.");
+                    _dbLock.Release();
                 }
             }
             catch (Exception ex)
@@ -643,30 +627,21 @@ namespace MyTts.Repositories
         }
         public async Task<Mp3Dto> LoadMp3MetaByNewsIdAsync(int id, AudioType fileType, CancellationToken cancellationToken)
         {
-
             try
             {
-                if (_mp3MetaRepository is not NullMp3MetaRepository)
+                await _dbLock.WaitAsync();
+                try
                 {
-                    await _dbLock.WaitAsync();
-                    try
-                    {
-                        var mp3File = await _mp3MetaRepository.GetByIdAsync(id, cancellationToken)
-                            ?? throw new KeyNotFoundException($"MP3 file not found for ID: {id}");
+                    var mp3File = await _mp3MetaRepository.GetByIdAsync(id, cancellationToken)
+                        ?? throw new KeyNotFoundException($"MP3 file not found for ID: {id}");
 
-                        _logger.LogDebug("Found MP3 metadata for ID: {Id}", id);
+                    _logger.LogDebug("Found MP3 metadata for ID: {Id}", id);
 
-                        return mp3File;
-                    }
-                    finally
-                    {
-                        _dbLock.Release();
-                    }
+                    return mp3File;
                 }
-                else
+                finally
                 {
-                    _logger.LogWarning("MP3 metadata repository is not available.");
-                    return new Mp3Dto();
+                    _dbLock.Release();
                 }
             }
             catch (Exception ex) when (ex is not KeyNotFoundException)
@@ -730,25 +705,17 @@ namespace MyTts.Repositories
         public async Task<List<HaberSummaryDto>> GetNewsList(CancellationToken cancellationToken)
         {
             try
-            {
-                if (_newsRepository is not NullNewsRepository)
+            {                
+                await _dbLock.WaitAsync(cancellationToken);
+                try
                 {
-                    await _dbLock.WaitAsync(cancellationToken);
-                    try
-                    {
-                        _logger.LogDebug("Loading MP3 files from database");
-                        return await _newsRepository.getSummary(20, Models.MansetType.ana_manset, cancellationToken);
-                    }
-                    finally
-                    {
-                        _dbLock.Release();
-                    }
+                    _logger.LogDebug("Loading MP3 files from database");
+                    return await _newsRepository.getSummary(20, Models.MansetType.ana_manset, cancellationToken);
                 }
-                else
+                finally
                 {
-                    _logger.LogWarning("News repository is not available.");
-                    return new List<HaberSummaryDto>();
-                }
+                    _dbLock.Release();
+                }               
             }
             catch (Exception ex)
             {
@@ -782,24 +749,16 @@ namespace MyTts.Repositories
         {
             try
             {
-                if (_mp3MetaRepository is not NullMp3MetaRepository)
+                await _dbLock.WaitAsync(cancellationToken);
+                try
                 {
-                    await _dbLock.WaitAsync(cancellationToken);
-                    try
-                    {
-                        _logger.LogDebug("Loading MP3 files from database");
-                        return await _mp3MetaRepository.GetExistingFileIdsInLast500Async(myList, cancellationToken);
-                    }
-                    finally
-                    {
-                        _dbLock.Release();
-                    }
+                    _logger.LogDebug("Loading MP3 files from database");
+                    return await _mp3MetaRepository.GetExistingFileIdsInLast500Async(myList, cancellationToken);
                 }
-                else
+                finally
                 {
-                    _logger.LogWarning("MP3 metadata repository is not available.");
-                    return new List<int>();
-                }
+                    _dbLock.Release();
+                }              
             }
             catch (Exception ex)
             {

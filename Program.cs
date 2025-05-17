@@ -2,14 +2,16 @@ using MyTts.Config.ServiceConfigurations;
 using MyTts.Routes;
 using Microsoft.AspNetCore.HttpOverrides;
 
-var builder = WebApplication.CreateBuilder(args);
+// string baseDir = AppContext.BaseDirectory;
+// string ffmpegDir = Path.Combine(baseDir, "ffmpeg-bin");
 
-// Configure FFMpeg
-FFMpegCore.GlobalFFOptions.Configure(new FFMpegCore.FFOptions
-{
-    BinaryFolder = @"C:\repos\MyTts-main",
-    TemporaryFilesFolder = Path.GetTempPath()
-});
+// FFMpegCore.GlobalFFOptions.Configure(new FFMpegCore.FFOptions
+// {
+//     BinaryFolder = ffmpegDir,
+//     TemporaryFilesFolder = Path.GetTempPath()
+// });
+
+var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container
 builder.Services

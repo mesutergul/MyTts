@@ -24,7 +24,7 @@ namespace MyTts.Data.Repositories
 
             return await Task.FromResult(_dbSet.Any(entity => entity.FileId == id));
         }
-        public virtual async Task<Mp3Meta> GetByColumnAsync(
+        public virtual async Task<Mp3Dto> GetByColumnAsync(
             Expression<Func<Mp3Meta, bool>> predicate,
             CancellationToken cancellationToken)
         {
@@ -35,7 +35,7 @@ namespace MyTts.Data.Repositories
             }
 
             var entity = await _dbSet.FirstOrDefaultAsync(predicate, cancellationToken);
-            return entity ?? throw new InvalidOperationException($"Entity not found matching predicate.");
+            return _mapper.Map<Mp3Dto>(entity) ?? throw new InvalidOperationException($"Entity not found matching predicate.");
         }
         /// <summary>
         /// Checks which FileIds from a given list exist within the last 500 records

@@ -5,6 +5,6 @@ namespace MyTts.Repositories
         Mp3 = 1,
         M4a = 2,
         Wav = 3,
-        Flac = 4
+        Csv = 4
     }
 }

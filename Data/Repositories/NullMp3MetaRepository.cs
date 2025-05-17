@@ -9,50 +9,70 @@ using MyTts.Data.Interfaces;
 using Microsoft.Extensions.Logging;
 using MyTts.Data.Context;
 using MyTts.Models;
+using System.Linq.Expressions;
 
 namespace MyTts.Data.Repositories
 {
-    public class NullMp3MetaRepository : Mp3MetaRepository
+    public class NullMp3MetaRepository : IMp3MetaRepository
     {
-        public NullMp3MetaRepository(
-             IGenericDbContextFactory<AppDbContext> factory, // Inject IAppDbContextFactory
-             IMapper mapper,               // Inject IMapper
-             ILogger<NullMp3MetaRepository> logger)
-             : base(factory, mapper, logger) // Pass the injected dependencies to the base
-        {
-        }
+        // public NullMp3MetaRepository(
+        //      IGenericDbContextFactory<AppDbContext> factory, // Inject IAppDbContextFactory
+        //      IMapper mapper,               // Inject IMapper
+        //      ILogger<NullMp3MetaRepository> logger)
+        //      : base(factory, mapper, logger) // Pass the injected dependencies to the base
+        // {
+        // }
 
-        public override Task<bool> ExistByIdAsync(int id, CancellationToken cancellationToken)
+        public  Task<bool> ExistByIdAsync(int id, CancellationToken cancellationToken)
         {
             return Task.FromResult(false);
         }
 
-        public override Task<List<Mp3Dto>> GetAllAsync(CancellationToken cancellationToken)
+        public  Task<List<Mp3Dto>> GetAllAsync(CancellationToken cancellationToken)
         {
             return Task.FromResult<List<Mp3Dto>>(new List<Mp3Dto>());
         }
 
-        public override Task<Mp3Dto> GetByIdAsync(int id, CancellationToken cancellationToken)
+        public  Task<Mp3Dto> GetByIdAsync(int id, CancellationToken cancellationToken)
         {
-            return Task.FromResult<Mp3Dto>(null);
+            return Task.FromResult<Mp3Dto>(null!);
         }
 
-        public override Task AddAsync(Mp3Dto entity, CancellationToken cancellationToken)
-        {
-            return Task.CompletedTask;
-        }
-
-        public override Task SaveChangesAsync(CancellationToken cancellationToken)
+        public  Task AddAsync(Mp3Dto entity, CancellationToken cancellationToken)
         {
             return Task.CompletedTask;
         }
 
-        public override Task Update(Mp3Dto entity, CancellationToken cancellationToken)
+        public  Task SaveChangesAsync(CancellationToken cancellationToken)
         {
             return Task.CompletedTask;
         }
 
-        public override Task Delete(Mp3Dto entity, CancellationToken cancellationToken)
+        public  Task Update(Mp3Dto entity, CancellationToken cancellationToken)
+        {
+            return Task.CompletedTask;
+        }
+
+        public  Task Delete(Mp3Dto entity, CancellationToken cancellationToken)
+        {
+            return Task.CompletedTask;
+        }
+        public Task<List<int>> GetExistingFileIdsInLast500Async(List<int> fileIdsToCheck, CancellationToken cancellationToken) =>Task.FromResult( new List<int>());
+        Task<Mp3Dto> GetByColumnAsync(
+            Expression<Func<Mp3Meta, bool>> predicate,
+            CancellationToken cancellationToken) => Task.FromResult<Mp3Dto>(null);
+
+        Task<Mp3Dto> IMp3MetaRepository.GetByColumnAsync(Expression<Func<Mp3Meta, bool>> predicate, CancellationToken cancellationToken)
+        {
+            return GetByColumnAsync(predicate, cancellationToken);
+        }
+
+        Task<Mp3Dto> IRepository<Mp3Meta, Mp3Dto>.FindAsync(Func<Mp3Meta, bool> predicate, CancellationToken cancellationToken)
+        {
+            return Task.FromResult<Mp3Dto>(null!);
+        }
+
+        Task IRepository<Mp3Meta, Mp3Dto>.DeleteAsync(int id, CancellationToken cancellationToken)
         {
             return Task.CompletedTask;
         }

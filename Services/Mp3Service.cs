@@ -44,6 +44,11 @@ namespace MyTts.Services
             {
                 await _processingSemaphore.WaitAsync();
                 var newsList=await GetNewsList(cancellationToken);
+                if (newsList.Count==0)
+                {
+                    newsList = CsvFileReader.ReadHaberSummariesFromCsv(_mp3FileRepository.GetFullPath("test", AudioType.Csv))
+                    .Select(x=>new HaberSummaryDto(){ Baslik= x.Baslik, IlgiId=x.IlgiId, Ozet=x.Ozet}).ToList();
+                }
                 // var (neededNewsListByDB, savedNewsListByDB) = checkNewsListInDB(newsList, fileType, cancellationToken);
                 var (neededNewsList, savedNewsList) = await checkNewsList(newsList, fileType, cancellationToken);
                 // var contents = await _newsFeedsService.GetFeedByLanguageAsync(language, limit);
