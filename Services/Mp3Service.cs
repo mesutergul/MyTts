@@ -89,7 +89,6 @@ namespace MyTts.Services
             var savedNewsList = new List<HaberSummaryDto>();
             foreach (var news in newsList)
             {
-                var fileName = $"speech_{news.IlgiId}.{fileType.ToString().ToLower()}"; // m4a container for AAC
                 if (!await _mp3FileRepository.FileExistsAnywhereAsync(news.IlgiId, fileType, cancellationToken))
                 {
                     neededNewsList.Add(news);
@@ -244,12 +243,6 @@ namespace MyTts.Services
         public async Task<bool> FileExistsAnywhereAsync(int id, AudioType fileType, CancellationToken cancellationToken) {
             return await _mp3FileRepository.FileExistsAnywhereAsync(id, fileType, cancellationToken);
         }
-        /// <summary>
-        /// Streams MP3 file by IDto the client, optimized for audio streaming with proper caching
-        /// </summary>
-        /// <param name="id"></param>
-        /// <param name="cancellationToken"></param>
-        /// <returns></returns>
         public async Task<IActionResult> StreamMp3(int id, AudioType fileType, CancellationToken cancellationToken = default)
         {
             try
@@ -268,7 +261,7 @@ namespace MyTts.Services
                     ?? await _mp3FileRepository.LoadMp3MetaByNewsIdAsync(id, fileType, cancellationToken);
                 string filePath = GetAudioFilePath(mp3File.FileUrl);
                 /// Verifies physical file exists
-                if (!await _mp3FileRepository.Mp4FileExistsAsync(filePath, fileType, cancellationToken))
+                if (!await _mp3FileRepository.Mp3FileExistsAsync(id, fileType, cancellationToken))
                 {
                     _logger.LogWarning("MP3 file not found at path: {Path}", filePath);
                     return new NotFoundObjectResult(new { message = "MP3 file not found." });
@@ -435,7 +428,7 @@ namespace MyTts.Services
                 }
 
                 // Check if file exists
-                if (!await _mp3FileRepository.Mp4FileExistsAsync(filePath, fileType, cancellationToken))
+                if (!await _mp3FileRepository.Mp3FileExistsAsync(id, fileType, cancellationToken))
                 {
                     _logger.LogWarning("MP3 file not found at path: {Path}", filePath);
                     return new NotFoundObjectResult(new { message = "MP3 file not found." });

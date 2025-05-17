@@ -14,6 +14,7 @@ using MyTts.Models;
 using MyTts.Repositories;
 using MyTts.Services.Interfaces;
 using MyTts.Storage;
+using MyTts.Services.Constants;
 
 namespace MyTts.Services
 {
@@ -458,7 +459,7 @@ namespace MyTts.Services
 
         private async Task StoreMetadataRedisAsync(int id, string text, string localPath, string fileName, CancellationToken cancellationToken)
         {
-            if (_cache == null && await _cache!.IsConnectedAsync()) return;
+            if (_cache == null || !await _cache.IsConnectedAsync()) return;
             var metadata = new AudioMetadata
             {
                 Id = id,
@@ -468,8 +469,7 @@ namespace MyTts.Services
                 Timestamp = DateTime.UtcNow
             };
 
-            await _cache!.SetAsync<AudioMetadata>($"tts:{id}", metadata, TimeSpan.FromHours(1));
-
+            await _cache.SetAsync(string.Format(RedisKeys.TTS_METADATA_KEY, id), metadata, RedisKeys.DEFAULT_METADATA_EXPIRY);
         }
 
         private async Task SaveMetadataSqlAsync(int id, string localPath, string language, CancellationToken cancellationToken)

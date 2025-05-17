@@ -13,7 +13,7 @@ namespace MyTts.Repositories
         Task<List<Mp3Dto>> LoadListMp3MetadatasAsync(AudioType fileType, CancellationToken cancellationToken);
         Task SaveMp3MetadatasAsync(List<Mp3Dto> mp3Files, AudioType fileType, CancellationToken cancellationToken);
         Task DeleteMp3FileAsync(string filePath, CancellationToken cancellationToken);
-        Task<bool> Mp4FileExistsAsync(string filePath, AudioType fileType, CancellationToken cancellationToken);
+        Task<bool> Mp3FileExistsAsync(int id, AudioType fileType, CancellationToken cancellationToken);
         Task<Mp3Dto> LoadMp3MetaByPathAsync(int filePath, AudioType fileType, CancellationToken cancellationToken);
         Task<Mp3Dto> LoadMp3MetaByNewsIdAsync(int id, AudioType fileType, CancellationToken cancellationToken);
         Task<Mp3Dto> LoadLatestMp3MetaByLanguageAsync(string language, AudioType fileType, CancellationToken cancellationToken);
