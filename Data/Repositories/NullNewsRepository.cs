@@ -26,32 +26,32 @@ namespace MyTts.Data.Repositories
         public Task Update(News entity, CancellationToken cancellationToken) => Task.CompletedTask;
         public Task<List<HaberSummaryDto>> getSummary(int count, MansetType type, CancellationToken cancellationToken) => Task.FromResult(new List<HaberSummaryDto>());
 
-        Task<INews> IRepository<News, INews>.GetByIdAsync(int id, CancellationToken cancellationToken)
+        Task<NewsDto> IRepository<News, NewsDto>.GetByIdAsync(int id, CancellationToken cancellationToken)
         {
             throw new NotImplementedException();
         }
 
-        Task<List<INews>> IRepository<News, INews>.GetAllAsync(CancellationToken cancellationToken)
+        Task<List<NewsDto>> IRepository<News, NewsDto>.GetAllAsync(CancellationToken cancellationToken)
         {
             throw new NotImplementedException();
         }
 
-        Task IRepository<News, INews>.AddAsync(INews model, CancellationToken cancellationToken)
+        Task IRepository<News, NewsDto>.AddAsync(NewsDto model, CancellationToken cancellationToken)
         {
             throw new NotImplementedException();
         }
 
-        Task<INews> IRepository<News, INews>.FindAsync(Func<News, bool> predicate, CancellationToken cancellationToken)
+        Task<NewsDto> IRepository<News, NewsDto>.FindAsync(Func<News, bool> predicate, CancellationToken cancellationToken)
         {
             throw new NotImplementedException();
         }
 
-        Task IRepository<News, INews>.Update(INews model, CancellationToken cancellationToken)
+        Task IRepository<News, NewsDto>.Update(NewsDto model, CancellationToken cancellationToken)
         {
             throw new NotImplementedException();
         }
 
-        Task IRepository<News, INews>.DeleteAsync(int id, CancellationToken cancellationToken)
+        Task IRepository<News, NewsDto>.DeleteAsync(int id, CancellationToken cancellationToken)
         {
             throw new NotImplementedException();
         }

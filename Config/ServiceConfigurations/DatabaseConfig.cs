@@ -1,15 +1,11 @@
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
-using AutoMapper;
 using MyTts.Data.Context;
 using MyTts.Data.Entities;
 using MyTts.Data.Interfaces;
 using MyTts.Data.Repositories;
 using MyTts.Models;
-using MyTts.Data;
 
 namespace MyTts.Config.ServiceConfigurations;
 
@@ -52,7 +48,7 @@ public static class DatabaseConfig
 
         services.AddScoped<NewsRepository>()
                .AddScoped<INewsRepository>(sp => sp.GetRequiredService<NewsRepository>())
-               .AddScoped<IRepository<News, INews>>(sp => sp.GetRequiredService<NewsRepository>());
+               .AddScoped<IRepository<News, NewsDto>>(sp => sp.GetRequiredService<NewsRepository>());
     }
 
     private static void ConfigureInMemoryDatabase(IServiceCollection services)
@@ -72,7 +68,7 @@ public static class DatabaseConfig
 
         services.AddScoped<NullNewsRepository>()
                .AddScoped<INewsRepository>(sp => sp.GetRequiredService<NullNewsRepository>())
-               .AddScoped<IRepository<News, INews>>(sp => sp.GetRequiredService<NullNewsRepository>());
+               .AddScoped<IRepository<News, NewsDto>>(sp => sp.GetRequiredService<NullNewsRepository>());
     }
 
     private static bool TestSqlConnection(string connectionString)

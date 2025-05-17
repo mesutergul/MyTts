@@ -3,7 +3,7 @@ using MyTts.Models;
 
 namespace MyTts.Data.Interfaces
 {
-    public interface INewsRepository : IRepository<News, INews>
+    public interface INewsRepository : IRepository<News, NewsDto>
     {
         Task<List<HaberSummaryDto>> getSummary(int top, MansetType mansetType, CancellationToken cancellationToken);
     }

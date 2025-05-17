@@ -1,4 +1,4 @@
-using AutoMapper;
+using MyTts.Data;
 using MyTts.Data.Entities;
 using MyTts.Data.Interfaces;
 using MyTts.Models;
@@ -11,9 +11,9 @@ public static class AutoMapperConfig
     {
         services.AddAutoMapper(config =>
         {
-            config.CreateMap<Mp3Meta, Mp3Dto>().ReverseMap();
-            config.CreateMap<News, INews>().ReverseMap();
-            config.CreateMap<News, HaberSummaryDto>();
+            config.AddProfile<Mp3MappingProfile>();
+            config.AddProfile<HaberMappingProfile>();
+            config.CreateMap<News, NewsDto>().ReverseMap();
         }, typeof(AutoMapperConfig).Assembly);
 
         return services;

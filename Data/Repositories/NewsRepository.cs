@@ -8,7 +8,7 @@ using MyTts.Models;
 
 namespace MyTts.Data.Repositories
 {
-    public class NewsRepository : Repository<AppDbContext , News, INews>, INewsRepository
+    public class NewsRepository : Repository<AppDbContext , News, NewsDto>, INewsRepository
     {
         public NewsRepository(IGenericDbContextFactory<AppDbContext> contextFactory, IMapper? mapper, ILogger<NewsRepository> logger) : base(contextFactory, mapper, logger) { }
         // News'a özel metodları burada implemente edebilirsin
@@ -27,16 +27,8 @@ namespace MyTts.Data.Repositories
                 .Take(20)
                 .ToListAsync();
 
+            // The mapping profile applied here is HaberMappingProfile
             return _mapper.Map<List<HaberSummaryDto>>(query);
-            //var query = await (from k in _context.HaberKonumlari
-            //                   join h in _context.News on k.IlgiId equals h.Id
-            //                   where k.KonumAdi == "ana manşet"
-            //                   orderby k.Sirano
-            //                   select new { k, h })
-            //          .Take(20)
-            //          .ToListAsync();
-
-            //return _mapper.Map<List<HaberSummaryDto>>(query.Select(x => (x.k, x.h)).ToList());
         }
     }
 }

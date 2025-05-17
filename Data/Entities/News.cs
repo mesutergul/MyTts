@@ -5,7 +5,7 @@ using MyTts.Data.Interfaces;
 namespace MyTts.Data.Entities
 {
     [Table("Haberler")]
-    public class News : BaseEntity, INews
+    public class News : BaseEntity
     {
         [Column("ozet")]
         public string? Summary { get; set; }

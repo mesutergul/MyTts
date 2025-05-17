@@ -4,7 +4,7 @@ using MyTts.Data.Interfaces;
 
 namespace MyTts.Data.Entities
 {
-    public abstract class BaseEntity : IEntity
+    public abstract class BaseEntity
 {
         [Key]
         [DatabaseGenerated(DatabaseGeneratedOption.Identity)]

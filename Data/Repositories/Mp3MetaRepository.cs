@@ -37,13 +37,6 @@ namespace MyTts.Data.Repositories
             var entity = await _dbSet.FirstOrDefaultAsync(predicate, cancellationToken);
             return _mapper.Map<Mp3Dto>(entity) ?? throw new InvalidOperationException($"Entity not found matching predicate.");
         }
-        /// <summary>
-        /// Checks which FileIds from a given list exist within the last 500 records
-        /// of the table, ordered by the auto-incrementing primary key (Id).
-        /// </summary>
-        /// <param name="fileIdsToCheck">The list of FileIds to check for existence.</param>
-        /// <param name="cancellationToken">Cancellation token.</param>
-        /// <returns>A list of FileIds from the input list that were found in the last 500 records.</returns>
         public virtual async Task<List<int>> GetExistingFileIdsInLast500Async(List<int> fileIdsToCheck, CancellationToken cancellationToken)
         {
             if (_dbSet == null)

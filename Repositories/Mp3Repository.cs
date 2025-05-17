@@ -1,7 +1,5 @@
 using System.Collections.Concurrent;
 using Newtonsoft.Json;
-using MyTts.Services;
-using MyTts.Data.Repositories;
 using MyTts.Data.Interfaces;
 using System.Text;
 using MyTts.Data.Entities;

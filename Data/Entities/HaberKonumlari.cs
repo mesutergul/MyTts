@@ -4,7 +4,7 @@ using MyTts.Data.Interfaces;
 namespace MyTts.Data.Entities
 {
     [Table("Haber_Konumlari")]
-    public class HaberKonumlari : BaseEntity, IHaberKonumlari
+    public class HaberKonumlari : BaseEntity
     {
         [Column("ilgi_id")]
         [ForeignKey(nameof(News))]

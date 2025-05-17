@@ -1,6 +1,4 @@
-﻿using System;
-using System.Linq;
-using System.Linq.Expressions;
+﻿using System.Linq.Expressions;
 using AutoMapper;
 using IConfigurationProvider = AutoMapper.IConfigurationProvider;
 
@@ -66,48 +64,37 @@ namespace MyTts.Data
 
         TDestination IMapper.Map<TDestination>(object source, Action<IMappingOperationOptions<object, TDestination>> opts)
         {
-            throw new NotImplementedException();
+            return default!;
         }
 
         TDestination IMapper.Map<TSource, TDestination>(TSource source, Action<IMappingOperationOptions<TSource, TDestination>> opts)
         {
-            throw new NotImplementedException();
+            return default!;
         }
 
         TDestination IMapper.Map<TSource, TDestination>(TSource source, TDestination destination, Action<IMappingOperationOptions<TSource, TDestination>> opts)
         {
-            throw new NotImplementedException();
+            return default!;
         }
 
-        object IMapper.Map(object source, Type sourceType, Type destinationType, Action<IMappingOperationOptions<object, object>> opts)
+        object IMapper.Map(object source, Type sourceType, Type destinationType, Action<IMappingOperationOptions<object, object>>? opts)
+            => source;
+
+        object IMapper.Map(object source, object destination, Type sourceType, Type destinationType, Action<IMappingOperationOptions<object, object>>? _)
         {
-            throw new NotImplementedException();
+            return source;
         }
 
-        object IMapper.Map(object source, object destination, Type sourceType, Type destinationType, Action<IMappingOperationOptions<object, object>> opts)
-        {
-            throw new NotImplementedException();
-        }
-
-        IQueryable<TDestination> IMapper.ProjectTo<TDestination>(IQueryable source, object parameters, params Expression<Func<TDestination, object>>[] membersToExpand)
-        {
-            throw new NotImplementedException();
-        }
+        IQueryable<TDestination> IMapper.ProjectTo<TDestination>(IQueryable source, object parameters, params Expression<Func<TDestination, object>>[] membersToExpand) 
+            => Enumerable.Empty<TDestination>().AsQueryable();
 
         IQueryable<TDestination> IMapper.ProjectTo<TDestination>(IQueryable source, IDictionary<string, object> parameters, params string[] membersToExpand)
-        {
-            throw new NotImplementedException();
-        }
+            => Enumerable.Empty<TDestination>().AsQueryable();
 
-        IQueryable IMapper.ProjectTo(IQueryable source, Type destinationType, IDictionary<string, object> parameters, params string[] membersToExpand)
-        {
-            throw new NotImplementedException();
-        }
+        IQueryable IMapper.ProjectTo(IQueryable source, Type _, IDictionary<string, object> _c, params string[] _d) =>
+            source;
 
-        object IMapperBase.Map(object source, object destination, Type sourceType, Type destinationType)
-        {
-            throw new NotImplementedException();
-        }
+        object? IMapperBase.Map(object? source, object? destination, Type sourceType, Type destinationType) => source;
 
         // If you need any of the other IMapper members, you can add no-op or throw implementations here...
     }
