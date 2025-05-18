@@ -6,6 +6,7 @@ using MyTts.Data.Entities;
 using MyTts.Models;
 using MyTts.Services.Interfaces;
 using MyTts.Services.Constants;
+using MyTts.Services;
 
 namespace MyTts.Repositories
 {
@@ -16,7 +17,6 @@ namespace MyTts.Repositories
         private readonly string _metadataPath;
         private readonly IRedisCacheService _cache;
         private readonly SemaphoreSlim _dbLock;
-        private readonly ConcurrentDictionary<string, SemaphoreSlim> _fileLocks;
         private readonly JsonSerializerSettings _jsonSettings;
         private bool _disposed;
         private readonly IMp3MetaRepository _mp3MetaRepository;
@@ -43,7 +43,6 @@ namespace MyTts.Repositories
             _baseStoragePath = Path.GetFullPath(configuration["Storage:BasePath"]) ?? "C:\\repos\\audio";
             _metadataPath = Path.GetFullPath(configuration["Storage:MetadataPath"]) ?? "C:\\repos\\audiometa\\mp3files.json";
             _dbLock = new SemaphoreSlim(1, 1);
-            _fileLocks = new ConcurrentDictionary<string, SemaphoreSlim>();
             _jsonSettings = new JsonSerializerSettings
             {
                 Formatting = Formatting.Indented,
@@ -156,7 +155,7 @@ namespace MyTts.Repositories
         public async Task<byte[]> ReadFileFromDiskAsync(int filePath, AudioType fileType = AudioType.Mp3, CancellationToken cancellationToken = default)
         {
             string storageKey = GetStorageKey(filePath);
-            var fullPath = GetFullPath(storageKey, fileType);
+            string fullPath = GetFullPath(storageKey, fileType);
             try
             {
                 if (!await _localStorageService.FileExistsAsync(fullPath))
@@ -197,25 +196,18 @@ namespace MyTts.Repositories
             string cacheKey = GetCacheKey(filePath);
             string fullPath = GetFullPath(storageKey, fileType);
 
-            var fileLock = await GetFileLockAsync(fullPath);
-            await fileLock.WaitAsync();
-
             try
             {
                 string directory = Path.GetDirectoryName(fullPath)!;
-                Directory.CreateDirectory(directory);
-
-                string tempPath = $"{fullPath}.tmp";
-                await using (var fileStream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, 4096, true))
+                if (!await _localStorageService.DirectoryExistsAsync(directory))
                 {
-                    await fileStream.WriteAsync(fileData);
+                    Directory.CreateDirectory(directory);
                 }
 
-                if (File.Exists(fullPath))
-                {
-                    File.Delete(fullPath);
-                }
-                File.Move(tempPath, fullPath);
+                // Create a VoiceClip from the file data
+                using var voiceClip = new VoiceClip(fileData);
+                await using var fileStream = new FileStream(fullPath, FileMode.Create, FileAccess.Write, FileShare.None, 128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+                await voiceClip.CopyToAsync(fileStream, 128 * 1024, cancellationToken);
 
                 // Update cache with consistent key
                 _logger.LogDebug("Caching file data for ID {Id} with key {CacheKey}, size: {Size} bytes",
@@ -227,150 +219,43 @@ namespace MyTts.Repositories
                 _logger.LogError(ex, "Failed to save and cache file for ID {Id}", filePath);
                 throw;
             }
-            finally
-            {
-                fileLock.Release();
-            }
         }
         public async Task DeleteMp3FileAsync(string filePath, CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(filePath);
 
-            var fileLock = await GetFileLockAsync(filePath);
-            await fileLock.WaitAsync();
             try
             {
                 string storageKey = GetStorageKey(int.Parse(filePath));
                 string cacheKey = GetCacheKey(int.Parse(filePath));
                 string fullPath = GetFullPath(storageKey, AudioType.Mp3);
 
-                if (File.Exists(fullPath))
-                {
-                    File.Delete(fullPath);
-                    _logger.LogDebug("Removing cache entry for ID {Id} with key {CacheKey}", filePath, cacheKey);
-                    await _cache.RemoveAsync(cacheKey);
-                }
+                await _localStorageService.DeleteFileAsync(fullPath);
+                await _cache.RemoveAsync(cacheKey);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to delete file and remove cache for ID {Id}", filePath);
                 throw;
             }
-            finally
-            {
-                fileLock.Release();
-            }
         }
 
-        private Task<SemaphoreSlim> GetFileLockAsync(string filePath)
-        {
-            return Task.FromResult(_fileLocks.GetOrAdd(filePath, _ => new SemaphoreSlim(1, 1)));
-        }
-
-        public async Task<List<Mp3Dto>> LoadListMp3MetadatasAsync(AudioType fileType, CancellationToken cancellationToken)
-        {
-            // Try get from cache first using the standardized key
-            var cachedData = await _cache.GetAsync<List<Mp3Dto>>(RedisKeys.MP3_METADATA_DB_KEY, cancellationToken);
-            if (cachedData != null)
-            {
-                _logger.LogDebug("Cache hit: Retrieved metadata list with {Count} items", cachedData.Count);
-                return cachedData;
-            }
-
-            await _dbLock.WaitAsync();
-            try
-            {
-                // Double-check cache after acquiring lock
-                cachedData = await _cache.GetAsync<List<Mp3Dto>>(RedisKeys.MP3_METADATA_DB_KEY, cancellationToken);
-                if (cachedData != null)
-                {
-                    _logger.LogDebug("Cache hit after lock: Retrieved metadata list with {Count} items", cachedData.Count);
-                    return cachedData;
-                }
-
-                _logger.LogDebug("Cache miss: Loading metadata list from file system");
-
-                // Load from file if not in cache
-                if (!File.Exists(GetFullPath(_metadataPath, fileType)))
-                {
-                    var emptyList = new List<Mp3Dto>();
-                    _logger.LogInformation("Caching empty metadata list as file does not exist");
-                    await _cache.SetAsync(RedisKeys.MP3_METADATA_DB_KEY, emptyList, DB_CACHE_DURATION);
-                    return emptyList;
-                }
-
-                var json = await File.ReadAllTextAsync(_metadataPath);
-                var mp3Files = JsonConvert.DeserializeObject<List<Mp3Dto>>(json, _jsonSettings)
-                    ?? new List<Mp3Dto>();
-
-                // Cache the loaded data
-                _logger.LogInformation("Caching metadata list with {Count} items for {Duration} minutes",
-                    mp3Files.Count, DB_CACHE_DURATION.TotalMinutes);
-                await _cache.SetAsync(RedisKeys.MP3_METADATA_DB_KEY, mp3Files, DB_CACHE_DURATION);
-
-                return mp3Files;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to load or cache metadata list");
-                throw;
-            }
-            finally
-            {
-                _dbLock.Release();
-            }
-        }
-
-        public async Task SaveMp3MetadatasAsync(List<Mp3Dto> mp3Files, AudioType fileType, CancellationToken cancellationToken)
-        {
-            ArgumentNullException.ThrowIfNull(mp3Files);
-
-            await _dbLock.WaitAsync();
-            try
-            {
-                // Write to temporary file first
-                string tempPath = $"{_metadataPath}.tmp";
-                var json = Newtonsoft.Json.JsonConvert.SerializeObject(mp3Files, Newtonsoft.Json.Formatting.Indented);
-                await File.WriteAllTextAsync(tempPath, json);
-
-                // Atomic rename
-                if (File.Exists(_metadataPath))
-                    File.Delete(_metadataPath);
-                File.Move(tempPath, _metadataPath);
-
-                // Update cache
-                await _cache.SetAsync(RedisKeys.MP3_METADATA_DB_KEY, mp3Files, DB_CACHE_DURATION);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to save MP3 files database");
-                throw;
-            }
-            finally
-            {
-                _dbLock.Release();
-            }
-        }
-
-        /// <summary>
-        /// Initializes the directories for storage and database.
-        /// </summary>
         private async Task InitializeDirectoriesAsync()
         {
             try
             {
                 // Create base storage directory
-                if (!Directory.Exists(_baseStoragePath))
+                if (!await _localStorageService.DirectoryExistsAsync(_baseStoragePath))
                 {
-                    await Task.Run(() => Directory.CreateDirectory(_baseStoragePath));
+                    Directory.CreateDirectory(_baseStoragePath);
                     _logger.LogInformation("Created base storage directory: {Path}", _baseStoragePath);
                 }
 
                 // Create database directory
                 string dbDirectory = Path.GetDirectoryName(_metadataPath)!;
-                if (!Directory.Exists(dbDirectory))
+                if (!await _localStorageService.DirectoryExistsAsync(dbDirectory))
                 {
-                    await Task.Run(() => Directory.CreateDirectory(dbDirectory));
+                    Directory.CreateDirectory(dbDirectory);
                     _logger.LogInformation("Created database directory: {Path}", dbDirectory);
                 }
 
@@ -394,23 +279,17 @@ namespace MyTts.Repositories
                 throw;
             }
         }
-        // In MyTts.Repositories.Mp3FileRepository.cs
+
         public async Task VerifyDirectoryAccessAsync(string path)
         {
-            // Use a unique temporary file name to avoid conflicts
             string tempFilePath = Path.Combine(path, $".write-test-{Guid.NewGuid()}.tmp");
-            // FileStream? fs; // Declare outside try to ensure it's accessible in finally
 
             try
             {
-                // Attempt to create and write to the file
-                await using (var fs = new FileStream(tempFilePath, FileMode.Create, FileAccess.Write, FileShare.None))
-                {
-                    // Optionally, write a small amount of data to fully test write capability
-                    byte[] testData = Encoding.UTF8.GetBytes("test");
-                    await fs.WriteAsync(testData, 0, testData.Length);
-                    // The 'using' statement will automatically close and dispose of fs when it exits
-                }
+                // Create a test VoiceClip
+                using var voiceClip = new VoiceClip(Encoding.UTF8.GetBytes("test"));
+                await using var fileStream = new FileStream(tempFilePath, FileMode.Create, FileAccess.Write, FileShare.None, 128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+                await voiceClip.CopyToAsync(fileStream, 128 * 1024, CancellationToken.None);
             }
             catch (UnauthorizedAccessException ex)
             {
@@ -419,14 +298,8 @@ namespace MyTts.Repositories
             }
             catch (IOException ex)
             {
-                // Check if it's specifically the "file in use" error
-                if (ex.Message.Contains("being used by another process") || ex.HResult == 0x80070020) // 0x80070020 is ERROR_SHARING_VIOLATION on Windows
-                {
-                    _logger.LogError(ex, "File access error: Temporary file '{TempFile}' is in use by another process in directory '{Path}'. This might indicate a previous crash or persistent lock.", tempFilePath, path);
-                    throw new InvalidOperationException($"The application could not access a temporary file in '{path}' because it is locked by another process. Please ensure no other process is using files in this directory and restart the application.", ex);
-                }
                 _logger.LogError(ex, "An I/O error occurred while verifying directory access for '{Path}'.", path);
-                throw; // Re-throw other IO exceptions
+                throw;
             }
             catch (Exception ex)
             {
@@ -435,22 +308,9 @@ namespace MyTts.Repositories
             }
             finally
             {
-                // Always attempt to delete the temporary file, even if an error occurred
-                if (File.Exists(tempFilePath))
+                if (await _localStorageService.FileExistsAsync(tempFilePath))
                 {
-                    try
-                    {
-                        File.Delete(tempFilePath);
-                    }
-                    catch (IOException deleteEx)
-                    {
-                        _logger.LogWarning(deleteEx, "Failed to delete temporary file '{TempFile}'. It might still be locked or there are permission issues after verification.", tempFilePath);
-                        // Log the warning but don't block the main operation, as the directory access was likely verified.
-                    }
-                    catch (UnauthorizedAccessException deleteEx)
-                    {
-                        _logger.LogWarning(deleteEx, "Unauthorized access when trying to delete temporary file '{TempFile}'. This indicates ongoing permission issues.", tempFilePath);
-                    }
+                    await _localStorageService.DeleteFileAsync(tempFilePath);
                 }
             }
         }
@@ -664,6 +524,103 @@ namespace MyTts.Repositories
             }
         }
 
+        public async Task<List<Mp3Dto>> LoadListMp3MetadatasAsync(AudioType fileType, CancellationToken cancellationToken)
+        {
+            // Try get from cache first using the standardized key
+            var cachedData = await _cache.GetAsync<List<Mp3Dto>>(RedisKeys.MP3_METADATA_DB_KEY, cancellationToken);
+            if (cachedData != null)
+            {
+                _logger.LogDebug("Cache hit: Retrieved metadata list with {Count} items", cachedData.Count);
+                return cachedData;
+            }
+
+            await _dbLock.WaitAsync();
+            try
+            {
+                // Double-check cache after acquiring lock
+                cachedData = await _cache.GetAsync<List<Mp3Dto>>(RedisKeys.MP3_METADATA_DB_KEY, cancellationToken);
+                if (cachedData != null)
+                {
+                    _logger.LogDebug("Cache hit after lock: Retrieved metadata list with {Count} items", cachedData.Count);
+                    return cachedData;
+                }
+
+                _logger.LogDebug("Cache miss: Loading metadata list from file system");
+
+                // Load from file if not in cache
+                if (!await _localStorageService.FileExistsAsync(_metadataPath))
+                {
+                    var emptyList = new List<Mp3Dto>();
+                    _logger.LogInformation("Caching empty metadata list as file does not exist");
+                    await _cache.SetAsync(RedisKeys.MP3_METADATA_DB_KEY, emptyList, DB_CACHE_DURATION);
+                    return emptyList;
+                }
+
+                // Read the file using a stream
+                using var fileStream = await _localStorageService.ReadLargeFileAsStreamAsync(_metadataPath, cancellationToken);
+                using var reader = new StreamReader(fileStream);
+                var json = await reader.ReadToEndAsync();
+                var mp3Files = JsonConvert.DeserializeObject<List<Mp3Dto>>(json, _jsonSettings)
+                    ?? new List<Mp3Dto>();
+
+                // Cache the loaded data
+                _logger.LogInformation("Caching metadata list with {Count} items for {Duration} minutes",
+                    mp3Files.Count, DB_CACHE_DURATION.TotalMinutes);
+                await _cache.SetAsync(RedisKeys.MP3_METADATA_DB_KEY, mp3Files, DB_CACHE_DURATION);
+
+                return mp3Files;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to load or cache metadata list");
+                throw;
+            }
+            finally
+            {
+                _dbLock.Release();
+            }
+        }
+
+        public async Task SaveMp3MetadatasAsync(List<Mp3Dto> mp3Files, AudioType fileType, CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(mp3Files);
+
+            await _dbLock.WaitAsync();
+            try
+            {
+                var json = JsonConvert.SerializeObject(mp3Files, Formatting.Indented);
+                var jsonBytes = Encoding.UTF8.GetBytes(json);
+
+                // Create a VoiceClip from the JSON data
+                using var voiceClip = new VoiceClip(jsonBytes);
+
+                // Write to temporary file first
+                string tempPath = $"{_metadataPath}.tmp";
+                await using var fileStream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, 128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+                await voiceClip.CopyToAsync(fileStream, 128 * 1024, cancellationToken);
+
+                // Delete existing file if it exists
+                if (await _localStorageService.FileExistsAsync(_metadataPath))
+                {
+                    await _localStorageService.DeleteFileAsync(_metadataPath);
+                }
+
+                // Rename temp file to target file
+                File.Move(tempPath, _metadataPath);
+
+                // Update cache
+                await _cache.SetAsync(RedisKeys.MP3_METADATA_DB_KEY, mp3Files, DB_CACHE_DURATION);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to save MP3 files database");
+                throw;
+            }
+            finally
+            {
+                _dbLock.Release();
+            }
+        }
 
         #endregion
 
@@ -680,11 +637,6 @@ namespace MyTts.Repositories
                 if (disposing)
                 {
                     _dbLock.Dispose();
-                    foreach (var fileLock in _fileLocks.Values)
-                    {
-                        fileLock.Dispose();
-                    }
-                    _fileLocks.Clear();
                 }
                 _disposed = true;
             }

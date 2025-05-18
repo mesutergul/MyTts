@@ -12,13 +12,17 @@ namespace MyTts.Services
     {
         private readonly ILogger<LocalStorageService> _logger;
         private readonly ConcurrentDictionary<string, SemaphoreSlim> _fileLocks;
+        private bool _disposed;
+
         public LocalStorageService(ILogger<LocalStorageService> logger)
         {
             _logger = logger;
             _fileLocks = new ConcurrentDictionary<string, SemaphoreSlim>();
         }
+
         public async Task SaveStreamToFileAsync(AudioProcessor processor, string localPath, CancellationToken cancellationToken)
         {
+            ThrowIfDisposed();
             var fileLock = await GetFileLockAsync(localPath);
             await fileLock.WaitAsync();
             try
@@ -42,10 +46,11 @@ namespace MyTts.Services
             {
                 fileLock.Release();
             }
-
         }
+
         public async Task<byte[]> ReadLargeFileAsync(string fullPath, CancellationToken cancellationToken)
         {
+            ThrowIfDisposed();
             await using var fileStream = new FileStream(
                 fullPath,
                 FileMode.Open,
@@ -87,8 +92,10 @@ namespace MyTts.Services
                 throw new IOException($"Failed to read large file: {fullPath}", ex);
             }
         }
+
         public Task<Stream> ReadLargeFileAsStreamAsync(string fullPath, CancellationToken cancellationToken)
         {
+            ThrowIfDisposed();
             try
             {
                 var fileStream = new FileStream(
@@ -101,7 +108,7 @@ namespace MyTts.Services
                 );
 
                 fileStream.Position = 0;
-                return Task.FromResult<Stream>(fileStream); // Return the fileStream;
+                return Task.FromResult<Stream>(fileStream);
             }
             catch (Exception ex)
             {
@@ -109,8 +116,10 @@ namespace MyTts.Services
                 throw new IOException($"Failed to open file stream: {fullPath}", ex);
             }
         }
+
         public async Task DeleteFileAsync(string path)
         {
+            ThrowIfDisposed();
             var lockForFile = await GetFileLockAsync(path);
             await lockForFile.WaitAsync();
             try
@@ -125,34 +134,76 @@ namespace MyTts.Services
                 lockForFile.Release();
             }
         }
+
         public async Task<IEnumerable<string>> ListFilesAsync(string directoryPath, string searchPattern = "*")
         {
+            ThrowIfDisposed();
             return await Task.Run(() => Directory.GetFiles(directoryPath, searchPattern).AsEnumerable());
         }
 
         public Task<bool> FileExistsAsync(string filePath)
         {
+            ThrowIfDisposed();
             if (string.IsNullOrWhiteSpace(filePath))
             {
                 throw new ArgumentException("File path cannot be null or whitespace.", nameof(filePath));
             }
 
-            // Use Task.Run to execute the potentially blocking File.Exists operation
             return Task.Run(() => File.Exists(filePath));
         }
+
         public Task<bool> DirectoryExistsAsync(string directoryPath)
         {
+            ThrowIfDisposed();
             if (string.IsNullOrWhiteSpace(directoryPath))
             {
                 throw new ArgumentException("Directory path cannot be null or whitespace.", nameof(directoryPath));
             }
 
-            // Use Task.Run to execute the potentially blocking Directory.Exists operation
             return Task.Run(() => Directory.Exists(directoryPath));
         }
+
         private Task<SemaphoreSlim> GetFileLockAsync(string filePath)
         {
+            ThrowIfDisposed();
             return Task.FromResult(_fileLocks.GetOrAdd(filePath, _ => new SemaphoreSlim(1, 1)));
+        }
+
+        private void ThrowIfDisposed()
+        {
+            if (_disposed)
+            {
+                throw new ObjectDisposedException(nameof(LocalStorageService));
+            }
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            if (!_disposed)
+            {
+                await DisposeAsyncCore().ConfigureAwait(false);
+                _disposed = true;
+                GC.SuppressFinalize(this);
+            }
+        }
+
+        protected virtual async ValueTask DisposeAsyncCore()
+        {
+            // Dispose of all file locks
+            foreach (var fileLock in _fileLocks.Values)
+            {
+                try
+                {
+                    fileLock.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Error disposing file lock");
+                }
+            }
+            _fileLocks.Clear();
+
+            await Task.CompletedTask; // For potential future async cleanup
         }
     }
 }

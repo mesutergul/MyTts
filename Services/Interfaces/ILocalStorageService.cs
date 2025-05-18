@@ -1,6 +1,6 @@
 namespace MyTts.Services.Interfaces
 {
-    public interface ILocalStorageService
+    public interface ILocalStorageService : IAsyncDisposable
     {
         Task SaveStreamToFileAsync(AudioProcessor processor, string localPath, CancellationToken cancellationToken);
         Task<Stream> ReadLargeFileAsStreamAsync(string fullPath, CancellationToken cancellationToken);
