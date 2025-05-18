@@ -3,6 +3,8 @@ using MyTts.Data.Entities;
 using MyTts.Models;
 using MyTts.Repositories;
 using MyTts.Services.Interfaces;
+using MyTts.Storage;
+using MyTts.Helpers;
 using System.Diagnostics;
 using System.Threading.Tasks;
 
@@ -42,15 +44,30 @@ namespace MyTts.Services
             try
             {
                 await _processingSemaphore.WaitAsync();
-                var newsList=await GetNewsList(cancellationToken);
-                if (newsList.Count==0)
+                var newsList = await GetNewsList(cancellationToken);
+                if (newsList.Count == 0)
                 {
                     newsList = CsvFileReader.ReadHaberSummariesFromCsv(_mp3FileRepository.GetFullPath("test", AudioType.Csv))
-                    .Select(x=>new HaberSummaryDto(){ Baslik= x.Baslik, IlgiId=x.IlgiId, Ozet=x.Ozet}).ToList();
+                        .Select(x => new HaberSummaryDto() { Baslik = x.Baslik, IlgiId = x.IlgiId, Ozet = x.Ozet }).ToList();
                 }
-                // var (neededNewsListByDB, savedNewsListByDB) = checkNewsListInDB(newsList, fileType, cancellationToken);
-                var (neededNewsList, savedNewsList) = await checkNewsList(newsList, language, fileType, cancellationToken);                
-                return await _ttsManager.ProcessContentsAsync(newsList, neededNewsList, savedNewsList, language, fileType);
+                
+                var (neededNewsList, savedNewsList) = await checkNewsList(newsList, language, fileType, cancellationToken);
+                var result = await _ttsManager.ProcessContentsAsync(newsList, neededNewsList, savedNewsList, language, fileType);
+
+                // Save metadata for all new files in a single batch
+                if (neededNewsList.Any())
+                {
+                    var metadataList = neededNewsList.Select(news => new Mp3Dto
+                    {
+                        FileId = news.IlgiId,
+                        FileUrl = StoragePathHelper.GetStorageKey(news.IlgiId),
+                        Language = language
+                    }).ToList();
+
+                    await SaveMp3MetadataBatchAsync(metadataList, cancellationToken);
+                }
+
+                return result;
             }
             finally
             {
@@ -93,7 +110,16 @@ namespace MyTts.Services
             try
             {
                 NewsDto news = await _mp3FileRepository.LoadNewsAsync(request.News, cancellationToken);
-                return await RequestSingleMp3Async(news.Id, news.Summary, request.Language, fileType, cancellationToken);
+                var stream = await RequestSingleMp3Async(news.Id, news.Summary, request.Language, fileType, cancellationToken);
+
+                // Save metadata after successful processing
+                await SaveMp3MetadataAsync(
+                    news.Id,
+                    StoragePathHelper.GetStorageKey(news.Id),
+                    request.Language,
+                    cancellationToken);
+
+                return stream;
             }
             catch (Exception ex)
             {
@@ -432,6 +458,51 @@ namespace MyTts.Services
         public async Task<List<int>> GetExistingMetaList(List<int> myList, CancellationToken cancellationToken)
         {
             return await _mp3FileRepository.GetExistingMetaList(myList,cancellationToken);
+        }
+
+        public async Task SaveMp3MetadataAsync(int id, string localPath, string language, CancellationToken cancellationToken)
+        {
+            try
+            {
+                var mp3Dto = new Mp3Dto
+                {
+                    FileId = id,
+                    FileUrl = localPath,
+                    Language = language
+                };
+                await _mp3FileRepository.SaveMp3MetaToSql(mp3Dto, cancellationToken);
+                _logger.LogDebug("Saved metadata to SQL for ID {Id}", id);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to save metadata to SQL for ID {Id}", id);
+                throw;
+            }
+        }
+
+        public async Task SaveMp3MetadataBatchAsync(List<Mp3Dto> metadataList, CancellationToken cancellationToken)
+        {
+            try
+            {
+                // Acquire semaphore to ensure exclusive access during batch operation
+                await _processingSemaphore.WaitAsync(cancellationToken);
+                try
+                {
+                    // Save metadata to SQL in batch and then to JSON/cache
+                    await _mp3FileRepository.SaveMp3MetadataToSqlBatchAsync(metadataList, AudioType.Mp3, cancellationToken);
+                //    await _mp3FileRepository.SaveMp3MetadataToJsonAndCacheAsync(metadataList, AudioType.Mp3, cancellationToken);
+                    _logger.LogDebug("Saved batch metadata to SQL, JSON, and cache for {Count} files", metadataList.Count);
+                }
+                finally
+                {
+                    _processingSemaphore.Release();
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to save batch metadata for {Count} files", metadataList.Count);
+                throw;
+            }
         }
     }
 }

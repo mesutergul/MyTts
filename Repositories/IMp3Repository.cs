@@ -1,7 +1,9 @@
-
 using MyTts.Data.Entities;
-using MyTts.Data.Interfaces;
 using MyTts.Models;
+using System;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace MyTts.Repositories
 {
@@ -11,13 +13,13 @@ namespace MyTts.Repositories
         Task<byte[]> LoadMp3FileAsync(int filePath, string language, AudioType fileType, CancellationToken cancellationToken);
         Task SaveMp3FileAsync(int filePath, byte[] fileData, AudioType fileType, CancellationToken cancellationToken);
         Task<List<Mp3Dto>> LoadListMp3MetadatasAsync(AudioType fileType, CancellationToken cancellationToken);
-        Task SaveMp3MetadatasAsync(List<Mp3Dto> mp3Files, AudioType fileType, CancellationToken cancellationToken);
+        Task SaveMp3MetadataToSqlBatchAsync(List<Mp3Dto> mp3Files, AudioType fileType, CancellationToken cancellationToken);
+        Task SaveMp3MetadataToJsonAndCacheAsync(List<Mp3Dto> mp3Files, AudioType fileType, CancellationToken cancellationToken);
         Task DeleteMp3FileAsync(string filePath, CancellationToken cancellationToken);
         Task<bool> Mp3FileExistsAsync(int id, AudioType fileType, CancellationToken cancellationToken);
         Task<Mp3Dto> LoadMp3MetaByPathAsync(int filePath, AudioType fileType, CancellationToken cancellationToken);
         Task<Mp3Dto> LoadMp3MetaByNewsIdAsync(int id, AudioType fileType, CancellationToken cancellationToken);
         Task<Mp3Dto> LoadLatestMp3MetaByLanguageAsync(string language, AudioType fileType, CancellationToken cancellationToken);
-        Task SaveSingleMp3MetaAsync(Mp3Dto mp3File, AudioType fileType, CancellationToken cancellationToken);
         Task<Mp3Dto> LoadAndCacheMp3File(int id, AudioType fileType, CancellationToken cancellationToken);
         Task<Mp3Dto?> GetFromCacheAsync(string key, CancellationToken cancellationToken);
         Task<bool> FileExistsAnywhereAsync(int id, string language, AudioType fileType, CancellationToken cancellationToken);

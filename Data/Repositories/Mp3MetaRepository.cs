@@ -62,5 +62,59 @@ namespace MyTts.Data.Repositories
             return existingIds;
         }
 
+        public virtual async Task AddRangeAsync(IEnumerable<Mp3Dto> entities, CancellationToken cancellationToken)
+        {
+            if (_context == null || _dbSet == null)
+            {
+                _logger.LogWarning("SQL not available for batch save");
+                return;
+            }
+
+            try
+            {
+                // Get list of FileIds to check for existing records
+                var fileIds = entities.Select(e => e.FileId).ToList();
+                var existingIds = await GetExistingFileIdsInLast500Async(fileIds, cancellationToken);
+
+                // Filter out entities that already exist
+                var newEntities = entities.Where(e => !existingIds.Contains(e.FileId));
+
+                // Map DTOs to entities
+                var mappedEntities = newEntities.Select(dto => _mapper.Map<Mp3Meta>(dto)).ToList();
+
+                if (!mappedEntities.Any())
+                {
+                    _logger.LogInformation("No new entities to save");
+                    return;
+                }
+
+                // Begin transaction
+                await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+                try
+                {
+                    // Add all new entities
+                    await _dbSet.AddRangeAsync(mappedEntities, cancellationToken);
+                    
+                    // Save changes
+                    await _context.SaveChangesAsync(cancellationToken);
+                    
+                    // Commit transaction
+                    await transaction.CommitAsync(cancellationToken);
+                    
+                    _logger.LogInformation("Successfully saved {Count} new records to database", mappedEntities.Count);
+                }
+                catch (Exception ex)
+                {
+                    await transaction.RollbackAsync(cancellationToken);
+                    _logger.LogError(ex, "Error during batch save operation");
+                    throw;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to perform batch save operation");
+                throw;
+            }
+        }
     }
 }

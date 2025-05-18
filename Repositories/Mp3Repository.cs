@@ -408,20 +408,20 @@ namespace MyTts.Repositories
             }
         }
 
-        public async Task SaveSingleMp3MetaAsync(Mp3Dto mp3File, AudioType fileType, CancellationToken cancellationToken)
-        {
-            try
-            {
-                var mp3Files = await LoadListMp3MetadatasAsync(fileType, cancellationToken);
-                mp3Files.Add(mp3File);
-                await SaveMp3MetadatasAsync(mp3Files, fileType, cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to save MP3 file metadata");
-                throw;
-            }
-        }
+        // public async Task SaveSingleMp3MetaAsync(Mp3Dto mp3File, AudioType fileType, CancellationToken cancellationToken)
+        // {
+        //     try
+        //     {
+        //         var mp3Files = await LoadListMp3MetadatasAsync(fileType, cancellationToken);
+        //         mp3Files.Add(mp3File);
+        //         await SaveMp3MetadatasAsync(mp3Files, fileType, cancellationToken);
+        //     }
+        //     catch (Exception ex)
+        //     {
+        //         _logger.LogError(ex, "Failed to save MP3 file metadata");
+        //         throw;
+        //     }
+        // }
         public async Task<Mp3Dto?> LoadAndCacheMp3File(int id, AudioType fileType, CancellationToken cancellationToken)
         {
             var mp3File = await LoadMp3MetaByNewsIdAsync(id, fileType, cancellationToken);
@@ -578,16 +578,37 @@ namespace MyTts.Repositories
             }
         }
 
-        public async Task SaveMp3MetadatasAsync(List<Mp3Dto> mp3Files, AudioType fileType, CancellationToken cancellationToken)
+        public async Task SaveMp3MetadataToSqlBatchAsync(List<Mp3Dto> mp3Files, AudioType fileType, CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(mp3Files);
 
             await _dbLock.WaitAsync();
             try
             {
-                var json = JsonConvert.SerializeObject(mp3Files, Formatting.Indented);
+                // Save to SQL database in batch
+                await _mp3MetaRepository.AddRangeAsync(mp3Files, cancellationToken);
+                _logger.LogInformation("Successfully saved {Count} files to SQL", mp3Files.Count);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to save MP3 files to SQL database");
+                throw;
+            }
+            finally
+            {
+                _dbLock.Release();
+            }
+        }
 
-                // Write to temporary file first
+        public async Task SaveMp3MetadataToJsonAndCacheAsync(List<Mp3Dto> mp3Files, AudioType fileType, CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(mp3Files);
+
+            await _dbLock.WaitAsync();
+            try
+            {
+                // Save to JSON file
+                var json = JsonConvert.SerializeObject(mp3Files, Formatting.Indented);
                 string tempPath = $"{_metadataPath}.tmp";
                 await _localStorageService.WriteAllTextAsync(tempPath, json, cancellationToken);
 
@@ -602,10 +623,12 @@ namespace MyTts.Repositories
 
                 // Update cache
                 await _cache.SetAsync(RedisKeys.MP3_METADATA_DB_KEY, mp3Files, DB_CACHE_DURATION);
+
+                _logger.LogInformation("Successfully saved {Count} files to JSON and cache", mp3Files.Count);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to save MP3 files database");
+                _logger.LogError(ex, "Failed to save MP3 files to JSON/cache");
                 throw;
             }
             finally
