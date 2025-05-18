@@ -22,7 +22,7 @@ public static class StorageServiceConfig
             var storageSection = configuration.GetSection("Storage");
             options.BasePath = storageSection["BasePath"] ?? string.Empty;
             options.BufferSize = storageSection.GetValue<int>("BufferSize", 128 * 1024);
-            options.MaxConcurrentOperations = storageSection.GetValue<int>("MaxConcurrentOperations", 10);
+            options.MaxConcurrentOperations = storageSection.GetValue<int>("MaxConcurrentOperations", 30);
             options.MaxRetries = storageSection.GetValue<int>("MaxRetries", 3);
             options.RetryDelay = TimeSpan.FromSeconds(storageSection.GetValue<double>("RetryDelaySeconds", 1));
             options.EnableMetrics = storageSection.GetValue<bool>("EnableMetrics", true);

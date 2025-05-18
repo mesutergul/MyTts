@@ -14,6 +14,8 @@ namespace MyTts.Config
         [Required]
         public string Model { get; set; } = string.Empty;
 
+        public int? MaxConcurrency { get; set; }
+
         [Range(0, 1)]
         public float Stability { get; set; } = 0.5f;
 
@@ -42,6 +44,9 @@ namespace MyTts.Config
 
             if (string.IsNullOrEmpty(options.Model))
                 errors.Add("Model is required");
+
+            if (options.MaxConcurrency < 1)
+                errors.Add("MaxConcurrency must be at least 1");
 
             if (options.Stability < 0 || options.Stability > 1)
                 errors.Add("Stability must be between 0 and 1");

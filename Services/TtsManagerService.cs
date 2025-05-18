@@ -22,12 +22,12 @@ namespace MyTts.Services
     public class TtsManagerService : ITtsManagerService, IAsyncDisposable
     {
         private readonly ElevenLabsClient _elevenLabsClient;
-        private readonly StorageClient? _storageClient;
+        private readonly StorageClient? _googleStorageClient;
         private readonly IRedisCacheService? _cache;
         private readonly IOptions<ElevenLabsConfig> _config;
         private readonly ILogger<TtsManagerService> _logger;
         private readonly IMp3StreamMerger _mp3StreamMerger;
-        private readonly ILocalStorageClient _storage;
+        private readonly ILocalStorageClient _localStorageClient;
         private readonly SemaphoreSlim _semaphore;
         private readonly string? _bucketName;
         private readonly JsonSerializerOptions _jsonOptions;
@@ -50,11 +50,11 @@ namespace MyTts.Services
             _elevenLabsClient = elevenLabsClient ?? throw new ArgumentNullException(nameof(elevenLabsClient));
             _config = config ?? throw new ArgumentNullException(nameof(config));
             _storageConfig = storageConfig?.Value ?? throw new ArgumentNullException(nameof(storageConfig));
-            _storage = storage ?? throw new ArgumentNullException(nameof(storage));
+            _localStorageClient = storage ?? throw new ArgumentNullException(nameof(storage));
             _cache = cache;
             _mp3StreamMerger = mp3StreamMerger ?? throw new ArgumentNullException(nameof(mp3StreamMerger));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _semaphore = new SemaphoreSlim(MaxConcurrentOperations);
+            _semaphore = new SemaphoreSlim(_config.Value.MaxConcurrency ?? MaxConcurrentOperations);
             _voiceCache = new ConcurrentDictionary<string, Voice>();
             _jsonOptions = new JsonSerializerOptions
             {
@@ -73,7 +73,7 @@ namespace MyTts.Services
             try
             {
                 string fullPath = StoragePathHelper.GetFullPathById(ilgiId, fileType);
-                var readResult = await _storage.ReadAllBytesAsync(fullPath, cancellationToken);
+                var readResult = await _localStorageClient.ReadAllBytesAsync(fullPath, cancellationToken);
                 if (!readResult.IsSuccess)
                 {
                     throw readResult.Error!.Exception;
@@ -197,10 +197,10 @@ namespace MyTts.Services
             string? directory = Path.GetDirectoryName(localPath);
             if (directory != null)
             {
-                var dirExistsResult = await _storage.DirectoryExistsAsync(directory, cancellationToken);
+                var dirExistsResult = await _localStorageClient.DirectoryExistsAsync(directory, cancellationToken);
                 if (!dirExistsResult.IsSuccess || !dirExistsResult.Data)
                 {
-                    var createDirResult = await _storage.CreateDirectoryAsync(directory, cancellationToken);
+                    var createDirResult = await _localStorageClient.CreateDirectoryAsync(directory, cancellationToken);
                     if (!createDirResult.IsSuccess)
                     {
                         throw createDirResult.Error!.Exception;
@@ -209,7 +209,7 @@ namespace MyTts.Services
             }
 
             using var stream = await processor.GetStreamForCloudUploadAsync(cancellationToken);
-            var saveResult = await _storage.SaveStreamAsync(stream, localPath, cancellationToken);
+            var saveResult = await _localStorageClient.SaveStreamAsync(stream, localPath, cancellationToken);
             if (!saveResult.IsSuccess)
             {
                 throw saveResult.Error!.Exception;
@@ -220,7 +220,7 @@ namespace MyTts.Services
 
         private async Task UploadToCloudAsync(AudioProcessor processor, string fileName, CancellationToken cancellationToken)
         {
-            if (_storageClient == null || string.IsNullOrEmpty(_bucketName))
+            if (_googleStorageClient == null || string.IsNullOrEmpty(_bucketName))
             {
                 _logger.LogWarning("Skipping cloud upload because GCS is not configured.");
                 return;
@@ -234,7 +234,7 @@ namespace MyTts.Services
                 PredefinedAcl = PredefinedObjectAcl.PublicRead
             };
 
-            await _storageClient.UploadObjectAsync(
+            await _googleStorageClient.UploadObjectAsync(
                 _bucketName,
                 fileName,
                 "audio/mpeg",
@@ -324,7 +324,7 @@ namespace MyTts.Services
 
                     // For multiple files, merge them
                     string breakAudioPath = StoragePathHelper.GetFullPath("break", fileType);
-                    var existsResult = await _storage.FileExistsAsync(breakAudioPath, cancellationToken);
+                    var existsResult = await _localStorageClient.FileExistsAsync(breakAudioPath, cancellationToken);
                     if (!existsResult.IsSuccess || !existsResult.Data)
                     {
                         _logger.LogWarning("Break audio file not found at {Path}, merging without breaks", breakAudioPath);
@@ -372,9 +372,9 @@ namespace MyTts.Services
             {
                 try
                 {
-                    if (_storageClient != null)
+                    if (_googleStorageClient != null)
                     {
-                        await Task.Run(() => _storageClient.Dispose());
+                        await Task.Run(() => _googleStorageClient.Dispose());
                     }
                     _semaphore?.Dispose();
                     _voiceCache.Clear();
