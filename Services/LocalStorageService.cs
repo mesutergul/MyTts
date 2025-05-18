@@ -152,7 +152,7 @@ namespace MyTts.Services
             return Task.Run(() => File.Exists(filePath));
         }
 
-        public Task<bool> DirectoryExistsAsync(string directoryPath)
+        public async Task<bool> DirectoryExistsAsync(string directoryPath)
         {
             ThrowIfDisposed();
             if (string.IsNullOrWhiteSpace(directoryPath))
@@ -160,7 +160,153 @@ namespace MyTts.Services
                 throw new ArgumentException("Directory path cannot be null or whitespace.", nameof(directoryPath));
             }
 
-            return Task.Run(() => Directory.Exists(directoryPath));
+            return await Task.Run(() => Directory.Exists(directoryPath));
+        }
+
+        public async Task CreateDirectoryAsync(string directoryPath)
+        {
+            ThrowIfDisposed();
+            if (string.IsNullOrWhiteSpace(directoryPath))
+            {
+                throw new ArgumentException("Directory path cannot be null or whitespace.", nameof(directoryPath));
+            }
+
+            try
+            {
+                Directory.CreateDirectory(directoryPath);
+                _logger.LogInformation("Created directory: {DirectoryPath}", directoryPath);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to create directory: {DirectoryPath}", directoryPath);
+                throw;
+            }
+        }
+
+        public async Task WriteAllBytesAsync(string filePath, byte[] bytes, CancellationToken cancellationToken = default)
+        {
+            ThrowIfDisposed();
+            var fileLock = await GetFileLockAsync(filePath);
+            await fileLock.WaitAsync(cancellationToken);
+            try
+            {
+                await File.WriteAllBytesAsync(filePath, bytes, cancellationToken);
+                _logger.LogInformation("Wrote {ByteCount} bytes to file: {FilePath}", bytes.Length, filePath);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to write bytes to file: {FilePath}", filePath);
+                throw;
+            }
+            finally
+            {
+                fileLock.Release();
+            }
+        }
+
+        public async Task<string> ReadAllTextAsync(string filePath, CancellationToken cancellationToken = default)
+        {
+            ThrowIfDisposed();
+            var fileLock = await GetFileLockAsync(filePath);
+            await fileLock.WaitAsync(cancellationToken);
+            try
+            {
+                return await File.ReadAllTextAsync(filePath, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to read text from file: {FilePath}", filePath);
+                throw;
+            }
+            finally
+            {
+                fileLock.Release();
+            }
+        }
+
+        public async Task WriteAllTextAsync(string filePath, string contents, CancellationToken cancellationToken = default)
+        {
+            ThrowIfDisposed();
+            var fileLock = await GetFileLockAsync(filePath);
+            await fileLock.WaitAsync(cancellationToken);
+            try
+            {
+                await File.WriteAllTextAsync(filePath, contents, cancellationToken);
+                _logger.LogInformation("Wrote text content to file: {FilePath}", filePath);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to write text to file: {FilePath}", filePath);
+                throw;
+            }
+            finally
+            {
+                fileLock.Release();
+            }
+        }
+
+        public async Task MoveFileAsync(string sourceFilePath, string destinationFilePath)
+        {
+            ThrowIfDisposed();
+            var sourceLock = await GetFileLockAsync(sourceFilePath);
+            var destinationLock = await GetFileLockAsync(destinationFilePath);
+            
+            await Task.WhenAll(
+                sourceLock.WaitAsync(),
+                destinationLock.WaitAsync()
+            );
+            
+            try
+            {
+                File.Move(sourceFilePath, destinationFilePath, true);
+                _logger.LogInformation("Moved file from {SourcePath} to {DestinationPath}", 
+                    sourceFilePath, destinationFilePath);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to move file from {SourcePath} to {DestinationPath}", 
+                    sourceFilePath, destinationFilePath);
+                throw;
+            }
+            finally
+            {
+                sourceLock.Release();
+                destinationLock.Release();
+            }
+        }
+
+        public Task<FileInfo> GetFileInfoAsync(string filePath)
+        {
+            ThrowIfDisposed();
+            try
+            {
+                return Task.FromResult(new FileInfo(filePath));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to get file info: {FilePath}", filePath);
+                throw;
+            }
+        }
+
+        public async Task<byte[]> ReadAllBytesAsync(string filePath, CancellationToken cancellationToken = default)
+        {
+            ThrowIfDisposed();
+            var fileLock = await GetFileLockAsync(filePath);
+            await fileLock.WaitAsync(cancellationToken);
+            try
+            {
+                return await File.ReadAllBytesAsync(filePath, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to read bytes from file: {FilePath}", filePath);
+                throw;
+            }
+            finally
+            {
+                fileLock.Release();
+            }
         }
 
         private Task<SemaphoreSlim> GetFileLockAsync(string filePath)

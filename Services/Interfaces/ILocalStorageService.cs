@@ -9,5 +9,14 @@ namespace MyTts.Services.Interfaces
         Task<IEnumerable<string>> ListFilesAsync(string directoryPath, string searchPattern = "*");
         Task<bool> FileExistsAsync(string filePath);
         Task<bool> DirectoryExistsAsync(string directoryPath);
+        
+        // New methods
+        Task CreateDirectoryAsync(string directoryPath);
+        Task WriteAllBytesAsync(string filePath, byte[] bytes, CancellationToken cancellationToken = default);
+        Task<string> ReadAllTextAsync(string filePath, CancellationToken cancellationToken = default);
+        Task WriteAllTextAsync(string filePath, string contents, CancellationToken cancellationToken = default);
+        Task MoveFileAsync(string sourceFilePath, string destinationFilePath);
+        Task<FileInfo> GetFileInfoAsync(string filePath);
+        Task<byte[]> ReadAllBytesAsync(string filePath, CancellationToken cancellationToken = default);
     }
 }

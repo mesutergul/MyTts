@@ -166,11 +166,11 @@ namespace MyTts.Repositories
                     _logger.LogWarning("File not found or empty at path: {Path}", fullPath);
                     return Array.Empty<byte>();
                 }
-                var fileInfo = new FileInfo(fullPath);
-                // Choose reading strategy based on file size
+
+                var fileInfo = await _localStorageService.GetFileInfoAsync(fullPath);
                 return fileInfo.Length > 100 * 1024 * 1024 // 100MB threshold
                     ? await _localStorageService.ReadLargeFileAsync(fullPath, cancellationToken)
-                    : await File.ReadAllBytesAsync(fullPath, cancellationToken);
+                    : await _localStorageService.ReadAllBytesAsync(fullPath, cancellationToken);
             }
             catch (Exception ex)
             {
@@ -204,13 +204,10 @@ namespace MyTts.Repositories
                 string directory = Path.GetDirectoryName(fullPath)!;
                 if (!await _localStorageService.DirectoryExistsAsync(directory))
                 {
-                    Directory.CreateDirectory(directory);
+                    await _localStorageService.CreateDirectoryAsync(directory);
                 }
 
-                // Create a VoiceClip from the file data
-                using var voiceClip = new VoiceClip(fileData);
-                await using var fileStream = new FileStream(fullPath, FileMode.Create, FileAccess.Write, FileShare.None, 128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
-                await voiceClip.CopyToAsync(fileStream, 128 * 1024, cancellationToken);
+                await _localStorageService.WriteAllBytesAsync(fullPath, fileData, cancellationToken);
 
                 // Update cache with consistent key
                 _logger.LogDebug("Caching file data for ID {Id} with key {CacheKey}, size: {Size} bytes",
@@ -250,7 +247,7 @@ namespace MyTts.Repositories
                 // Create base storage directory
                 if (!await _localStorageService.DirectoryExistsAsync(_baseStoragePath))
                 {
-                    Directory.CreateDirectory(_baseStoragePath);
+                    await _localStorageService.CreateDirectoryAsync(_baseStoragePath);
                     _logger.LogInformation("Created base storage directory: {Path}", _baseStoragePath);
                 }
 
@@ -258,7 +255,7 @@ namespace MyTts.Repositories
                 string dbDirectory = Path.GetDirectoryName(_metadataPath)!;
                 if (!await _localStorageService.DirectoryExistsAsync(dbDirectory))
                 {
-                    Directory.CreateDirectory(dbDirectory);
+                    await _localStorageService.CreateDirectoryAsync(dbDirectory);
                     _logger.LogInformation("Created database directory: {Path}", dbDirectory);
                 }
 
@@ -289,10 +286,9 @@ namespace MyTts.Repositories
 
             try
             {
-                // Create a test VoiceClip
-                using var voiceClip = new VoiceClip(Encoding.UTF8.GetBytes("test"));
-                await using var fileStream = new FileStream(tempFilePath, FileMode.Create, FileAccess.Write, FileShare.None, 128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
-                await voiceClip.CopyToAsync(fileStream, 128 * 1024, CancellationToken.None);
+                // Create a test file
+                byte[] testData = Encoding.UTF8.GetBytes("test");
+                await _localStorageService.WriteAllBytesAsync(tempFilePath, testData);
             }
             catch (UnauthorizedAccessException ex)
             {
@@ -559,10 +555,8 @@ namespace MyTts.Repositories
                     return emptyList;
                 }
 
-                // Read the file using a stream
-                using var fileStream = await _localStorageService.ReadLargeFileAsStreamAsync(_metadataPath, cancellationToken);
-                using var reader = new StreamReader(fileStream);
-                var json = await reader.ReadToEndAsync();
+                // Read the file using LocalStorageService
+                var json = await _localStorageService.ReadAllTextAsync(_metadataPath, cancellationToken);
                 var mp3Files = JsonConvert.DeserializeObject<List<Mp3Dto>>(json, _jsonSettings)
                     ?? new List<Mp3Dto>();
 
@@ -592,15 +586,10 @@ namespace MyTts.Repositories
             try
             {
                 var json = JsonConvert.SerializeObject(mp3Files, Formatting.Indented);
-                var jsonBytes = Encoding.UTF8.GetBytes(json);
-
-                // Create a VoiceClip from the JSON data
-                using var voiceClip = new VoiceClip(jsonBytes);
 
                 // Write to temporary file first
                 string tempPath = $"{_metadataPath}.tmp";
-                await using var fileStream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, 128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
-                await voiceClip.CopyToAsync(fileStream, 128 * 1024, cancellationToken);
+                await _localStorageService.WriteAllTextAsync(tempPath, json, cancellationToken);
 
                 // Delete existing file if it exists
                 if (await _localStorageService.FileExistsAsync(_metadataPath))
@@ -609,7 +598,7 @@ namespace MyTts.Repositories
                 }
 
                 // Rename temp file to target file
-                File.Move(tempPath, _metadataPath);
+                await _localStorageService.MoveFileAsync(tempPath, _metadataPath);
 
                 // Update cache
                 await _cache.SetAsync(RedisKeys.MP3_METADATA_DB_KEY, mp3Files, DB_CACHE_DURATION);
