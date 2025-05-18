@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Options;
 using MyTts.Storage;
-using MyTts.Services;
-using MyTts.Services.Interfaces;
+using MyTts.Storage.Models;
+using MyTts.Storage.Interfaces;
 using MyTts.Helpers;
 
 namespace MyTts.Config.ServiceConfigurations;
@@ -16,6 +16,18 @@ public static class StorageServiceConfig
             .ValidateDataAnnotations()
             .ValidateOnStart();
 
+        // Configure LocalStorageOptions
+        services.Configure<LocalStorageOptions>(options =>
+        {
+            var storageSection = configuration.GetSection("Storage");
+            options.BasePath = storageSection["BasePath"] ?? string.Empty;
+            options.BufferSize = storageSection.GetValue<int>("BufferSize", 128 * 1024);
+            options.MaxConcurrentOperations = storageSection.GetValue<int>("MaxConcurrentOperations", 10);
+            options.MaxRetries = storageSection.GetValue<int>("MaxRetries", 3);
+            options.RetryDelay = TimeSpan.FromSeconds(storageSection.GetValue<double>("RetryDelaySeconds", 1));
+            options.EnableMetrics = storageSection.GetValue<bool>("EnableMetrics", true);
+        });
+
         // Get the configuration instance for initialization
         var storageConfig = configuration.GetSection("Storage").Get<StorageConfiguration>()
             ?? throw new InvalidOperationException("Storage configuration is missing");
@@ -26,8 +38,8 @@ public static class StorageServiceConfig
         // Register the configuration as singleton for direct injection
         services.AddSingleton(storageConfig);
 
-        // Register local storage service
-        services.AddSingleton<ILocalStorageService, LocalStorageService>();
+        // Register storage services
+        RegisterStorageServices(services);
 
         // Register disk configurations 
         services.AddSingleton(sp =>
@@ -54,6 +66,12 @@ public static class StorageServiceConfig
         });
 
         return services;
+    }
+
+    private static void RegisterStorageServices(IServiceCollection services)
+    {
+        // Register the LocalStorageClient as primary implementation
+        services.AddSingleton<ILocalStorageClient, LocalStorageClient>();
     }
 
     private static void ValidateAndInitializeStorage(StorageConfiguration config)

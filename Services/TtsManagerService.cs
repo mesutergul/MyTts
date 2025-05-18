@@ -14,6 +14,8 @@ using MyTts.Services.Interfaces;
 using MyTts.Storage;
 using MyTts.Services.Constants;
 using MyTts.Helpers;
+using MyTts.Storage.Interfaces;
+using MyTts.Storage.Models;
 
 namespace MyTts.Services
 {
@@ -25,7 +27,7 @@ namespace MyTts.Services
         private readonly IOptions<ElevenLabsConfig> _config;
         private readonly ILogger<TtsManagerService> _logger;
         private readonly IMp3StreamMerger _mp3StreamMerger;
-        private readonly ILocalStorageService _localStorage;
+        private readonly ILocalStorageClient _storage;
         private readonly SemaphoreSlim _semaphore;
         private readonly string? _bucketName;
         private readonly JsonSerializerOptions _jsonOptions;
@@ -40,7 +42,7 @@ namespace MyTts.Services
             ElevenLabsClient elevenLabsClient,
             IOptions<ElevenLabsConfig> config,
             IOptions<StorageConfiguration> storageConfig,
-            ILocalStorageService localStorage,
+            ILocalStorageClient storage,
             IRedisCacheService cache,
             IMp3StreamMerger mp3StreamMerger,
             ILogger<TtsManagerService> logger)
@@ -48,7 +50,7 @@ namespace MyTts.Services
             _elevenLabsClient = elevenLabsClient ?? throw new ArgumentNullException(nameof(elevenLabsClient));
             _config = config ?? throw new ArgumentNullException(nameof(config));
             _storageConfig = storageConfig?.Value ?? throw new ArgumentNullException(nameof(storageConfig));
-            _localStorage = localStorage ?? throw new ArgumentNullException(nameof(localStorage));
+            _storage = storage ?? throw new ArgumentNullException(nameof(storage));
             _cache = cache;
             _mp3StreamMerger = mp3StreamMerger ?? throw new ArgumentNullException(nameof(mp3StreamMerger));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -71,8 +73,12 @@ namespace MyTts.Services
             try
             {
                 string fullPath = StoragePathHelper.GetFullPathById(ilgiId, fileType);
-                byte[] audioData = await _localStorage.ReadAllBytesAsync(fullPath, cancellationToken);
-                var voiceClip = new VoiceClip(audioData);
+                var readResult = await _storage.ReadAllBytesAsync(fullPath, cancellationToken);
+                if (!readResult.IsSuccess)
+                {
+                    throw readResult.Error!.Exception;
+                }
+                var voiceClip = new VoiceClip(readResult.Data!);
                 var audioProcessor = new AudioProcessor(voiceClip);
                 return (ilgiId, audioProcessor);
             }
@@ -189,12 +195,26 @@ namespace MyTts.Services
         private async Task SaveLocallyAsync(AudioProcessor processor, string localPath, CancellationToken cancellationToken)
         {
             string? directory = Path.GetDirectoryName(localPath);
-            if (directory != null && !await _localStorage.DirectoryExistsAsync(directory))
+            if (directory != null)
             {
-                await _localStorage.CreateDirectoryAsync(directory);
+                var dirExistsResult = await _storage.DirectoryExistsAsync(directory, cancellationToken);
+                if (!dirExistsResult.IsSuccess || !dirExistsResult.Data)
+                {
+                    var createDirResult = await _storage.CreateDirectoryAsync(directory, cancellationToken);
+                    if (!createDirResult.IsSuccess)
+                    {
+                        throw createDirResult.Error!.Exception;
+                    }
+                }
             }
 
-            await _localStorage.SaveStreamToFileAsync(processor, localPath, cancellationToken);
+            using var stream = await processor.GetStreamForCloudUploadAsync(cancellationToken);
+            var saveResult = await _storage.SaveStreamAsync(stream, localPath, cancellationToken);
+            if (!saveResult.IsSuccess)
+            {
+                throw saveResult.Error!.Exception;
+            }
+
             _logger.LogInformation("Saved file locally: {LocalPath}", localPath);
         }
 
@@ -304,7 +324,8 @@ namespace MyTts.Services
 
                     // For multiple files, merge them
                     string breakAudioPath = StoragePathHelper.GetFullPath("break", fileType);
-                    if (!await _localStorage.FileExistsAsync(breakAudioPath))
+                    var existsResult = await _storage.FileExistsAsync(breakAudioPath, cancellationToken);
+                    if (!existsResult.IsSuccess || !existsResult.Data)
                     {
                         _logger.LogWarning("Break audio file not found at {Path}, merging without breaks", breakAudioPath);
                         breakAudioPath = null;

@@ -9,6 +9,8 @@ using MyTts.Services.Constants;
 using MyTts.Services;
 using MyTts.Helpers;
 using MyTts.Storage;
+using MyTts.Storage.Interfaces;
+using MyTts.Storage.Models;
 
 namespace MyTts.Repositories
 {
@@ -23,7 +25,7 @@ namespace MyTts.Repositories
         private bool _disposed;
         private readonly IMp3MetaRepository _mp3MetaRepository;
         private readonly INewsRepository _newsRepository;
-        private readonly ILocalStorageService _localStorageService;
+        private readonly ILocalStorageClient _storage;
 
         private static readonly string STORAGE_PREFIX_KEY = "speech_";
         private static readonly TimeSpan DB_CACHE_DURATION = RedisKeys.DB_CACHE_DURATION;
@@ -35,7 +37,7 @@ namespace MyTts.Repositories
         public Mp3Repository(
             ILogger<Mp3Repository> logger,
             StorageConfiguration storageConfig,
-            ILocalStorageService localStorageService,
+            ILocalStorageClient storage,
             IRedisCacheService cache,
             IMp3MetaRepository mp3MetaRepository,
             INewsRepository newsRepository)
@@ -53,9 +55,10 @@ namespace MyTts.Repositories
                 Formatting = Formatting.Indented,
                 NullValueHandling = NullValueHandling.Ignore
             };
-            _localStorageService = localStorageService ?? throw new ArgumentNullException(nameof(localStorageService));
+            _storage = storage ?? throw new ArgumentNullException(nameof(storage));
             _mp3MetaRepository = mp3MetaRepository ?? throw new ArgumentNullException(nameof(mp3MetaRepository));
             _newsRepository = newsRepository ?? throw new ArgumentNullException(nameof(newsRepository));
+            
             // Initialize directories asynchronously
             InitializeDirectoriesAsync().GetAwaiter().GetResult();
         }
@@ -83,6 +86,7 @@ namespace MyTts.Repositories
                 throw;
             }
         }
+
         public async Task<bool> Mp3FileExistsInSqlAsync(int id, CancellationToken cancellationToken)
         {
             if (_mp3MetaRepository == null)
@@ -111,6 +115,7 @@ namespace MyTts.Repositories
                 return false;
             }
         }
+
         public async Task<bool> FileExistsAnywhereAsync(int id, string language, AudioType fileType, CancellationToken cancellationToken)
         {
             string cacheKey = GetCacheKey(id);
@@ -125,14 +130,17 @@ namespace MyTts.Repositories
                 {
                     await SaveMp3MetaToSql(new Mp3Dto { FileId = id, FileUrl = StoragePathHelper.GetFullPathById(id, fileType), Language = language }, cancellationToken);
                 }
-            } else _logger.LogInformation("File not found in cache, database, or disk for ID {Id}", id);
+            }
+            else _logger.LogInformation("File not found in cache, database, or disk for ID {Id}", id);
             return existsInDisk;
         }
+
         public async Task<bool> Mp3FileExistsAsync(int id, AudioType fileType, CancellationToken cancellationToken)
         {
             string fullPath = StoragePathHelper.GetFullPathById(id, fileType);
             _logger.LogInformation("Checking if file exists at {FullPath}", fullPath);
-            return await _localStorageService.FileExistsAsync(fullPath);
+            var result = await _storage.FileExistsAsync(fullPath, cancellationToken);
+            return result.IsSuccess && result.Data;
         }
 
         public async Task<byte[]> LoadMp3FileAsync(int filePath, string language, AudioType fileType, CancellationToken cancellationToken)
@@ -156,21 +164,46 @@ namespace MyTts.Repositories
                 throw;
             }
         }
+
         public async Task<byte[]> ReadFileFromDiskAsync(int filePath, AudioType fileType = AudioType.Mp3, CancellationToken cancellationToken = default)
         {
             string fullPath = StoragePathHelper.GetFullPathById(filePath, fileType);
             try
             {
-                if (!await _localStorageService.FileExistsAsync(fullPath))
+                var existResult = await _storage.FileExistsAsync(fullPath, cancellationToken);
+                if (!existResult.IsSuccess || !existResult.Data)
                 {
                     _logger.LogWarning("File not found or empty at path: {Path}", fullPath);
                     return Array.Empty<byte>();
                 }
 
-                var fileInfo = await _localStorageService.GetFileInfoAsync(fullPath);
-                return fileInfo.Length > 100 * 1024 * 1024 // 100MB threshold
-                    ? await _localStorageService.ReadLargeFileAsync(fullPath, cancellationToken)
-                    : await _localStorageService.ReadAllBytesAsync(fullPath, cancellationToken);
+                var fileInfoResult = await _storage.GetFileInfoAsync(fullPath, cancellationToken);
+                if (!fileInfoResult.IsSuccess)
+                {
+                    throw fileInfoResult.Error!.Exception;
+                }
+
+                var fileInfo = fileInfoResult.Data!;
+                if (fileInfo.Length > 100 * 1024 * 1024) // 100MB threshold
+                {
+                    var streamResult = await _storage.ReadLargeFileAsStreamAsync(fullPath, cancellationToken);
+                    if (!streamResult.IsSuccess)
+                    {
+                        throw streamResult.Error!.Exception;
+                    }
+                    using var memoryStream = new MemoryStream();
+                    await streamResult.Data!.CopyToAsync(memoryStream, cancellationToken);
+                    return memoryStream.ToArray();
+                }
+                else
+                {
+                    var bytesResult = await _storage.ReadAllBytesAsync(fullPath, cancellationToken);
+                    if (!bytesResult.IsSuccess)
+                    {
+                        throw bytesResult.Error!.Exception;
+                    }
+                    return bytesResult.Data!;
+                }
             }
             catch (Exception ex)
             {
@@ -178,20 +211,29 @@ namespace MyTts.Repositories
                 throw new IOException($"Failed to read file: {fullPath}", ex);
             }
         }
+
         public async Task<Stream> ReadLargeFileAsStreamAsync(int id, string language, int bufferSize, AudioType fileType, bool isMerged, CancellationToken cancellationToken)
         {
             string fullPath = isMerged 
                 ? StoragePathHelper.GetFullPath("merged", fileType)
                 : StoragePathHelper.GetFullPathById(id, fileType);
 
-            if (!await _localStorageService.FileExistsAsync(fullPath))
+            var existResult = await _storage.FileExistsAsync(fullPath, cancellationToken);
+            if (!existResult.IsSuccess || !existResult.Data)
             {
                 _logger.LogError("File not found: " + fullPath);
                 throw new FileNotFoundException("Cannot open file: " + fullPath);
             }
 
-            return await _localStorageService.ReadLargeFileAsStreamAsync(fullPath, cancellationToken);
+            var result = await _storage.ReadLargeFileAsStreamAsync(fullPath, cancellationToken);
+            if (!result.IsSuccess)
+            {
+                throw result.Error!.Exception;
+            }
+
+            return result.Data!;
         }
+
         public async Task SaveMp3FileAsync(int filePath, byte[] fileData, AudioType fileType, CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(fileData);
@@ -202,12 +244,21 @@ namespace MyTts.Repositories
             try
             {
                 string directory = Path.GetDirectoryName(fullPath)!;
-                if (!await _localStorageService.DirectoryExistsAsync(directory))
+                var dirExistsResult = await _storage.DirectoryExistsAsync(directory, cancellationToken);
+                if (!dirExistsResult.IsSuccess || !dirExistsResult.Data)
                 {
-                    await _localStorageService.CreateDirectoryAsync(directory);
+                    var createDirResult = await _storage.CreateDirectoryAsync(directory, cancellationToken);
+                    if (!createDirResult.IsSuccess)
+                    {
+                        throw createDirResult.Error!.Exception;
+                    }
                 }
 
-                await _localStorageService.WriteAllBytesAsync(fullPath, fileData, cancellationToken);
+                var writeResult = await _storage.WriteAllBytesAsync(fullPath, fileData, cancellationToken);
+                if (!writeResult.IsSuccess)
+                {
+                    throw writeResult.Error!.Exception;
+                }
 
                 // Update cache with consistent key
                 _logger.LogDebug("Caching file data for ID {Id} with key {CacheKey}, size: {Size} bytes",
@@ -220,6 +271,7 @@ namespace MyTts.Repositories
                 throw;
             }
         }
+
         public async Task DeleteMp3FileAsync(string filePath, CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(filePath);
@@ -230,7 +282,12 @@ namespace MyTts.Repositories
                 string cacheKey = GetCacheKey(id);
                 string fullPath = StoragePathHelper.GetFullPathById(id, AudioType.Mp3);
 
-                await _localStorageService.DeleteFileAsync(fullPath);
+                var result = await _storage.DeleteFileAsync(fullPath, cancellationToken);
+                if (!result.IsSuccess)
+                {
+                    throw result.Error!.Exception;
+                }
+
                 await _cache.RemoveAsync(cacheKey);
             }
             catch (Exception ex)
@@ -245,17 +302,27 @@ namespace MyTts.Repositories
             try
             {
                 // Create base storage directory
-                if (!await _localStorageService.DirectoryExistsAsync(_baseStoragePath))
+                var baseExists = await _storage.DirectoryExistsAsync(_baseStoragePath);
+                if (!baseExists.IsSuccess || !baseExists.Data)
                 {
-                    await _localStorageService.CreateDirectoryAsync(_baseStoragePath);
+                    var createBase = await _storage.CreateDirectoryAsync(_baseStoragePath);
+                    if (!createBase.IsSuccess)
+                    {
+                        throw createBase.Error!.Exception;
+                    }
                     _logger.LogInformation("Created base storage directory: {Path}", _baseStoragePath);
                 }
 
                 // Create database directory
                 string dbDirectory = Path.GetDirectoryName(_metadataPath)!;
-                if (!await _localStorageService.DirectoryExistsAsync(dbDirectory))
+                var dbExists = await _storage.DirectoryExistsAsync(dbDirectory);
+                if (!dbExists.IsSuccess || !dbExists.Data)
                 {
-                    await _localStorageService.CreateDirectoryAsync(dbDirectory);
+                    var createDb = await _storage.CreateDirectoryAsync(dbDirectory);
+                    if (!createDb.IsSuccess)
+                    {
+                        throw createDb.Error!.Exception;
+                    }
                     _logger.LogInformation("Created database directory: {Path}", dbDirectory);
                 }
 
@@ -288,7 +355,11 @@ namespace MyTts.Repositories
             {
                 // Create a test file
                 byte[] testData = Encoding.UTF8.GetBytes("test");
-                await _localStorageService.WriteAllBytesAsync(tempFilePath, testData);
+                var writeResult = await _storage.WriteAllBytesAsync(tempFilePath, testData);
+                if (!writeResult.IsSuccess)
+                {
+                    throw writeResult.Error!.Exception;
+                }
             }
             catch (UnauthorizedAccessException ex)
             {
@@ -307,9 +378,14 @@ namespace MyTts.Repositories
             }
             finally
             {
-                if (await _localStorageService.FileExistsAsync(tempFilePath))
+                var existsResult = await _storage.FileExistsAsync(tempFilePath);
+                if (existsResult.IsSuccess && existsResult.Data)
                 {
-                    await _localStorageService.DeleteFileAsync(tempFilePath);
+                    var deleteResult = await _storage.DeleteFileAsync(tempFilePath);
+                    if (!deleteResult.IsSuccess)
+                    {
+                        _logger.LogWarning("Failed to delete temporary test file: {Path}", tempFilePath);
+                    }
                 }
             }
         }
@@ -320,6 +396,7 @@ namespace MyTts.Repositories
         {
             return StoragePathHelper.GetFullPath(filePath, fileType);
         }
+
         public async Task<Mp3Dto?> LoadMp3MetaByPathAsync(int filePath, AudioType fileType, CancellationToken cancellationToken)
         {
             try
@@ -547,7 +624,8 @@ namespace MyTts.Repositories
                 _logger.LogDebug("Cache miss: Loading metadata list from file system");
 
                 // Load from file if not in cache
-                if (!await _localStorageService.FileExistsAsync(_metadataPath))
+                var existsResult = await _storage.FileExistsAsync(_metadataPath, cancellationToken);
+                if (!existsResult.IsSuccess || !existsResult.Data)
                 {
                     var emptyList = new List<Mp3Dto>();
                     _logger.LogInformation("Caching empty metadata list as file does not exist");
@@ -556,8 +634,13 @@ namespace MyTts.Repositories
                 }
 
                 // Read the file using LocalStorageService
-                var json = await _localStorageService.ReadAllTextAsync(_metadataPath, cancellationToken);
-                var mp3Files = JsonConvert.DeserializeObject<List<Mp3Dto>>(json, _jsonSettings)
+                var readResult = await _storage.ReadAllTextAsync(_metadataPath, cancellationToken);
+                if (!readResult.IsSuccess)
+                {
+                    throw readResult.Error!.Exception;
+                }
+
+                var mp3Files = JsonConvert.DeserializeObject<List<Mp3Dto>>(readResult.Data!, _jsonSettings)
                     ?? new List<Mp3Dto>();
 
                 // Cache the loaded data
@@ -610,16 +693,29 @@ namespace MyTts.Repositories
                 // Save to JSON file
                 var json = JsonConvert.SerializeObject(mp3Files, Formatting.Indented);
                 string tempPath = $"{_metadataPath}.tmp";
-                await _localStorageService.WriteAllTextAsync(tempPath, json, cancellationToken);
+                var writeResult = await _storage.WriteAllTextAsync(tempPath, json, cancellationToken);
+                if (!writeResult.IsSuccess)
+                {
+                    throw writeResult.Error!.Exception;
+                }
 
                 // Delete existing file if it exists
-                if (await _localStorageService.FileExistsAsync(_metadataPath))
+                var existsResult = await _storage.FileExistsAsync(_metadataPath, cancellationToken);
+                if (existsResult.IsSuccess && existsResult.Data)
                 {
-                    await _localStorageService.DeleteFileAsync(_metadataPath);
+                    var deleteResult = await _storage.DeleteFileAsync(_metadataPath, cancellationToken);
+                    if (!deleteResult.IsSuccess)
+                    {
+                        throw deleteResult.Error!.Exception;
+                    }
                 }
 
                 // Rename temp file to target file
-                await _localStorageService.MoveFileAsync(tempPath, _metadataPath);
+                var moveResult = await _storage.MoveFileAsync(tempPath, _metadataPath, cancellationToken);
+                if (!moveResult.IsSuccess)
+                {
+                    throw moveResult.Error!.Exception;
+                }
 
                 // Update cache
                 await _cache.SetAsync(RedisKeys.MP3_METADATA_DB_KEY, mp3Files, DB_CACHE_DURATION);
