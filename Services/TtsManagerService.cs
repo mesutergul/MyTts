@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -9,12 +8,12 @@ using ElevenLabs.Voices;
 using Google.Cloud.Storage.V1;
 using Microsoft.Extensions.Options;
 using MyTts.Config;
-using MyTts.Data.Entities;
 using MyTts.Models;
 using MyTts.Repositories;
 using MyTts.Services.Interfaces;
 using MyTts.Storage;
 using MyTts.Services.Constants;
+using MyTts.Helpers;
 
 namespace MyTts.Services
 {
@@ -31,9 +30,7 @@ namespace MyTts.Services
         private readonly string? _bucketName;
         private readonly JsonSerializerOptions _jsonOptions;
         private readonly StorageConfiguration _storageConfig;
-        //private readonly IAudioConversionService _audioConversionService;
         private readonly IMp3Repository _mp3Repository;
-        public const string LocalSavePath = "audio";
         private const int MaxConcurrentOperations = 10;
         private readonly Random _random = new Random();
 
@@ -44,39 +41,25 @@ namespace MyTts.Services
             IMp3Repository mp3Repository,
             IRedisCacheService cache,
             IMp3StreamMerger mp3StreamMerger,
-            //IAudioConversionService audioConversionService,
             ILogger<TtsManagerService> logger)
         {
             _elevenLabsClient = elevenLabsClient ?? throw new ArgumentNullException(nameof(elevenLabsClient));
             _config = config ?? throw new ArgumentNullException(nameof(config));
-            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _storageConfig = storageConfig?.Value ?? throw new ArgumentNullException(nameof(storageConfig));
+            _mp3Repository = mp3Repository ?? throw new ArgumentNullException(nameof(mp3Repository));
+            _cache = cache;
             _mp3StreamMerger = mp3StreamMerger ?? throw new ArgumentNullException(nameof(mp3StreamMerger));
-            _cache = cache ?? throw new ArgumentNullException(nameof(cache));
-            _mp3Repository = mp3Repository;
-            //_audioConversionService = audioConversionService ?? throw new ArgumentNullException(nameof(audioConversionService));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _semaphore = new SemaphoreSlim(MaxConcurrentOperations);
             _semaphoreSql = new SemaphoreSlim(1);
-            _storageConfig = storageConfig.Value;
-            // Initialize Google Cloud Storage
-            var gcs = InitializeGoogleCloudStorage(_storageConfig);
-            if (gcs != null)
-            {
-                _storageClient = gcs.Value.client;
-                _bucketName = gcs.Value.bucketName;
-            }
-            else
-            {
-                _storageClient = null;
-                _bucketName = null;
-            }
-            // Initialize JSON options once
             _jsonOptions = new JsonSerializerOptions
             {
                 PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
                 DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
             };
 
-            Directory.CreateDirectory(LocalSavePath);
+            // Initialize StoragePathHelper
+            StoragePathHelper.Initialize(_storageConfig);
         }
         private (StorageClient? client, string? bucketName)? InitializeGoogleCloudStorage(StorageConfiguration config)
         {
@@ -142,8 +125,8 @@ namespace MyTts.Services
                 return await CreateSingleFileResultAsync(processors[0], cancellationToken);
             }
 
-            // Get the break audio file path
-            string breakAudioPath = Path.Combine(_storageConfig.BasePath, "break.mp3");
+            // Get the break audio file path using StoragePathHelper
+            string breakAudioPath = StoragePathHelper.GetFullPath("break", fileType);
             if (!File.Exists(breakAudioPath))
             {
                 _logger.LogWarning("Break audio file not found at {Path}, merging without breaks", breakAudioPath);
@@ -329,8 +312,7 @@ namespace MyTts.Services
         public async Task<(int id, AudioProcessor FileData)> ProcessContentAsync(
             string text, int id, string language, AudioType fileType, CancellationToken cancellationToken)
         {
-            var fileName = Mp3Repository.GetStorageKey(id);
-            var localPath = _mp3Repository.GetFullPath(fileName, fileType);
+            var localPath = StoragePathHelper.GetFullPathById(id, fileType);
              
             try
             {
@@ -367,14 +349,14 @@ namespace MyTts.Services
                 var tasks = new Task[]
                 {
                     SaveLocallyAsync(audioProcessor, localPath, cancellationToken),
-                    UploadToCloudAsync(audioProcessor, fileName, cancellationToken),
-                    StoreMetadataRedisAsync(id, text, localPath, fileName, cancellationToken),
-                    ProcessSqlWithSemaphoreAsync(id, fileName, language, cancellationToken)
+                    UploadToCloudAsync(audioProcessor, StoragePathHelper.GetStorageKey(id), cancellationToken),
+                    StoreMetadataRedisAsync(id, text, localPath, StoragePathHelper.GetStorageKey(id), cancellationToken),
+                    ProcessSqlWithSemaphoreAsync(id, StoragePathHelper.GetStorageKey(id), language, cancellationToken)
                 };
 
                 await Task.WhenAll(tasks);
 
-                _logger.LogInformation("Processed content {Id}: {FileName}", id, fileName);
+                _logger.LogInformation("Processed content {Id}: {LocalPath}", id, localPath);
                 return (id, audioProcessor);
             }
             catch (Exception ex)
@@ -480,158 +462,6 @@ namespace MyTts.Services
             await _mp3Repository.SaveMp3MetaToSql(mp3Dto, cancellationToken).ConfigureAwait(false);
             _logger.LogDebug("Saved metadata to SQL via EF for {Id}", id);
         }
-
-        public async Task<string> MergeContentsAsync(
-            IEnumerable<string> audioFiles,
-            string outputFileName,
-            string? breakAudioPath = null,
-            string? headerAudioPath = null,
-            int insertBreakEvery = 0,
-            CancellationToken cancellationToken = default)
-        {
-            ArgumentNullException.ThrowIfNull(audioFiles);
-            ArgumentException.ThrowIfNullOrEmpty(outputFileName);
-
-            var outputPath = Path.Combine(LocalSavePath, outputFileName);
-            Directory.CreateDirectory(Path.GetDirectoryName(outputPath) ?? string.Empty);
-
-            try
-            {
-                var fileList = audioFiles.ToList();
-
-                if (!string.IsNullOrEmpty(breakAudioPath))
-                {
-                    fileList = InsertBreakFile(fileList, breakAudioPath, insertBreakEvery);
-                }
-
-                if (!string.IsNullOrEmpty(headerAudioPath))
-                {
-                    fileList.Insert(0, headerAudioPath);
-                }
-
-                var success = await MergeFilesWithFfmpeg(fileList, outputPath, cancellationToken);
-
-                if (!success)
-                {
-                    throw new InvalidOperationException("Failed to merge audio files");
-                }
-
-                return outputPath;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error merging audio files to: {OutputPath}", outputPath);
-                throw;
-            }
-        }
-
-        private List<string> InsertBreakFile(List<string> files, string breakFile, int insertEvery)
-        {
-            if (insertEvery <= 0) return files;
-
-            var result = new List<string>();
-            for (int i = 0; i < files.Count; i++)
-            {
-                result.Add(files[i]);
-                if ((i + 1) % insertEvery == 0 && i < files.Count - 1)
-                {
-                    result.Add(breakFile);
-                }
-            }
-            return result;
-        }
-
-        private async Task<bool> MergeFilesWithFfmpeg(
-            List<string> files,
-            string outputFilePath,
-            CancellationToken cancellationToken)
-        {
-            try
-            {
-                foreach (var file in files)
-                {
-                    if (!await ValidateAudioStream(file))
-                    {
-                        _logger.LogError("Invalid or no audio stream found in file: {File}", file);
-                        return false;
-                    }
-                }
-
-                var tempFileList = Path.GetTempFileName();
-                var fileListContent = string.Join("\n", files.Select(f => $"file '{f}'"));
-                await File.WriteAllTextAsync(tempFileList, fileListContent, cancellationToken);
-
-                using var process = new Process
-                {
-                    StartInfo = new ProcessStartInfo
-                    {
-                        FileName = "ffmpeg",
-                        Arguments = $"-f concat -safe 0 -i \"{tempFileList}\" -c copy \"{outputFilePath}\"",
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        UseShellExecute = false,
-                        CreateNoWindow = true
-                    }
-                };
-
-                process.Start();
-
-                var outputTask = process.StandardOutput.ReadToEndAsync();
-                var errorTask = process.StandardError.ReadToEndAsync();
-
-                await process.WaitForExitAsync(cancellationToken);
-
-                var output = await outputTask;
-                var error = await errorTask;
-
-                _logger.LogInformation("FFmpeg Output: {Output}", output);
-                if (!string.IsNullOrEmpty(error))
-                {
-                    _logger.LogError("FFmpeg Error: {Error}", error);
-                }
-
-                File.Delete(tempFileList);
-                return process.ExitCode == 0;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error merging audio files with FFmpeg");
-                throw;
-            }
-        }
-
-        private async Task<bool> ValidateAudioStream(string filePath)
-        {
-            try
-            {
-                using var process = new Process
-                {
-                    StartInfo = new ProcessStartInfo
-                    {
-                        FileName = "ffprobe",
-                        Arguments = $"-i \"{filePath}\" -show_streams -select_streams a -of json",
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        UseShellExecute = false,
-                        CreateNoWindow = true
-                    }
-                };
-
-                process.Start();
-                var output = await process.StandardOutput.ReadToEndAsync();
-                await process.WaitForExitAsync();
-
-                if (process.ExitCode != 0) return false;
-
-                var streamInfo = JsonSerializer.Deserialize<FFprobeOutput>(output);
-                return streamInfo?.Streams?.Any(s => s.CodecType == "audio") ?? false;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to validate audio stream for file: {File}", filePath);
-                return false;
-            }
-        }
         // Helper class for better semaphore management
         private class SemaphoreGuard : IDisposable
         {
@@ -658,16 +488,6 @@ namespace MyTts.Services
                 }
             }
         }
-        private record FFprobeOutput
-        {
-            public List<StreamInfo>? Streams { get; init; }
-        }
-        private class StreamInfo
-        {
-            [JsonPropertyName("codec_type")]
-            public string? CodecType { get; set; }
-        }
-
         private record AudioMetadata
         {
             public required int Id { get; init; }

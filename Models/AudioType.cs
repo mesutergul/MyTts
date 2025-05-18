@@ -1,4 +1,4 @@
-namespace MyTts.Repositories
+namespace MyTts.Models
 {
     public enum AudioType
     {
@@ -7,4 +7,4 @@ namespace MyTts.Repositories
         Wav = 3,
         Csv = 4
     }
-}
+} 

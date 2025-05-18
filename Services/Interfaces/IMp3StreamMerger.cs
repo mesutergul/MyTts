@@ -1,4 +1,4 @@
-using MyTts.Repositories;
+using MyTts.Models;
 
 namespace MyTts.Services.Interfaces
 {

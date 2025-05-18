@@ -7,6 +7,8 @@ using MyTts.Models;
 using MyTts.Services.Interfaces;
 using MyTts.Services.Constants;
 using MyTts.Services;
+using MyTts.Helpers;
+using MyTts.Storage;
 
 namespace MyTts.Repositories
 {
@@ -27,12 +29,12 @@ namespace MyTts.Repositories
         private static readonly TimeSpan DB_CACHE_DURATION = RedisKeys.DB_CACHE_DURATION;
         private static readonly TimeSpan FILE_CACHE_DURATION = RedisKeys.FILE_CACHE_DURATION;
 
-        public static string GetStorageKey(int id) => $"{STORAGE_PREFIX_KEY}{id}";
+        public static string GetStorageKey(int id) => StoragePathHelper.GetStorageKey(id);
         public static string GetCacheKey(int id) => RedisKeys.FormatKey(RedisKeys.MP3_FILE_KEY, id);
 
         public Mp3Repository(
             ILogger<Mp3Repository> logger,
-            IConfiguration configuration,
+            StorageConfiguration storageConfig,
             ILocalStorageService localStorageService,
             IRedisCacheService cache,
             IMp3MetaRepository mp3MetaRepository,
@@ -40,8 +42,11 @@ namespace MyTts.Repositories
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _cache = cache ?? throw new ArgumentNullException(nameof(cache));
-            _baseStoragePath = Path.GetFullPath(configuration["Storage:BasePath"]) ?? "C:\\repos\\audio";
-            _metadataPath = Path.GetFullPath(configuration["Storage:MetadataPath"]) ?? "C:\\repos\\audiometa\\mp3files.json";
+            
+            StoragePathHelper.Initialize(storageConfig ?? throw new ArgumentNullException(nameof(storageConfig)));
+            _baseStoragePath = StoragePathHelper.GetBasePath();
+            _metadataPath = StoragePathHelper.GetMetadataPath();
+            
             _dbLock = new SemaphoreSlim(1, 1);
             _jsonSettings = new JsonSerializerSettings
             {
@@ -118,15 +123,14 @@ namespace MyTts.Repositories
                 }
                 if (!await Mp3FileExistsInSqlAsync(id, cancellationToken))
                 {
-                    await SaveMp3MetaToSql(new Mp3Dto { FileId = id, FileUrl = GetFullPath(GetStorageKey(id), fileType), Language = language }, cancellationToken);
+                    await SaveMp3MetaToSql(new Mp3Dto { FileId = id, FileUrl = StoragePathHelper.GetFullPathById(id, fileType), Language = language }, cancellationToken);
                 }
             } else _logger.LogInformation("File not found in cache, database, or disk for ID {Id}", id);
             return existsInDisk;
         }
         public async Task<bool> Mp3FileExistsAsync(int id, AudioType fileType, CancellationToken cancellationToken)
         {
-            string storageKey = GetStorageKey(id);
-            string fullPath = GetFullPath(storageKey, fileType);
+            string fullPath = StoragePathHelper.GetFullPathById(id, fileType);
             _logger.LogInformation("Checking if file exists at {FullPath}", fullPath);
             return await _localStorageService.FileExistsAsync(fullPath);
         }
@@ -154,8 +158,7 @@ namespace MyTts.Repositories
         }
         public async Task<byte[]> ReadFileFromDiskAsync(int filePath, AudioType fileType = AudioType.Mp3, CancellationToken cancellationToken = default)
         {
-            string storageKey = GetStorageKey(filePath);
-            string fullPath = GetFullPath(storageKey, fileType);
+            string fullPath = StoragePathHelper.GetFullPathById(filePath, fileType);
             try
             {
                 if (!await _localStorageService.FileExistsAsync(fullPath))
@@ -177,8 +180,9 @@ namespace MyTts.Repositories
         }
         public async Task<Stream> ReadLargeFileAsStreamAsync(int id, string language, int bufferSize, AudioType fileType, bool isMerged, CancellationToken cancellationToken)
         {
-            string storageKey = isMerged ? "merged" : GetStorageKey(id);
-            string fullPath = GetFullPath(storageKey, fileType);
+            string fullPath = isMerged 
+                ? StoragePathHelper.GetFullPath("merged", fileType)
+                : StoragePathHelper.GetFullPathById(id, fileType);
 
             if (!await _localStorageService.FileExistsAsync(fullPath))
             {
@@ -192,9 +196,8 @@ namespace MyTts.Repositories
         {
             ArgumentNullException.ThrowIfNull(fileData);
 
-            string storageKey = GetStorageKey(filePath);
             string cacheKey = GetCacheKey(filePath);
-            string fullPath = GetFullPath(storageKey, fileType);
+            string fullPath = StoragePathHelper.GetFullPathById(filePath, fileType);
 
             try
             {
@@ -226,9 +229,9 @@ namespace MyTts.Repositories
 
             try
             {
-                string storageKey = GetStorageKey(int.Parse(filePath));
-                string cacheKey = GetCacheKey(int.Parse(filePath));
-                string fullPath = GetFullPath(storageKey, AudioType.Mp3);
+                int id = int.Parse(filePath);
+                string cacheKey = GetCacheKey(id);
+                string fullPath = StoragePathHelper.GetFullPathById(id, AudioType.Mp3);
 
                 await _localStorageService.DeleteFileAsync(fullPath);
                 await _cache.RemoveAsync(cacheKey);
@@ -319,7 +322,7 @@ namespace MyTts.Repositories
 
         public string GetFullPath(string filePath, AudioType fileType = AudioType.Mp3)
         {
-            return Path.Combine(_baseStoragePath, filePath + "." + fileType.ToString().ToLower());
+            return StoragePathHelper.GetFullPath(filePath, fileType);
         }
         public async Task<Mp3Dto?> LoadMp3MetaByPathAsync(int filePath, AudioType fileType, CancellationToken cancellationToken)
         {
