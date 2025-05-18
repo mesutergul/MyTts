@@ -71,9 +71,9 @@ namespace MyTts.Controllers
         /// It is responsible for retrieving an MP3 file by its unique identifier (id) 
         /// and returning it to the client as a downloadable file.
         /// </summary>
-        public async Task GetFilem(HttpContext context, CancellationToken cancellationToken)
+        public async Task GetFilem(HttpContext context, string language, CancellationToken cancellationToken)
         {
-            var stream = await _mp3Service.GetAudioFileStream(0, AudioType.Mp3, true, cancellationToken);
+            var stream = await _mp3Service.GetAudioFileStream(0, language, AudioType.Mp3, true, cancellationToken);
 
             var fileName = $"merged.mp3";
 
@@ -85,9 +85,9 @@ namespace MyTts.Controllers
                 cancellationToken
             );
         }
-        public async Task GetFile(HttpContext context, int id, CancellationToken cancellationToken)
+        public async Task GetFile(HttpContext context, int id, string language, CancellationToken cancellationToken)
         {
-            var stream = await _mp3Service.GetAudioFileStream(id, AudioType.Mp3, false, cancellationToken);
+            var stream = await _mp3Service.GetAudioFileStream(id, language, AudioType.Mp3, false, cancellationToken);
             var fileName = $"speech_{id}.mp3";
 
             await _streamer.StreamAsync(
@@ -123,11 +123,11 @@ namespace MyTts.Controllers
         /// <summary>
         /// Retrieves an MP3 file by its unique identifier (id) and returning it to the client
         /// </summary>
-        public async Task<IActionResult> GetMp3FileById(HttpContext context, int id, CancellationToken cancellationToken)
+        public async Task<IActionResult> GetMp3FileById(HttpContext context, int id, string language, CancellationToken cancellationToken)
         {
             try
             {
-                var file = await _mp3Service.DownloadMp3(id, "tr", AudioType.Mp3, cancellationToken);
+                var file = await _mp3Service.DownloadMp3(id, language, AudioType.Mp3, cancellationToken);
                 if (file == null)
                 {
                     return NotFound();
@@ -146,11 +146,11 @@ namespace MyTts.Controllers
         /// <param name="id"></param>
         /// <param name="cancellationToken"></param>
         /// <returns></returns>
-        public async Task<IActionResult> GetMp3FileListByLanguage(HttpContext context, int id, CancellationToken cancellationToken)
+        public async Task<IActionResult> GetMp3FileListByLanguage(HttpContext context, int id, string language, CancellationToken cancellationToken)
         {
             try
             {
-                var file = await _mp3Service.StreamMp3(id, AudioType.Mp3, cancellationToken);
+                var file = await _mp3Service.StreamMp3(id, language, AudioType.Mp3, cancellationToken);
                 if (file == null)
                 {
                     return NotFound();
@@ -163,12 +163,12 @@ namespace MyTts.Controllers
                 return Problem("Failed to retrieve MP3 file");
             }
         }
-        public async Task<IActionResult> DownloadFile(HttpContext context, int fileName, CancellationToken cancellationToken)
+        public async Task<IActionResult> DownloadFile(HttpContext context, int fileName, string language, CancellationToken cancellationToken)
         {
             try
             {
                 // Get file stream
-                var fileBytes = await _mp3Service.GetMp3FileBytes(fileName, AudioType.Mp3, cancellationToken);
+                var fileBytes = await _mp3Service.GetMp3FileBytes(fileName, language, AudioType.Mp3, cancellationToken);
                 if (fileBytes == null || fileBytes.Length == 0)
                 {
                     return NotFound("File not found or is empty.");
@@ -192,12 +192,12 @@ namespace MyTts.Controllers
             }
         }
 
-        internal async Task<IActionResult> SayText(HttpContext context, int id, CancellationToken token)
+        internal async Task<IActionResult> SayText(HttpContext context, int id, string language, CancellationToken token)
         {
             var request = new OneRequest
             {
                 News = id,
-                Language = "en-US",
+                Language = language,
             };
             try {
                 await using var result = await _mp3Service.CreateSingleMp3Async(request, AudioType.Mp3, token);

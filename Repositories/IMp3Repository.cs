@@ -8,7 +8,7 @@ namespace MyTts.Repositories
     public interface IMp3Repository : IDisposable
     {
         string GetFullPath(string filePath, AudioType fileType);
-        Task<byte[]> LoadMp3FileAsync(int filePath, AudioType fileType, CancellationToken cancellationToken);
+        Task<byte[]> LoadMp3FileAsync(int filePath, string language, AudioType fileType, CancellationToken cancellationToken);
         Task SaveMp3FileAsync(int filePath, byte[] fileData, AudioType fileType, CancellationToken cancellationToken);
         Task<List<Mp3Dto>> LoadListMp3MetadatasAsync(AudioType fileType, CancellationToken cancellationToken);
         Task SaveMp3MetadatasAsync(List<Mp3Dto> mp3Files, AudioType fileType, CancellationToken cancellationToken);
@@ -20,9 +20,9 @@ namespace MyTts.Repositories
         Task SaveSingleMp3MetaAsync(Mp3Dto mp3File, AudioType fileType, CancellationToken cancellationToken);
         Task<Mp3Dto> LoadAndCacheMp3File(int id, AudioType fileType, CancellationToken cancellationToken);
         Task<Mp3Dto?> GetFromCacheAsync(string key, CancellationToken cancellationToken);
-        Task<bool> FileExistsAnywhereAsync(int id, AudioType fileType, CancellationToken cancellationToken);
+        Task<bool> FileExistsAnywhereAsync(int id, string language, AudioType fileType, CancellationToken cancellationToken);
         Task SetToCacheAsync(string key, Mp3Dto value, TimeSpan? expiry = null, CancellationToken cancellationToken = default);
-        Task<Stream> ReadLargeFileAsStreamAsync(int id, int bufferSize, AudioType fileType, bool isMerged, CancellationToken cancellationToken);
+        Task<Stream> ReadLargeFileAsStreamAsync(int id, string language, int bufferSize, AudioType fileType, bool isMerged, CancellationToken cancellationToken);
         Task SaveMp3MetaToSql(Mp3Dto mp3Dto, CancellationToken cancellationToken);
         Task<List<HaberSummaryDto>> GetNewsList(CancellationToken cancellationToken);
         Task<List<int>> GetExistingMetaList(List<int> values, CancellationToken cancellationToken);

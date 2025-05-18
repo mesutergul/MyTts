@@ -17,7 +17,8 @@ public static class ApplicationConfig
         services.AddScoped<ITtsManagerService, TtsManagerService>();
         services.AddScoped<IMp3StreamMerger, Mp3StreamMerger>();
         services.AddScoped<INewsFeedsService, NewsFeedsService>();
-        
+        services.AddScoped<ILocalStorageService, LocalStorageService>();
+
         // Register infrastructure services
         services.AddScoped<IRedisCacheService, RedisCacheService>();
         services.AddScoped<IFileStreamingService, FileStreamingService>();

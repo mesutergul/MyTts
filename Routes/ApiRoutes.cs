@@ -90,11 +90,11 @@ namespace MyTts.Routes
                 .ProducesProblem(500);
 
             // Get single file
-            corsGroup.MapGet("one/{id}",
-                async (HttpContext context, int id,
+            corsGroup.MapGet("one/{language}/{id}",
+                async (HttpContext context, int id, string language,
                       [FromServices] Mp3Controller controller, CancellationToken token) =>
                 {
-                    await controller.GetFile(context, id, token);
+                    await controller.GetFile(context, id, language, token);
                 })
                 .WithName($"{ApiName}.getone")
                 .WithDisplayName("Get MP3 File")
@@ -103,11 +103,11 @@ namespace MyTts.Routes
                 .ProducesProblem(500);
 
             // Get merged file
-            corsGroup.MapGet("merged",
-                async (HttpContext context,
+            corsGroup.MapGet("merged/{language}",
+                async (HttpContext context, string language,
                       [FromServices] Mp3Controller controller, CancellationToken token) =>
                 {
-                    await controller.GetFilem(context, token);
+                    await controller.GetFilem(context, language, token);
                 })
                 .WithName($"{ApiName}.getmergedone")
                 .WithDisplayName("Get Merged MP3 File")
@@ -123,10 +123,10 @@ namespace MyTts.Routes
         {
             // Download file
             corsGroup.MapGet("ones/{id}",
-                async (HttpContext context, int id,
+                async (HttpContext context, int id, string language,
                       [FromServices] Mp3Controller controller, CancellationToken token) =>
                 {
-                    await controller.DownloadFile(context, id, token);
+                    await controller.DownloadFile(context, id, language, token);
                 })
                 .WithName($"{ApiName}.getones")
                 .WithDisplayName("Download MP3 File")
@@ -136,10 +136,10 @@ namespace MyTts.Routes
 
             // Stream text-to-speech
             corsGroup.MapGet("onesay/{id}",
-                async (HttpContext context, int id,
+                async (HttpContext context, int id, string language,
                       [FromServices] Mp3Controller controller, CancellationToken token) =>
                 {
-                    await controller.SayText(context, id, token);
+                    await controller.SayText(context, id, language, token);
                 })
                 .WithName($"{ApiName}.getonesay")
                 .WithDisplayName("Stream Text-to-Speech")
