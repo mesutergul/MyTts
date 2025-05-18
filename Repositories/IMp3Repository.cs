@@ -26,7 +26,7 @@ namespace MyTts.Repositories
         Task SaveMp3MetaToSql(Mp3Dto mp3Dto, CancellationToken cancellationToken);
         Task<List<HaberSummaryDto>> GetNewsList(CancellationToken cancellationToken);
         Task<List<int>> GetExistingMetaList(List<int> values, CancellationToken cancellationToken);
-        Task<News> LoadNewsAsync(int news, CancellationToken cancellationToken);
+        Task<NewsDto> LoadNewsAsync(int news, CancellationToken cancellationToken);
         Task<byte[]> ReadFileFromDiskAsync(int filePath, AudioType fileType = AudioType.Mp3, CancellationToken cancellationToken = default);
     }
 }

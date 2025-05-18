@@ -621,27 +621,26 @@ namespace MyTts.Repositories
                 throw;
             }
         }
-        public async Task<News> LoadNewsAsync(int news, CancellationToken cancellationToken)
+        public async Task<NewsDto> LoadNewsAsync(int news, CancellationToken cancellationToken)
         {
-            //    try
-            //    {
-            //        await _dbLock.WaitAsync(cancellationToken);
-            //        try     
-            //        {
-            //            _logger.LogDebug("Loading MP3 files from database");
-            //            return await _newsRepository.GetByIdAsync(news, cancellationToken);
-            //        }
-            //        finally
-            //        {
-            //            _dbLock.Release();
-            //        }
-            //    }    _mp3MetaRepository
-            //    catch (Exception ex)
-            //    {
-            //        _logger.LogError(ex, "Failed to execute test query");
-            //        throw;
-            //    }
-            return new News();
+               try
+               {
+                   await _dbLock.WaitAsync(cancellationToken);
+                   try     
+                   {
+                       _logger.LogDebug("Loading MP3 files from database");
+                       return await _newsRepository.GetByIdAsync(news, cancellationToken);
+                   }
+                   finally
+                   {
+                       _dbLock.Release();
+                   }
+               }  
+               catch (Exception ex)
+               {
+                   _logger.LogError(ex, "Failed to execute test query");
+                   throw;
+               }
         }
         public async Task<List<int>> GetExistingMetaList(List<int> myList, CancellationToken cancellationToken)
         {

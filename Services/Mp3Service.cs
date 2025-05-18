@@ -93,21 +93,8 @@ namespace MyTts.Services
         {
             try
             {
-            News news = await _mp3FileRepository.LoadNewsAsync(request.News, cancellationToken);
-               // var content = "May whatever is possible be done to reach an authentic, true and lasting peace as quickly as possible.";
-                //await _newsFeedsService.GetFeedUrl(request.News);
-               // var content = "Make sure you're awaiting all async operations properly, especially if you're using scoped services in async scenarios";
-               // var content = "This is a common issue in ASP.NET Core applications, especially when working with services that need to maintain state or resources across asynchronous operations";
-               //var content = "As the error message indicated, the API accepts only one method of authentication, not both simultaneously.";
-             //   var content ="I see the issue in your code. The problem is with how you're setting up the Authorization header. Let me fix that for you";
-              // var content = "Routes are now grouped by functionality and follow a consistent pattern, making the code easier to read and maintain";
+                NewsDto news = await _mp3FileRepository.LoadNewsAsync(request.News, cancellationToken);
                 return await RequestSingleMp3Async(news.Id, news.Summary, request.Language, fileType, cancellationToken);
-                // return await _mp3FileRepository.LoadMp3MetaByNewsIdAsync(request.News, fileType, cancellationToken)
-                //     ?? throw new KeyNotFoundException($"MP3 file not found for ID: {request.News}");
-                //await _processingSemaphore.WaitAsync();
-                //var content = await _newsFeedsService.GetFeedUrl(request.News);
-                // (filePath, processor) tu= await _ttsManager.ProcessContentAsync(content, Guid.NewGuid(), cancellationToken);
-                //return await _mp3FileRepository.LoadMp3MetaByPathAsync(tu.filePath);
             }
             catch (Exception ex)
             {
