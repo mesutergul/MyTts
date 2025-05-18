@@ -15,7 +15,6 @@ namespace MyTts.Services
         private readonly ITtsManagerService _ttsManager;
         private readonly INewsFeedsService _newsFeedsService;
         private readonly IRedisCacheService? _cache;
-        private const string LocalSavePath = "audio";
         private readonly SemaphoreSlim _processingSemaphore;
         private const int MaxConcurrentProcessing = 1;
         private bool _disposed;
@@ -201,7 +200,7 @@ namespace MyTts.Services
         // Update file path handling
         private string GetAudioFilePath(string fileName)
         {
-            return Path.Combine(LocalSavePath, fileName);
+            return _mp3FileRepository.GetFullPath(fileName, AudioType.Mp3);
         }
         public async Task<bool> FileExistsAnywhereAsync(int id, string language, AudioType fileType, CancellationToken cancellationToken) {
             return await _mp3FileRepository.FileExistsAnywhereAsync(id, language, fileType, cancellationToken);
@@ -325,7 +324,7 @@ namespace MyTts.Services
                         return new NotFoundObjectResult(new { message = "MP3 file not found." });
                     }
 
-                    filePath = Path.Combine(LocalSavePath, mp3File.FileUrl);
+                    filePath = _mp3FileRepository.GetFullPath(mp3File.FileUrl, fileType);
 
                     // Cache the path for future requests
                     await _cache!.SetAsync(cacheKey, filePath, TimeSpan.FromHours(1));
