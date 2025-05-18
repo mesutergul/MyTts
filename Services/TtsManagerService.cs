@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Collections.Concurrent;
 using ElevenLabs;
 using ElevenLabs.Models;
 using ElevenLabs.TextToSpeech;
@@ -29,8 +30,11 @@ namespace MyTts.Services
         private readonly string? _bucketName;
         private readonly JsonSerializerOptions _jsonOptions;
         private readonly StorageConfiguration _storageConfig;
+        private readonly ConcurrentDictionary<string, Voice> _voiceCache;
         private const int MaxConcurrentOperations = 10;
-        private readonly Random _random = new Random();
+        private const int BufferSize = 128 * 1024; // 128KB buffer size
+        private static readonly ThreadLocal<Random> _random = new(() => new Random());
+        private bool _disposed;
 
         public TtsManagerService(
             ElevenLabsClient elevenLabsClient,
@@ -49,13 +53,13 @@ namespace MyTts.Services
             _mp3StreamMerger = mp3StreamMerger ?? throw new ArgumentNullException(nameof(mp3StreamMerger));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _semaphore = new SemaphoreSlim(MaxConcurrentOperations);
+            _voiceCache = new ConcurrentDictionary<string, Voice>();
             _jsonOptions = new JsonSerializerOptions
             {
                 PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
                 DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
             };
 
-            // Initialize StoragePathHelper
             StoragePathHelper.Initialize(_storageConfig);
         }
 
@@ -67,8 +71,8 @@ namespace MyTts.Services
             try
             {
                 string fullPath = StoragePathHelper.GetFullPathById(ilgiId, fileType);
-                byte[] stream = await _localStorage.ReadAllBytesAsync(fullPath, cancellationToken);
-                var voiceClip = new VoiceClip(stream);
+                byte[] audioData = await _localStorage.ReadAllBytesAsync(fullPath, cancellationToken);
+                var voiceClip = new VoiceClip(audioData);
                 var audioProcessor = new AudioProcessor(voiceClip);
                 return (ilgiId, audioProcessor);
             }
@@ -112,36 +116,28 @@ namespace MyTts.Services
 
                 // Get a random voice for the language
                 var voices = languageConfig.Voices.ToList();
-                var randomVoice = voices[_random.Next(voices.Count)];
+                var randomVoice = voices[_random.Value!.Next(voices.Count)];
                 var voiceId = randomVoice.Value;
                 
-                _logger.LogInformation("Selected voice {VoiceName} ({VoiceId}) for language {Language}", randomVoice.Key, voiceId, language);
+                _logger.LogInformation("Selected voice {VoiceName} ({VoiceId}) for language {Language}", 
+                    randomVoice.Key, voiceId, language);
                 
-                // Fetch voice and create request in parallel
-                var voiceTask = _elevenLabsClient.VoicesEndpoint
-                    .GetVoiceAsync(voiceId, withSettings: false, cancellationToken);
-
-                var requestTask = voiceTask.ContinueWith(async vt =>
-                {
-                    var voice = await vt;
-                    return await CreateTtsRequestAsync(voice, text);
-                }, cancellationToken, TaskContinuationOptions.OnlyOnRanToCompletion, TaskScheduler.Default).Unwrap();
+                // Try to get voice from cache first
+                var voice = await GetOrFetchVoiceAsync(voiceId, cancellationToken);
+                var request = await CreateTtsRequestAsync(voice, text);
 
                 // Generate audio clip from ElevenLabs
                 VoiceClip voiceClip = await _elevenLabsClient.TextToSpeechEndpoint
-                    .TextToSpeechAsync(await requestTask, null, cancellationToken);
+                    .TextToSpeechAsync(request, null, cancellationToken);
 
                 var audioProcessor = new AudioProcessor(voiceClip);
 
                 // Launch all I/O-bound tasks in parallel
-                var tasks = new Task[]
-                {
+                await Task.WhenAll(
                     SaveLocallyAsync(audioProcessor, localPath, cancellationToken),
                     UploadToCloudAsync(audioProcessor, StoragePathHelper.GetStorageKey(id), cancellationToken),
                     StoreMetadataRedisAsync(id, text, localPath, StoragePathHelper.GetStorageKey(id), cancellationToken)
-                };
-
-                await Task.WhenAll(tasks);
+                );
 
                 _logger.LogInformation("Processed content {Id}: {LocalPath}", id, localPath);
                 return (id, audioProcessor);
@@ -151,6 +147,21 @@ namespace MyTts.Services
                 _logger.LogError(ex, "Error processing content {Id}", id);
                 throw;
             }
+        }
+
+        private async Task<Voice> GetOrFetchVoiceAsync(string voiceId, CancellationToken cancellationToken)
+        {
+            // Try to get from cache first
+            if (_voiceCache.TryGetValue(voiceId, out var cachedVoice))
+            {
+                return cachedVoice;
+            }
+
+            // If not in cache, fetch and cache it
+            var voice = await _elevenLabsClient.VoicesEndpoint
+                .GetVoiceAsync(voiceId, withSettings: false, cancellationToken);
+            _voiceCache.TryAdd(voiceId, voice);
+            return voice;
         }
 
         private Task<TextToSpeechRequest> CreateTtsRequestAsync(Voice voice, string text)
@@ -199,7 +210,7 @@ namespace MyTts.Services
 
             var uploadOptions = new UploadObjectOptions
             {
-                ChunkSize = 262144, // 256KB chunks for better handling
+                ChunkSize = BufferSize,
                 PredefinedAcl = PredefinedObjectAcl.PublicRead
             };
 
@@ -238,7 +249,7 @@ namespace MyTts.Services
         {
             ArgumentNullException.ThrowIfNull(neededNews);
             var allNewsList = allNews.ToList();
-            var contentsNeededList = neededNews.ToList(); // Materialize once to avoid multiple enumeration
+            var contentsNeededList = neededNews.ToList();
             var contentsSavedList = savedNews.ToList();
             
             _logger.LogInformation("Processing {Count} needed and {SavedCount} saved contents", 
@@ -246,66 +257,39 @@ namespace MyTts.Services
             
             if (!contentsNeededList.Any() && !contentsSavedList.Any())
             {
-                return (null, "", "");
+                return (Stream.Null, "", "");
             }
                 
             try
             {
-                var processingNeededTasks = new List<Task<(int id, AudioProcessor Processor)>>(contentsNeededList.Count);
-                var processingSavedTasks = new List<Task<(int id, AudioProcessor Processor)>>(contentsSavedList.Count);
+                // Process needed and saved news in parallel
+                var processingTasks = new List<Task<(int id, AudioProcessor Processor)>>(
+                    contentsNeededList.Count + contentsSavedList.Count);
 
-                // Process needed news
-                foreach (var content in contentsNeededList)
-                {
-                    processingNeededTasks.Add(ProcessContentWithSemaphoreAsync(
-                        content.Baslik + content.Ozet, 
-                        content.IlgiId, 
-                        language, 
-                        fileType, 
-                        cancellationToken));
-                }
+                // Add tasks for needed news
+                processingTasks.AddRange(contentsNeededList.Select(content =>
+                    ProcessContentWithSemaphoreAsync(
+                        content.Baslik + content.Ozet,
+                        content.IlgiId,
+                        language,
+                        fileType,
+                        cancellationToken)));
 
-                // Process saved news
-                foreach (var content in contentsSavedList)
-                {
-                    processingSavedTasks.Add(ProcessSavedContentAsync(
-                        content.IlgiId, 
-                        fileType, 
-                        cancellationToken));
-                }
+                // Add tasks for saved news
+                processingTasks.AddRange(contentsSavedList.Select(content =>
+                    ProcessSavedContentAsync(content.IlgiId, fileType, cancellationToken)));
 
                 // Wait for all tasks to complete
-                var resultsSaved = await Task.WhenAll(processingSavedTasks);
-                var resultsNeeded = await Task.WhenAll(processingNeededTasks);
+                var results = await Task.WhenAll(processingTasks);
 
-                // Create processors list in the same order as allNews
-                var processors = new List<AudioProcessor>(allNewsList.Count);
-                var processedFiles = new Dictionary<int, AudioProcessor>();
-
-                // Add needed files to dictionary
-                foreach (var result in resultsNeeded)
-                {
-                    processedFiles[result.id] = result.Processor;
-                }
-
-                // Add saved files to dictionary
-                foreach (var result in resultsSaved)
-                {
-                    processedFiles[result.id] = result.Processor;
-                }
+                // Create processors dictionary for efficient lookup
+                var processedFiles = results.ToDictionary(r => r.id, r => r.Processor);
 
                 // Build final list in original order
-                foreach (var news in allNewsList)
-                {
-                    if (processedFiles.TryGetValue(news.IlgiId, out var processor))
-                    {
-                        processors.Add(processor);
-                    }
-                    else
-                    {
-                        _logger.LogWarning("No processor found for news item with ID {IlgiId}", news.IlgiId);
-                    }
-                }
+                var processors = allNewsList
+                    .Where(news => processedFiles.ContainsKey(news.IlgiId))
+                    .Select(news => processedFiles[news.IlgiId])
+                    .ToList();
 
                 if (processors.Count > 0)
                 {
@@ -327,10 +311,10 @@ namespace MyTts.Services
                     }
 
                     var merged = await _mp3StreamMerger.MergeMp3ByteArraysAsync(
-                        processors, 
-                        _storageConfig.BasePath, 
-                        fileType, 
-                        breakAudioPath, 
+                        processors,
+                        _storageConfig.BasePath,
+                        fileType,
+                        breakAudioPath,
                         cancellationToken);
                     
                     _logger.LogInformation("Merged stream id is {fileName}", merged.fileName);
@@ -338,7 +322,7 @@ namespace MyTts.Services
                 }
 
                 _logger.LogWarning("No files were successfully processed");
-                return (null, "", "");
+                return (Stream.Null, "", "");
             }
             catch (OperationCanceledException)
             {
@@ -363,17 +347,22 @@ namespace MyTts.Services
 
         public async ValueTask DisposeAsync()
         {
-            try
+            if (!_disposed)
             {
-                if (_storageClient != null)
+                try
                 {
-                    await Task.Run(() => _storageClient.Dispose());
+                    if (_storageClient != null)
+                    {
+                        await Task.Run(() => _storageClient.Dispose());
+                    }
+                    _semaphore?.Dispose();
+                    _voiceCache.Clear();
+                    _disposed = true;
                 }
-                _semaphore?.Dispose();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error disposing TtsManager resources");
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error disposing TtsManager resources");
+                }
             }
         }
     }

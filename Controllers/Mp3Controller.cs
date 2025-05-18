@@ -27,6 +27,11 @@ namespace MyTts.Controllers
                 await _mp3Service.CreateMultipleMp3Async(language, limit, AudioType.Mp3, cancellationToken);
                 await context.Response.WriteAsync("Processed request of creation of voice files successfully.", cancellationToken);
             }
+            catch (OperationCanceledException)
+            {
+                var phase = context.Response.HasStarted ? "after" : "before";
+                _logger.LogDebug("Client cancelled {Phase} response for feed in language {Language}.", phase, language);
+            }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error processing MP3 list request");
