@@ -3,6 +3,8 @@ using MyTts.Storage;
 using MyTts.Storage.Models;
 using MyTts.Storage.Interfaces;
 using MyTts.Helpers;
+using Polly;
+using Polly.Retry;
 
 namespace MyTts.Config.ServiceConfigurations;
 
@@ -16,7 +18,7 @@ public static class StorageServiceConfig
             .ValidateDataAnnotations()
             .ValidateOnStart();
 
-        // Configure LocalStorageOptions
+        // Configure LocalStorageOptions with validation
         services.Configure<LocalStorageOptions>(options =>
         {
             var storageSection = configuration.GetSection("Storage");
@@ -26,6 +28,40 @@ public static class StorageServiceConfig
             options.MaxRetries = storageSection.GetValue<int>("MaxRetries", 3);
             options.RetryDelay = TimeSpan.FromSeconds(storageSection.GetValue<double>("RetryDelaySeconds", 1));
             options.EnableMetrics = storageSection.GetValue<bool>("EnableMetrics", true);
+
+            // Validate options
+            if (string.IsNullOrEmpty(options.BasePath))
+            {
+                throw new InvalidOperationException("Storage base path is required");
+            }
+            if (options.BufferSize < 4096)
+            {
+                throw new InvalidOperationException("Buffer size must be at least 4KB");
+            }
+            if (options.MaxConcurrentOperations < 1)
+            {
+                throw new InvalidOperationException("Max concurrent operations must be at least 1");
+            }
+        });
+
+        // Configure retry policy for storage operations
+        services.AddSingleton<AsyncRetryPolicy>(sp =>
+        {
+            var options = sp.GetRequiredService<IOptions<LocalStorageOptions>>().Value;
+            var logger = sp.GetRequiredService<ILogger<LocalStorageClient>>();
+
+            return Policy
+                .Handle<IOException>()
+                .Or<UnauthorizedAccessException>()
+                .WaitAndRetryAsync(
+                    options.MaxRetries,
+                    retryAttempt => options.RetryDelay * Math.Pow(2, retryAttempt - 1),
+                    onRetry: (exception, timeSpan, retryCount, context) =>
+                    {
+                        logger.LogWarning(exception,
+                            "Retry {RetryCount} after {Delay}ms for storage operation {OperationKey}",
+                            retryCount, timeSpan.TotalMilliseconds, context.OperationKey);
+                    });
         });
 
         // Get the configuration instance for initialization
@@ -41,25 +77,54 @@ public static class StorageServiceConfig
         // Register storage services
         RegisterStorageServices(services);
 
-        // Register disk configurations 
+        // Register disk configurations with validation
         services.AddSingleton(sp =>
         {
             var disks = new Dictionary<string, DiskOptions>();
+            var logger = sp.GetRequiredService<ILogger<LocalStorageClient>>();
 
             foreach (var disk in storageConfig.Disks)
             {
                 if (!disk.Value.Enabled) continue;
 
-                // Create a new instance to avoid modifying the original config
-                disks[disk.Key] = new DiskOptions
+                try
                 {
-                    Driver = disk.Value.Driver,
-                    Root = disk.Value.GetNormalizedRoot(),
-                    Config = disk.Value.Config ?? new DiskConfig(),
-                    Enabled = true,
-                    BufferSize = disk.Value.BufferSize,
-                    MaxConcurrentOperations = disk.Value.MaxConcurrentOperations
-                };
+                    // Validate disk configuration
+                    if (string.IsNullOrEmpty(disk.Value.Driver))
+                    {
+                        logger.LogWarning("Disk {DiskName} has no driver specified, skipping", disk.Key);
+                        continue;
+                    }
+
+                    if (string.IsNullOrEmpty(disk.Value.Root))
+                    {
+                        logger.LogWarning("Disk {DiskName} has no root path specified, skipping", disk.Key);
+                        continue;
+                    }
+
+                    // Create a new instance to avoid modifying the original config
+                    disks[disk.Key] = new DiskOptions
+                    {
+                        Driver = disk.Value.Driver,
+                        Root = disk.Value.GetNormalizedRoot(),
+                        Config = disk.Value.Config ?? new DiskConfig(),
+                        Enabled = true,
+                        BufferSize = disk.Value.BufferSize,
+                        MaxConcurrentOperations = disk.Value.MaxConcurrentOperations
+                    };
+
+                    // Ensure disk root directory exists
+                    var rootPath = disk.Value.GetNormalizedRoot();
+                    if (!Directory.Exists(rootPath))
+                    {
+                        Directory.CreateDirectory(rootPath);
+                        logger.LogInformation("Created directory for disk {DiskName}: {Path}", disk.Key, rootPath);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Failed to configure disk {DiskName}", disk.Key);
+                }
             }
 
             return disks;
@@ -79,11 +144,28 @@ public static class StorageServiceConfig
         // Validate the configuration
         config.Validate();
 
-        // Create necessary directories
-        Directory.CreateDirectory(config.GetNormalizedBasePath());
-        Directory.CreateDirectory(Path.GetDirectoryName(config.GetNormalizedMetadataPath())!);
+        try
+        {
+            // Create necessary directories
+            var basePath = config.GetNormalizedBasePath();
+            var metadataPath = Path.GetDirectoryName(config.GetNormalizedMetadataPath())!;
 
-        // Initialize the static helper
-        StoragePathHelper.Initialize(config);
+            if (!Directory.Exists(basePath))
+            {
+                Directory.CreateDirectory(basePath);
+            }
+
+            if (!Directory.Exists(metadataPath))
+            {
+                Directory.CreateDirectory(metadataPath);
+            }
+
+            // Initialize the static helper
+            StoragePathHelper.Initialize(config);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException("Failed to initialize storage directories", ex);
+        }
     }
 } 

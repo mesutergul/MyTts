@@ -3,6 +3,8 @@ using MyTts.Services;
 using MyTts.Config;
 using StackExchange.Redis;
 using MyTts.Services.Interfaces;
+using Polly;
+using Polly.Retry;
 
 namespace MyTts.Config.ServiceConfigurations;
 
@@ -22,6 +24,24 @@ public static class RedisServiceConfig
             return services;
         }
 
+        // Configure retry policy for Redis operations
+        services.AddSingleton<AsyncRetryPolicy>(sp =>
+        {
+            var logger = sp.GetRequiredService<ILogger<RedisCacheService>>();
+            return Policy
+                .Handle<RedisConnectionException>()
+                .Or<RedisTimeoutException>()
+                .WaitAndRetryAsync(
+                    redisConfig.MaxRetryAttempts,
+                    retryAttempt => TimeSpan.FromMilliseconds(redisConfig.RetryDelayMilliseconds * Math.Pow(2, retryAttempt - 1)),
+                    onRetry: (exception, timeSpan, retryCount, context) =>
+                    {
+                        logger.LogWarning(exception,
+                            "Retry {RetryCount} after {Delay}ms for Redis operation {OperationKey}",
+                            retryCount, timeSpan.TotalMilliseconds, context.OperationKey);
+                    });
+        });
+
         try
         {
             var options = ConfigurationOptions.Parse(redisConfig.ConnectionString);
@@ -30,11 +50,17 @@ public static class RedisServiceConfig
             options.ConnectTimeout = redisConfig.ConnectionTimeoutMs;
             options.SyncTimeout = redisConfig.OperationTimeoutMs;
             options.ReconnectRetryPolicy = new ExponentialRetry(redisConfig.RetryDelayMilliseconds);
+            options.KeepAlive = 60; // Keep-alive every 60 seconds
+            options.ConnectTimeout = 5000; // 5 seconds connection timeout
+            options.SyncTimeout = 5000; // 5 seconds sync timeout
+            options.ResponseTimeout = 5000; // 5 seconds response timeout
 
-            // Register ConnectionMultiplexer as singleton
+            // Register ConnectionMultiplexer as singleton with retry policy
             services.AddSingleton<IConnectionMultiplexer>(sp =>
             {
                 var logger = sp.GetRequiredService<ILogger<RedisCacheService>>();
+                var retryPolicy = sp.GetRequiredService<AsyncRetryPolicy>();
+
                 try
                 {
                     var connection = ConnectionMultiplexer.Connect(options);
@@ -43,6 +69,23 @@ public static class RedisServiceConfig
                         logger.LogWarning("Created Redis connection but IsConnected is false. Falling back to NullRedisCacheService.");
                         return null!;
                     }
+
+                    // Subscribe to connection events
+                    connection.ConnectionFailed += (sender, e) =>
+                    {
+                        logger.LogWarning(e.Exception, "Redis connection failed: {FailureType}", e.FailureType);
+                    };
+
+                    connection.ConnectionRestored += (sender, e) =>
+                    {
+                        logger.LogInformation("Redis connection restored");
+                    };
+
+                    connection.ErrorMessage += (sender, e) =>
+                    {
+                        logger.LogError("Redis error: {Message}", e.Message);
+                    };
+
                     return connection;
                 }
                 catch (Exception ex)
@@ -59,6 +102,7 @@ public static class RedisServiceConfig
                 var logger = sp.GetRequiredService<ILogger<RedisCacheService>>();
                 var nullLogger = sp.GetRequiredService<ILogger<NullRedisCacheService>>();
                 var config = sp.GetRequiredService<IOptions<MyTts.Config.RedisConfig>>();
+                var retryPolicy = sp.GetRequiredService<AsyncRetryPolicy>();
 
                 if (connection == null || !connection.IsConnected)
                 {
@@ -89,13 +133,4 @@ public static class RedisServiceConfig
 
         return services;
     }
-}
-
-public class RedisConfig
-{
-    public string ConnectionString { get; set; } = string.Empty;
-    public int MaxRetryAttempts { get; set; }
-    public int ConnectionTimeoutMs { get; set; }
-    public int OperationTimeoutMs { get; set; }
-    public int RetryDelayMilliseconds { get; set; }
 } 
