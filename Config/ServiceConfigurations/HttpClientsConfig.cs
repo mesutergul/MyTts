@@ -55,21 +55,6 @@ public static class HttpClientsConfig
                 handledEventsAllowedBeforeBreaking: 2,
                 durationOfBreak: TimeSpan.FromSeconds(30)));
 
-        // Configure feed client with resilience
-        services.AddHttpClient("FeedClient", client =>
-        {
-            client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-            client.DefaultRequestHeaders.Add("User-Agent", "MyTts-FeedClient");
-            client.Timeout = TimeSpan.FromSeconds(30);
-        })
-        .AddTransientHttpErrorPolicy(builder =>
-            builder.WaitAndRetryAsync(3, retryAttempt =>
-                TimeSpan.FromSeconds(Math.Pow(2, retryAttempt))))
-        .AddTransientHttpErrorPolicy(builder =>
-            builder.CircuitBreakerAsync(
-                handledEventsAllowedBeforeBreaking: 2,
-                durationOfBreak: TimeSpan.FromSeconds(30)));
-
         return services;
     }
 } 

@@ -13,12 +13,12 @@ public static class ApplicationConfig
         
         // Register application services
         services.AddScoped<IMp3Service, Mp3Service>();
-        services.AddScoped<INewsFeedsService, NewsFeedsService>();
+     //   services.AddScoped<INewsFeedsService, NewsFeedsService>();
        
         // Register infrastructure services
         services.AddScoped<IRedisCacheService, RedisCacheService>();
         services.AddScoped<IFileStreamingService, FileStreamingService>();
-        services.AddScoped<IAudioConversionService, AudioConversionService>();
+      //  services.AddScoped<IAudioConversionService, AudioConversionService>();
 
         return services;
     }

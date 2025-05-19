@@ -13,7 +13,6 @@ namespace MyTts.Services
         private readonly ILogger<Mp3Service> _logger;
         private readonly IMp3Repository _mp3FileRepository;
         private readonly TtsClient _ttsClient;
-        private readonly INewsFeedsService _newsFeedsService;
         private readonly IRedisCacheService? _cache;
         private readonly SemaphoreSlim _processingSemaphore;
         private const int MaxConcurrentProcessing = 1;
@@ -25,14 +24,12 @@ namespace MyTts.Services
             IMp3Repository mp3FileRepository,
             TtsClient ttsClient,
             IRedisCacheService cache,
-            INewsFeedsService newsFeedsService,
             IServiceScopeFactory serviceScopeFactory)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _mp3FileRepository = mp3FileRepository ?? throw new ArgumentNullException(nameof(mp3FileRepository));
             _ttsClient = ttsClient ?? throw new ArgumentNullException(nameof(ttsClient));
             _cache = cache ?? throw new ArgumentNullException(nameof(cache));
-            _newsFeedsService = newsFeedsService ?? throw new ArgumentNullException(nameof(newsFeedsService));
             _processingSemaphore = new SemaphoreSlim(MaxConcurrentProcessing);
             _serviceScopeFactory = serviceScopeFactory ?? throw new ArgumentNullException(nameof(serviceScopeFactory));
         }
@@ -321,10 +318,10 @@ namespace MyTts.Services
         { 
             var fileData = await _mp3FileRepository.LoadMp3FileAsync(id, language, fileType, cancellationToken);
             int localPath=0;
-            Stream? fileStream = null;
+            Stream? fileStream;
             if (fileData == null || fileData.Length == 0)
             {
-                var content = _newsFeedsService.GetFeedUrl("tr");
+                var content = "Olanlar daha dün gibi taze.";//_newsFeedsService.GetFeedUrl("tr");
                 (localPath, var processor)= await _ttsClient.ProcessContentAsync(content, id, language, fileType, cancellationToken);
                 fileStream = await processor.GetStreamForCloudUploadAsync(cancellationToken);
             } else fileStream= new MemoryStream(fileData);
