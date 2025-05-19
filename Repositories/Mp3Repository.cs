@@ -127,10 +127,10 @@ namespace MyTts.Repositories
                 {
                     await _cache.SetAsync(cacheKey, true, FILE_CACHE_DURATION);
                 }
-                if (!await Mp3FileExistsInSqlAsync(id, cancellationToken))
-                {
-                    await SaveMp3MetaToSql(new Mp3Dto { FileId = id, FileUrl = StoragePathHelper.GetFullPathById(id, fileType), Language = language }, cancellationToken);
-                }
+                //if (!await Mp3FileExistsInSqlAsync(id, cancellationToken))
+                //{
+                //    await SaveMp3MetaToSql(new Mp3Dto { FileId = id, FileUrl = StoragePathHelper.GetFullPathById(id, fileType), Language = language }, cancellationToken);
+                //}
             }
             else _logger.LogInformation("File not found in cache, database, or disk for ID {Id}", id);
             return existsInDisk;
@@ -391,29 +391,6 @@ namespace MyTts.Repositories
             }
         }
 
-        #region File Operations
-
-        public string GetFullPath(string filePath, AudioType fileType = AudioType.Mp3)
-        {
-            return StoragePathHelper.GetFullPath(filePath, fileType);
-        }
-
-        public async Task<Mp3Dto?> LoadMp3MetaByPathAsync(int filePath, AudioType fileType, CancellationToken cancellationToken)
-        {
-            try
-            {
-                var mp3Files = await LoadListMp3MetadatasAsync(fileType, cancellationToken);
-                return mp3Files.FirstOrDefault(f => f.FileUrl == filePath.ToString());
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to load single MP3 file: {FilePath}", filePath);
-                throw;
-            }
-        }
-
-        #endregion
-
         #region Database Operations
 
         public async Task SaveMp3MetaToSql(Mp3Dto mp3Dto, CancellationToken cancellationToken)
@@ -467,7 +444,19 @@ namespace MyTts.Repositories
                 throw;
             }
         }
-
+        public async Task<Mp3Dto?> LoadMp3MetaByPathAsync(string filePath, AudioType fileType, CancellationToken cancellationToken)
+        {
+            try
+            {
+                var mp3File = await _mp3MetaRepository.GetByColumnAsync(x => x.FileUrl == filePath, cancellationToken);
+                return mp3File;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to load MP3 metadata for path: {Path}", filePath);
+                throw;
+            }
+        }
         public async Task<Mp3Dto> LoadLatestMp3MetaByLanguageAsync(string language, AudioType fileType, CancellationToken cancellationToken)
         {
             try
@@ -666,21 +655,38 @@ namespace MyTts.Repositories
         {
             ArgumentNullException.ThrowIfNull(mp3Files);
 
-            await _dbLock.WaitAsync();
+            if (_disposed)
+            {
+                _logger.LogWarning("Repository is disposed, cannot save metadata");
+                return;
+            }
+
             try
             {
-                // Save to SQL database in batch
-                await _mp3MetaRepository.AddRangeAsync(mp3Files, cancellationToken);
-                _logger.LogInformation("Successfully saved {Count} files to SQL", mp3Files.Count);
+                await _dbLock.WaitAsync(cancellationToken);
+                try
+                {
+                    // Save to SQL database in batch
+                    await _mp3MetaRepository.AddRangeAsync(mp3Files, cancellationToken);
+                    _logger.LogInformation("Successfully saved {Count} files to SQL", mp3Files.Count);
+                }
+                finally
+                {
+                    if (!_disposed)
+                    {
+                        _dbLock.Release();
+                    }
+                }
+            }
+            catch (ObjectDisposedException)
+            {
+                _logger.LogWarning("Repository was disposed during save operation");
+                throw;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to save MP3 files to SQL database");
                 throw;
-            }
-            finally
-            {
-                _dbLock.Release();
             }
         }
 
@@ -748,7 +754,19 @@ namespace MyTts.Repositories
             {
                 if (disposing)
                 {
-                    _dbLock.Dispose();
+                    try
+                    {
+                        // Wait for any pending operations to complete
+                        if (_dbLock.CurrentCount == 0)
+                        {
+                            _logger.LogWarning("Disposing repository while operations are pending");
+                        }
+                        _dbLock.Dispose();
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error disposing repository");
+                    }
                 }
                 _disposed = true;
             }

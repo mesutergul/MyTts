@@ -9,7 +9,6 @@ namespace MyTts.Repositories
 {
     public interface IMp3Repository : IDisposable
     {
-        string GetFullPath(string filePath, AudioType fileType);
         Task<byte[]> LoadMp3FileAsync(int filePath, string language, AudioType fileType, CancellationToken cancellationToken);
         Task SaveMp3FileAsync(int filePath, byte[] fileData, AudioType fileType, CancellationToken cancellationToken);
         Task<List<Mp3Dto>> LoadListMp3MetadatasAsync(AudioType fileType, CancellationToken cancellationToken);
@@ -17,7 +16,8 @@ namespace MyTts.Repositories
         Task SaveMp3MetadataToJsonAndCacheAsync(List<Mp3Dto> mp3Files, AudioType fileType, CancellationToken cancellationToken);
         Task DeleteMp3FileAsync(string filePath, CancellationToken cancellationToken);
         Task<bool> Mp3FileExistsAsync(int id, AudioType fileType, CancellationToken cancellationToken);
-        Task<Mp3Dto> LoadMp3MetaByPathAsync(int filePath, AudioType fileType, CancellationToken cancellationToken);
+        Task<bool> Mp3FileExistsInSqlAsync(int id, CancellationToken cancellationToken);
+        Task<Mp3Dto> LoadMp3MetaByPathAsync(string filePath, AudioType fileType, CancellationToken cancellationToken);
         Task<Mp3Dto> LoadMp3MetaByNewsIdAsync(int id, AudioType fileType, CancellationToken cancellationToken);
         Task<Mp3Dto> LoadLatestMp3MetaByLanguageAsync(string language, AudioType fileType, CancellationToken cancellationToken);
         Task<Mp3Dto> LoadAndCacheMp3File(int id, AudioType fileType, CancellationToken cancellationToken);

@@ -1,6 +1,8 @@
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.SqlServer.Infrastructure.Internal;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using MyTts.Data.Context;
 using MyTts.Data.Entities;
 using MyTts.Data.Interfaces;
@@ -96,9 +98,20 @@ public static class DatabaseConfig
         {
             options.UseSqlServer(connectionString, sqlOpts =>
             {
-                sqlOpts.EnableRetryOnFailure(3);
+                sqlOpts.EnableRetryOnFailure(
+                    maxRetryCount: 3,
+                    maxRetryDelay: TimeSpan.FromSeconds(30),
+                    errorNumbersToAdd: null);
                 sqlOpts.CommandTimeout(30);
+                // MARS is enabled by default in EF Core
                 sqlOptionsAction?.Invoke(sqlOpts);
+            });
+
+            // Configure warnings to ignore MARS-related warnings
+            options.ConfigureWarnings(warnings =>
+            {
+                warnings.Ignore(RelationalEventId.MultipleCollectionIncludeWarning);
+                warnings.Ignore(SqlServerEventId.SavepointsDisabledBecauseOfMARS);
             });
 
             optionsBuilderAction?.Invoke(options);

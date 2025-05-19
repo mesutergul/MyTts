@@ -21,7 +21,7 @@ namespace MyTts.Services
             _mergeLock = new SemaphoreSlim(1, 1);
         }
 
-        public async Task<(Stream audioData, string contentType, string fileName)> MergeMp3ByteArraysAsync(
+        public async Task<string> MergeMp3ByteArraysAsync(
             IReadOnlyList<AudioProcessor> audioProcessors,
             string basePath,
             AudioType fileType,
@@ -43,7 +43,7 @@ namespace MyTts.Services
                 if (audioProcessors.Count == 1)
                 {
                     _logger.LogInformation("Only one processor provided - returning directly");
-                    return await CreateSingleFileResultAsync(audioProcessors[0], outputFilePath, cancellationToken);
+                    return outputFilePath;
                 }
                 
                 using var outputStream = new MemoryStream();
@@ -51,7 +51,7 @@ namespace MyTts.Services
 
                 outputStream.Position = 0;
                 _logger.LogInformation("Merged audio processors successfully");
-                return (outputStream, "audio/mpeg", outputFilePath);
+                return outputFilePath;
             }
             catch (OperationCanceledException)
             {

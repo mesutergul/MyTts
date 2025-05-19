@@ -5,6 +5,8 @@ using MyTts.Models;
 using Microsoft.EntityFrameworkCore;
 using System.Linq.Expressions;
 using MyTts.Data.Entities;
+using System.Text.Json;
+using System.Data;
 
 namespace MyTts.Data.Repositories
 {
@@ -37,84 +39,62 @@ namespace MyTts.Data.Repositories
             var entity = await _dbSet.FirstOrDefaultAsync(predicate, cancellationToken);
             return _mapper.Map<Mp3Dto>(entity) ?? throw new InvalidOperationException($"Entity not found matching predicate.");
         }
-        public virtual async Task<List<int>> GetExistingFileIdsInLast500Async(List<int> fileIdsToCheck, CancellationToken cancellationToken)
+        public async Task<List<int>> GetExistingFileIdsInLast500Async(List<int> fileIdsToCheck, CancellationToken cancellationToken)
         {
-            if (_dbSet == null)
-            {
-                _logger.LogWarning("DbSet is not available. Cannot check for FileIds in last 500 records.");
-                return new List<int>(); // Return an empty list if DbSet is not available
-            }
-
             if (fileIdsToCheck == null || !fileIdsToCheck.Any())
             {
-                _logger.LogInformation("No FileIds provided to check.");
-                return new List<int>(); // Return empty list if no IDs to check
+                return new List<int>();
             }
 
-            // Use LINQ to Entities to build the query
-            var existingIds = await _dbSet
-                .OrderByDescending(e => e.Id) // Order by the primary key (auto-incrementing) descending
-                .Take(500) // Take the last 500 records
-                .Where(e => fileIdsToCheck.Contains(e.FileId)) // Filter to include only records whose FileId is in the provided list
-                .Select(e => e.FileId) // Select only the FileId
-                .ToListAsync(cancellationToken); // Execute the query asynchronously and get the results as a list
+            // Create a comma-separated list of IDs
+            var idList = string.Join(",", fileIdsToCheck);
+            var query = $@"
+                SELECT [h0].[haber_id]
+                FROM (
+                    SELECT TOP(500) [h].[id], [h].[haber_id]
+                    FROM [Haber_Ses_Dosyalari] AS [h]
+                    ORDER BY [h].[id] DESC
+                ) AS [h0]
+                WHERE [h0].[haber_id] IN ({idList})
+                ORDER BY [h0].[id] DESC";
 
-            return existingIds;
+            return await _context.Database
+                .SqlQueryRaw<int>(query)
+                .ToListAsync(cancellationToken);
         }
 
-        public virtual async Task AddRangeAsync(IEnumerable<Mp3Dto> entities, CancellationToken cancellationToken)
+        public async Task AddRangeAsync(IEnumerable<Mp3Dto> entities, CancellationToken cancellationToken = default)
         {
+            ArgumentNullException.ThrowIfNull(entities);
+
             if (_context == null || _dbSet == null)
             {
                 _logger.LogWarning("SQL not available for batch save");
                 return;
             }
 
-            try
+            var strategy = _context.Database.CreateExecutionStrategy();
+            await strategy.ExecuteAsync(async () =>
             {
-                // Get list of FileIds to check for existing records
-                var fileIds = entities.Select(e => e.FileId).ToList();
-                var existingIds = await GetExistingFileIdsInLast500Async(fileIds, cancellationToken);
-
-                // Filter out entities that already exist
-                var newEntities = entities.Where(e => !existingIds.Contains(e.FileId));
-
-                // Map DTOs to entities
-                var mappedEntities = newEntities.Select(dto => _mapper.Map<Mp3Meta>(dto)).ToList();
-
-                if (!mappedEntities.Any())
-                {
-                    _logger.LogInformation("No new entities to save");
-                    return;
-                }
-
-                // Begin transaction
-                await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+                await using var transaction = await _context.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken);
                 try
                 {
-                    // Add all new entities
+                    // Map DTOs to entities
+                    var mappedEntities = entities.Select(dto => _mapper.Map<Mp3Meta>(dto)).ToList();
+                    
+                    // Add the mapped entities
                     await _dbSet.AddRangeAsync(mappedEntities, cancellationToken);
-                    
-                    // Save changes
                     await _context.SaveChangesAsync(cancellationToken);
-                    
-                    // Commit transaction
                     await transaction.CommitAsync(cancellationToken);
-                    
-                    _logger.LogInformation("Successfully saved {Count} new records to database", mappedEntities.Count);
+                    _logger.LogInformation("Successfully saved batch of {Count} entities", mappedEntities.Count);
                 }
                 catch (Exception ex)
                 {
                     await transaction.RollbackAsync(cancellationToken);
-                    _logger.LogError(ex, "Error during batch save operation");
+                    _logger.LogError(ex, "Failed to save batch of {Count} entities", entities.Count());
                     throw;
                 }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to perform batch save operation");
-                throw;
-            }
+            });
         }
     }
 }

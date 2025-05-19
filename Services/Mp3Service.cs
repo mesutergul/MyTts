@@ -7,6 +7,7 @@ using MyTts.Storage;
 using MyTts.Helpers;
 using System.Diagnostics;
 using System.Threading.Tasks;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace MyTts.Services
 {
@@ -20,13 +21,15 @@ namespace MyTts.Services
         private readonly SemaphoreSlim _processingSemaphore;
         private const int MaxConcurrentProcessing = 1;
         private bool _disposed;
+        private readonly IServiceScopeFactory _serviceScopeFactory;
 
         public Mp3Service(
             ILogger<Mp3Service> logger,
             IMp3Repository mp3FileRepository,
             ITtsManagerService ttsManager,
             IRedisCacheService cache,
-            INewsFeedsService newsFeedsService)
+            INewsFeedsService newsFeedsService,
+            IServiceScopeFactory serviceScopeFactory)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _mp3FileRepository = mp3FileRepository ?? throw new ArgumentNullException(nameof(mp3FileRepository));
@@ -34,40 +37,72 @@ namespace MyTts.Services
             _cache = cache ?? throw new ArgumentNullException(nameof(cache));
             _newsFeedsService = newsFeedsService ?? throw new ArgumentNullException(nameof(newsFeedsService));
             _processingSemaphore = new SemaphoreSlim(MaxConcurrentProcessing);
+            _serviceScopeFactory = serviceScopeFactory ?? throw new ArgumentNullException(nameof(serviceScopeFactory));
         }
-        public async Task<(Stream audioData, string contentType, string fileName)> CreateMultipleMp3Async(
+        public async Task<string> CreateMultipleMp3Async(
             string language, 
             int limit, 
             AudioType fileType, 
             CancellationToken cancellationToken)
         {
+            await _processingSemaphore.WaitAsync(cancellationToken);
             try
             {
-                await _processingSemaphore.WaitAsync();
                 var newsList = await GetNewsList(cancellationToken);
                 if (newsList.Count == 0)
                 {
-                    newsList = CsvFileReader.ReadHaberSummariesFromCsv(_mp3FileRepository.GetFullPath("test", AudioType.Csv))
+                    newsList = CsvFileReader.ReadHaberSummariesFromCsv(StoragePathHelper.GetFullPath("test", AudioType.Csv))
                         .Select(x => new HaberSummaryDto() { Baslik = x.Baslik, IlgiId = x.IlgiId, Ozet = x.Ozet }).ToList();
                 }
                 
                 var (neededNewsList, savedNewsList) = await checkNewsList(newsList, language, fileType, cancellationToken);
-                var result = await _ttsManager.ProcessContentsAsync(newsList, neededNewsList, savedNewsList, language, fileType);
+                var mergedFilePath = await _ttsManager.ProcessContentsAsync(newsList, neededNewsList, savedNewsList, language, fileType);
 
-                // Save metadata for all new files in a single batch
+                var savingNewsList = (await Task.WhenAll(savedNewsList
+                    .Select(async x => (x, await _mp3FileRepository.Mp3FileExistsInSqlAsync(x.IlgiId, cancellationToken)))))
+                    .Where(x => !x.Item2)
+                    .Select(x => x.Item1)
+                    .ToList();
+                neededNewsList.AddRange(savingNewsList);
+
+                // Start SQL operations as fire-and-forget
                 if (neededNewsList.Any())
                 {
                     var metadataList = neededNewsList.Select(news => new Mp3Dto
                     {
                         FileId = news.IlgiId,
-                        FileUrl = StoragePathHelper.GetStorageKey(news.IlgiId),
+                        FileUrl = StoragePathHelper.GetFullPathById(news.IlgiId, fileType),
                         Language = language
                     }).ToList();
 
-                    await SaveMp3MetadataBatchAsync(metadataList, cancellationToken);
+                    if (metadataList.Any())
+                    {
+                        _logger.LogInformation("Starting background SQL operations for {Count} files", metadataList.Count);
+                        
+                        // Create a copy of the metadata list for the background task
+                        var metadataCopy = new List<Mp3Dto>(metadataList);
+                        
+                        // Create a new scope for the background task
+                        _ = Task.Run(async () =>
+                        {
+                            try
+                            {
+                                using var scope = _serviceScopeFactory.CreateScope();
+                                var repository = scope.ServiceProvider.GetRequiredService<IMp3Repository>();
+                                
+                                _logger.LogInformation("Background SQL operation started for {Count} files", metadataCopy.Count);
+                                await repository.SaveMp3MetadataToSqlBatchAsync(metadataCopy, AudioType.Mp3, cancellationToken);
+                                _logger.LogInformation("Successfully saved metadata for {Count} files in background", metadataCopy.Count);
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogError(ex, "Error saving metadata in background for {Count} files", metadataCopy.Count);
+                            }
+                        }, cancellationToken);
+                    }
                 }
 
-                return result;
+                return mergedFilePath;
             }
             finally
             {
@@ -226,7 +261,7 @@ namespace MyTts.Services
         // Update file path handling
         private string GetAudioFilePath(string fileName)
         {
-            return _mp3FileRepository.GetFullPath(fileName, AudioType.Mp3);
+            return StoragePathHelper.GetFullPath(fileName, AudioType.Mp3);
         }
         public async Task<bool> FileExistsAnywhereAsync(int id, string language, AudioType fileType, CancellationToken cancellationToken) {
             return await _mp3FileRepository.FileExistsAnywhereAsync(id, language, fileType, cancellationToken);
@@ -350,7 +385,7 @@ namespace MyTts.Services
                         return new NotFoundObjectResult(new { message = "MP3 file not found." });
                     }
 
-                    filePath = _mp3FileRepository.GetFullPath(mp3File.FileUrl, fileType);
+                    filePath = StoragePathHelper.GetFullPath(mp3File.FileUrl, fileType);
 
                     // Cache the path for future requests
                     await _cache!.SetAsync(cacheKey, filePath, TimeSpan.FromHours(1));
@@ -484,19 +519,24 @@ namespace MyTts.Services
         {
             try
             {
-                // Acquire semaphore to ensure exclusive access during batch operation
-                await _processingSemaphore.WaitAsync(cancellationToken);
-                try
-                {
-                    // Save metadata to SQL in batch and then to JSON/cache
-                    await _mp3FileRepository.SaveMp3MetadataToSqlBatchAsync(metadataList, AudioType.Mp3, cancellationToken);
-                //    await _mp3FileRepository.SaveMp3MetadataToJsonAndCacheAsync(metadataList, AudioType.Mp3, cancellationToken);
-                    _logger.LogDebug("Saved batch metadata to SQL, JSON, and cache for {Count} files", metadataList.Count);
-                }
-                finally
-                {
-                    _processingSemaphore.Release();
-                }
+                // Save metadata to SQL in batch
+                await _mp3FileRepository.SaveMp3MetadataToSqlBatchAsync(metadataList, AudioType.Mp3, cancellationToken);
+                _logger.LogDebug("Saved batch metadata to SQL for {Count} files", metadataList.Count);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to save batch metadata for {Count} files", metadataList.Count);
+                throw;
+            }
+        }
+
+        private async Task SaveMp3MetadataBatchAsyncInternal(List<Mp3Dto> metadataList, CancellationToken cancellationToken)
+        {
+            try
+            {
+                // Save metadata to SQL in batch
+                await _mp3FileRepository.SaveMp3MetadataToSqlBatchAsync(metadataList, AudioType.Mp3, cancellationToken);
+                _logger.LogDebug("Saved batch metadata to SQL for {Count} files", metadataList.Count);
             }
             catch (Exception ex)
             {

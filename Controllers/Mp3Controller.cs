@@ -24,18 +24,44 @@ namespace MyTts.Controllers
         {
             try
             {
-                await _mp3Service.CreateMultipleMp3Async(language, limit, AudioType.Mp3, cancellationToken);
-                await context.Response.WriteAsync("Processed request of creation of voice files successfully.", cancellationToken);
+                var mergedFilePath = await _mp3Service.CreateMultipleMp3Async(language, limit, AudioType.Mp3, cancellationToken);
+                
+                if (string.IsNullOrEmpty(mergedFilePath))
+                {
+                    context.Response.StatusCode = 404;
+                    context.Response.ContentType = "application/json";
+                    await context.Response.WriteAsJsonAsync(new { message = "No files were processed." }, cancellationToken);
+                    return;
+                }
+
+                context.Response.StatusCode = 200;
+                context.Response.ContentType = "application/json";
+                await context.Response.WriteAsJsonAsync(new { 
+                    message = "Processed request of creation of voice files successfully.", 
+                    filePath = mergedFilePath 
+                }, cancellationToken);
+                await context.Response.CompleteAsync();
             }
             catch (OperationCanceledException)
             {
+                if (!context.Response.HasStarted)
+                {
+                    context.Response.StatusCode = 499; // Client closed request
+                    await context.Response.CompleteAsync();
+                }
                 var phase = context.Response.HasStarted ? "after" : "before";
                 _logger.LogDebug("Client cancelled {Phase} response for feed in language {Language}.", phase, language);
             }
             catch (Exception ex)
             {
+                if (!context.Response.HasStarted)
+                {
+                    context.Response.StatusCode = 500;
+                    context.Response.ContentType = "application/json";
+                    await context.Response.WriteAsJsonAsync(new { error = "An error occurred while processing the request." }, cancellationToken);
+                    await context.Response.CompleteAsync();
+                }
                 _logger.LogError(ex, "Error processing MP3 list request");
-                await context.Response.WriteAsync("An error occurred while streaming the file.", cancellationToken);
             }
         }
         /// <summary>

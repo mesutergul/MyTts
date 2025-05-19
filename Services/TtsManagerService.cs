@@ -259,7 +259,7 @@ namespace MyTts.Services
             await _cache.SetAsync(string.Format(RedisKeys.TTS_METADATA_KEY, id), metadata, RedisKeys.DEFAULT_METADATA_EXPIRY);
         }
 
-        public async Task<(Stream audioData, string contentType, string fileName)> ProcessContentsAsync(
+        public async Task<string> ProcessContentsAsync(
             IEnumerable<HaberSummaryDto> allNews, 
             IEnumerable<HaberSummaryDto> neededNews, 
             IEnumerable<HaberSummaryDto> savedNews, 
@@ -277,7 +277,7 @@ namespace MyTts.Services
             
             if (!contentsNeededList.Any() && !contentsSavedList.Any())
             {
-                return (Stream.Null, "", "");
+                return string.Empty;
             }
                 
             try
@@ -318,8 +318,7 @@ namespace MyTts.Services
                     // For a single file, return it directly
                     if (processors.Count == 1)
                     {
-                        var stream = await processors[0].GetStreamForCloudUploadAsync(cancellationToken);
-                        return (stream, "audio/mpeg", $"single_{Guid.NewGuid()}.mp3");
+                        return $"single_{Guid.NewGuid()}.mp3";
                     }
 
                     // For multiple files, merge them
@@ -338,12 +337,12 @@ namespace MyTts.Services
                         breakAudioPath,
                         cancellationToken);
                     
-                    _logger.LogInformation("Merged stream id is {fileName}", merged.fileName);
+                    _logger.LogInformation("Merged stream id is {fileName}", merged);
                     return merged;
                 }
 
                 _logger.LogWarning("No files were successfully processed");
-                return (Stream.Null, "", "");
+                return string.Empty;
             }
             catch (OperationCanceledException)
             {
