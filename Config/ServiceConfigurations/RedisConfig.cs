@@ -53,7 +53,6 @@ public static class RedisServiceConfig
             options.KeepAlive = 60; // Keep-alive every 60 seconds
             options.ConnectTimeout = 5000; // 5 seconds connection timeout
             options.SyncTimeout = 5000; // 5 seconds sync timeout
-            options.ResponseTimeout = 5000; // 5 seconds response timeout
 
             // Register ConnectionMultiplexer as singleton with retry policy
             services.AddSingleton<IConnectionMultiplexer>(sp =>

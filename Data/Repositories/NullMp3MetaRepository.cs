@@ -60,7 +60,7 @@ namespace MyTts.Data.Repositories
         public Task<List<int>> GetExistingFileIdsInLast500Async(List<int> fileIdsToCheck, CancellationToken cancellationToken) =>Task.FromResult( new List<int>());
         Task<Mp3Dto> GetByColumnAsync(
             Expression<Func<Mp3Meta, bool>> predicate,
-            CancellationToken cancellationToken) => Task.FromResult<Mp3Dto>(null);
+            CancellationToken cancellationToken) => Task.FromResult<Mp3Dto>(default!);
 
         Task<Mp3Dto> IMp3MetaRepository.GetByColumnAsync(Expression<Func<Mp3Meta, bool>> predicate, CancellationToken cancellationToken)
         {
@@ -69,7 +69,7 @@ namespace MyTts.Data.Repositories
 
         Task<Mp3Dto> IRepository<Mp3Meta, Mp3Dto>.FindAsync(Func<Mp3Meta, bool> predicate, CancellationToken cancellationToken)
         {
-            return Task.FromResult<Mp3Dto>(null!);
+            return Task.FromResult<Mp3Dto>(default!);
         }
 
         Task IRepository<Mp3Meta, Mp3Dto>.DeleteAsync(int id, CancellationToken cancellationToken)

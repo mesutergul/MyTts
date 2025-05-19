@@ -26,8 +26,6 @@ namespace MyTts.Repositories
         private readonly IMp3MetaRepository _mp3MetaRepository;
         private readonly INewsRepository _newsRepository;
         private readonly ILocalStorageClient _storage;
-
-        private static readonly string STORAGE_PREFIX_KEY = "speech_";
         private static readonly TimeSpan DB_CACHE_DURATION = RedisKeys.DB_CACHE_DURATION;
         private static readonly TimeSpan FILE_CACHE_DURATION = RedisKeys.FILE_CACHE_DURATION;
 
@@ -36,7 +34,6 @@ namespace MyTts.Repositories
 
         public Mp3Repository(
             ILogger<Mp3Repository> logger,
-            StorageConfiguration storageConfig,
             ILocalStorageClient storage,
             IRedisCacheService cache,
             IMp3MetaRepository mp3MetaRepository,
