@@ -122,6 +122,7 @@ namespace MyTts.Repositories
             bool existsInDisk = await Mp3FileExistsAsync(id, fileType, cancellationToken);
             if (existsInDisk)
             {
+                _logger.LogInformation("File with id : {id} exist in disk", id);
                 if (!await Mp3FileExistsInCacheAsync(cacheKey, cancellationToken))
                 {
                     await _cache.SetAsync(cacheKey, true, FILE_CACHE_DURATION);
@@ -138,7 +139,7 @@ namespace MyTts.Repositories
         public async Task<bool> Mp3FileExistsAsync(int id, AudioType fileType, CancellationToken cancellationToken)
         {
             string fullPath = StoragePathHelper.GetFullPathById(id, fileType);
-            _logger.LogInformation("Checking if file exists at {FullPath}", fullPath);
+            _logger.LogDebug("Checking if file exists at {FullPath}", fullPath);
             var result = await _storage.FileExistsAsync(fullPath, cancellationToken);
             return result.IsSuccess && result.Data;
         }
