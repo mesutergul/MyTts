@@ -150,6 +150,10 @@ namespace MyTts.Services
             try
             {
                 NewsDto news = await _mp3FileRepository.LoadNewsAsync(request.News, cancellationToken);
+                if (string.IsNullOrEmpty(news.Summary))
+                {
+                    throw new InvalidOperationException($"News summary is null or empty for ID: {news.Id}");
+                }
                 var stream = await RequestSingleMp3Async(news.Id, news.Summary, request.Language, fileType, cancellationToken);
 
                 // Save metadata after successful processing
@@ -488,7 +492,7 @@ namespace MyTts.Services
                 CreateNoWindow = true
             };
 
-            using var process = Process.Start(startInfo);
+            using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Failed to start ffmpeg process");
             await process.WaitForExitAsync();
         }
 

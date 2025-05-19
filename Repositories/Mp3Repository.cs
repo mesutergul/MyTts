@@ -45,7 +45,6 @@ namespace MyTts.Repositories
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _cache = cache ?? throw new ArgumentNullException(nameof(cache));
             
-            StoragePathHelper.Initialize(storageConfig ?? throw new ArgumentNullException(nameof(storageConfig)));
             _baseStoragePath = StoragePathHelper.GetBasePath();
             _metadataPath = StoragePathHelper.GetMetadataPath();
             
@@ -444,11 +443,12 @@ namespace MyTts.Repositories
                 throw;
             }
         }
-        public async Task<Mp3Dto?> LoadMp3MetaByPathAsync(string filePath, AudioType fileType, CancellationToken cancellationToken)
+        public async Task<Mp3Dto> LoadMp3MetaByPathAsync(string filePath, AudioType fileType, CancellationToken cancellationToken)
         {
             try
             {
-                var mp3File = await _mp3MetaRepository.GetByColumnAsync(x => x.FileUrl == filePath, cancellationToken);
+                var mp3File = await _mp3MetaRepository.GetByColumnAsync(x => x.FileUrl == filePath, cancellationToken)
+                    ?? throw new KeyNotFoundException($"MP3 file not found for path: {filePath}");
                 return mp3File;
             }
             catch (Exception ex)
@@ -459,50 +459,20 @@ namespace MyTts.Repositories
         }
         public async Task<Mp3Dto> LoadLatestMp3MetaByLanguageAsync(string language, AudioType fileType, CancellationToken cancellationToken)
         {
-            try
-            {
-                var mp3Files = await LoadListMp3MetadatasAsync(fileType, cancellationToken);
-                return mp3Files
-                    .Where(f => f.Language.Equals(language, StringComparison.OrdinalIgnoreCase))
-                    .OrderByDescending(f => f.CreatedDate)
-                    .FirstOrDefault()
-                    ?? throw new KeyNotFoundException($"No MP3 file found for language: {language}");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to get latest MP3 file for language: {Language}", language);
-                throw;
-            }
+            return await _mp3MetaRepository.GetByColumnAsync(x=>x.Language==language, cancellationToken);
         }
 
-        // public async Task SaveSingleMp3MetaAsync(Mp3Dto mp3File, AudioType fileType, CancellationToken cancellationToken)
-        // {
-        //     try
-        //     {
-        //         var mp3Files = await LoadListMp3MetadatasAsync(fileType, cancellationToken);
-        //         mp3Files.Add(mp3File);
-        //         await SaveMp3MetadatasAsync(mp3Files, fileType, cancellationToken);
-        //     }
-        //     catch (Exception ex)
-        //     {
-        //         _logger.LogError(ex, "Failed to save MP3 file metadata");
-        //         throw;
-        //     }
-        // }
-        public async Task<Mp3Dto?> LoadAndCacheMp3File(int id, AudioType fileType, CancellationToken cancellationToken)
+        public async Task SaveSingleMp3MetaAsync(Mp3Dto mp3File, AudioType fileType, CancellationToken cancellationToken)
+        {
+            await _mp3MetaRepository.AddAsync(mp3File, cancellationToken);
+        }
+        public async Task<Mp3Dto> LoadAndCacheMp3File(int id, AudioType fileType, CancellationToken cancellationToken)
         {
             var mp3File = await LoadMp3MetaByNewsIdAsync(id, fileType, cancellationToken);
-            if (mp3File != null)
-            {
-                string cacheKey = GetCacheKey(id);
-                _logger.LogDebug("Caching metadata for ID {Id} with key {CacheKey} for {Duration} hours",
-                    id, cacheKey, RedisKeys.DEFAULT_METADATA_EXPIRY.TotalHours);
-                await SetToCacheAsync(cacheKey, mp3File, RedisKeys.DEFAULT_METADATA_EXPIRY, cancellationToken);
-            }
-            else
-            {
-                _logger.LogInformation("No metadata found to cache for ID {Id}", id);
-            }
+            string cacheKey = GetCacheKey(id);
+            _logger.LogDebug("Caching metadata for ID {Id} with key {CacheKey} for {Duration} hours",
+                id, cacheKey, RedisKeys.DEFAULT_METADATA_EXPIRY.TotalHours);
+            await SetToCacheAsync(cacheKey, mp3File, RedisKeys.DEFAULT_METADATA_EXPIRY, cancellationToken);
             return mp3File;
         }
         public async Task<Mp3Dto?> GetFromCacheAsync(string key, CancellationToken cancellationToken)

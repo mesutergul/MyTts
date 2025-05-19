@@ -4,6 +4,7 @@ using Microsoft.Extensions.Configuration;
 using MyTts.Models;
 using MyTts.Repositories;
 using MyTts.Services.Interfaces;
+using MyTts.Helpers;
 
 namespace MyTts.Services
 {
@@ -11,13 +12,11 @@ namespace MyTts.Services
     {
         private readonly ILogger<Mp3StreamMerger> _logger;
         private readonly SemaphoreSlim _mergeLock;
-        private readonly string _baseStoragePath;
         private bool _disposed;
 
         public Mp3StreamMerger(ILogger<Mp3StreamMerger> logger, IConfiguration configuration)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _baseStoragePath = Path.GetFullPath(configuration["Storage:BasePath"]) ?? "C:\\repos\\audio";
             _mergeLock = new SemaphoreSlim(1, 1);
         }
 
@@ -33,7 +32,7 @@ namespace MyTts.Services
             {
                 throw new ArgumentException("No audio processors provided", nameof(audioProcessors));
             }
-            var outputFilePath = $"merged";
+            var outputFilePath = "merged";
             var lockTaken = false;
             try
             {
@@ -108,7 +107,7 @@ namespace MyTts.Services
 
                 if (outputStream.Length > 0)
                 {
-                    string fullPath = Path.Combine(_baseStoragePath, filePath + "." + fileType.ToString().ToLower());
+                    string fullPath = StoragePathHelper.GetFullPath(filePath, fileType);
                     _logger.LogInformation("Saving merged audio from MemoryStream to file: {FilePath}, length: {length}", filePath, outputStream.Length);
 
                     outputStream.Position = 0;

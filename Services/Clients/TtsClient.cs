@@ -126,8 +126,6 @@ namespace MyTts.Services.Clients
             {
                 _logger.LogInformation("Google Cloud Storage is not configured or disabled");
             }
-
-            StoragePathHelper.Initialize(_storageConfig);
         }
 
         private async Task<T> ExecuteWithPoliciesAsync<T>(Func<Task<T>> operation, string operationName)

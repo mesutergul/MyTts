@@ -237,7 +237,7 @@ namespace MyTts.Storage
 
                 try
                 {
-                    await _retryPolicy.ExecuteAsync(async () =>
+                    await _retryPolicy.ExecuteAsync(() =>
                     {
                         if (File.Exists(filePath))
                         {
@@ -305,7 +305,7 @@ namespace MyTts.Storage
             var startTime = DateTime.UtcNow;
             try
             {
-                await _retryPolicy.ExecuteAsync(async () =>
+                await _retryPolicy.ExecuteAsync(() =>
                 {
                     Directory.CreateDirectory(directoryPath);
                     return Task.CompletedTask;
@@ -335,7 +335,7 @@ namespace MyTts.Storage
 
                 try
                 {
-                    await _retryPolicy.ExecuteAsync(async () =>
+                    await _retryPolicy.ExecuteAsync(() =>
                     {
                         File.Move(sourceFilePath, destinationFilePath, true);
                         return Task.CompletedTask;
