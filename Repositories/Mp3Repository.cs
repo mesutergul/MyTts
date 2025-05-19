@@ -122,7 +122,7 @@ namespace MyTts.Repositories
             bool existsInDisk = await Mp3FileExistsAsync(id, fileType, cancellationToken);
             if (existsInDisk)
             {
-                _logger.LogInformation("File with id : {id} exist in disk", id);
+                _logger.LogInformation("File with id : {id} exists in disk", id);
                 if (!await Mp3FileExistsInCacheAsync(cacheKey, cancellationToken))
                 {
                     await _cache.SetAsync(cacheKey, true, FILE_CACHE_DURATION);
