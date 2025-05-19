@@ -34,9 +34,9 @@
     <PackageReference Include="Serilog.Sinks.Debug" Version="3.0.0" />
     <PackageReference Include="StackExchange.Redis" Version="2.8.31" />
   </ItemGroup>
-    <!-- <ItemGroup>
+  <ItemGroup>
     <None Update="test.csv"> <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory> </None>
-  </ItemGroup> -->
+  </ItemGroup> 
   <!-- <ItemGroup>
     <None Update="ffmpeg-bin\**\*.*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

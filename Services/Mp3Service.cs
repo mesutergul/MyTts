@@ -8,6 +8,7 @@ using MyTts.Helpers;
 using System.Diagnostics;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using MyTts.Services.Clients;
 
 namespace MyTts.Services
 {
@@ -15,7 +16,7 @@ namespace MyTts.Services
     {
         private readonly ILogger<Mp3Service> _logger;
         private readonly IMp3Repository _mp3FileRepository;
-        private readonly ITtsManagerService _ttsManager;
+        private readonly TtsClient _ttsClient;
         private readonly INewsFeedsService _newsFeedsService;
         private readonly IRedisCacheService? _cache;
         private readonly SemaphoreSlim _processingSemaphore;
@@ -26,14 +27,14 @@ namespace MyTts.Services
         public Mp3Service(
             ILogger<Mp3Service> logger,
             IMp3Repository mp3FileRepository,
-            ITtsManagerService ttsManager,
+            TtsClient ttsClient,
             IRedisCacheService cache,
             INewsFeedsService newsFeedsService,
             IServiceScopeFactory serviceScopeFactory)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _mp3FileRepository = mp3FileRepository ?? throw new ArgumentNullException(nameof(mp3FileRepository));
-            _ttsManager = ttsManager ?? throw new ArgumentNullException(nameof(ttsManager));
+            _ttsClient = ttsClient ?? throw new ArgumentNullException(nameof(ttsClient));
             _cache = cache ?? throw new ArgumentNullException(nameof(cache));
             _newsFeedsService = newsFeedsService ?? throw new ArgumentNullException(nameof(newsFeedsService));
             _processingSemaphore = new SemaphoreSlim(MaxConcurrentProcessing);
@@ -56,7 +57,11 @@ namespace MyTts.Services
                 }
                 
                 var (neededNewsList, savedNewsList) = await checkNewsList(newsList, language, fileType, cancellationToken);
-                var mergedFilePath = await _ttsManager.ProcessContentsAsync(newsList, neededNewsList, savedNewsList, language, fileType);
+                
+                // Process needed news in parallel
+                var tasks = neededNewsList.Select(news => 
+                    _ttsClient.ProcessContentAsync(news.Ozet, news.IlgiId, language, fileType, cancellationToken));
+                var results = await Task.WhenAll(tasks);
 
                 var savingNewsList = (await Task.WhenAll(savedNewsList
                     .Select(async x => (x, await _mp3FileRepository.Mp3FileExistsInSqlAsync(x.IlgiId, cancellationToken)))))
@@ -102,7 +107,7 @@ namespace MyTts.Services
                     }
                 }
 
-                return mergedFilePath;
+                return "Processing completed successfully";
             }
             finally
             {
@@ -171,7 +176,7 @@ namespace MyTts.Services
             try
             {
                 await _processingSemaphore.WaitAsync();
-                var (filePath, processor) = await _ttsManager.ProcessContentAsync(content, id, language, fileType, cancellationToken);
+                var (filePath, processor) = await _ttsClient.ProcessContentAsync(content, id, language, fileType, cancellationToken);
                 return await processor.GetStreamForCloudUploadAsync(cancellationToken);
             }
             catch (Exception ex)
@@ -320,7 +325,7 @@ namespace MyTts.Services
             if (fileData == null || fileData.Length == 0)
             {
                 var content = _newsFeedsService.GetFeedUrl("tr");
-                (localPath, var processor)= await _ttsManager.ProcessContentAsync(content, id, language, fileType, cancellationToken);
+                (localPath, var processor)= await _ttsClient.ProcessContentAsync(content, id, language, fileType, cancellationToken);
                 fileStream = await processor.GetStreamForCloudUploadAsync(cancellationToken);
             } else fileStream= new MemoryStream(fileData);
             return (fileStream, localPath.ToString());
@@ -448,12 +453,13 @@ namespace MyTts.Services
         }
         public async ValueTask DisposeAsync()
         {
-            if (!_disposed)
+            if (_disposed) return;
+            _disposed = true;
+            _processingSemaphore.Dispose();
+            if (_ttsClient is IAsyncDisposable disposableTtsClient)
             {
-                _processingSemaphore.Dispose();
-                _disposed = true;
+                await disposableTtsClient.DisposeAsync();
             }
-            await Task.CompletedTask;
         }
 
         public async Task<IEnumerable<Mp3Dto>> GetMp3FileListAsync(string language, AudioType fileType, CancellationToken cancellationToken)

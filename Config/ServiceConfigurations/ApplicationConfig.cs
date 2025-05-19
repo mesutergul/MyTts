@@ -1,4 +1,5 @@
-using ElevenLabs;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using MyTts.Repositories;
 using MyTts.Services;
 using MyTts.Services.Interfaces;
@@ -7,24 +8,19 @@ namespace MyTts.Config.ServiceConfigurations;
 
 public static class ApplicationConfig
 {
-    public static IServiceCollection AddApplicationServices(this IServiceCollection services)
+    public static IServiceCollection AddApplicationServices(this IServiceCollection services, IConfiguration configuration)
     {
         // Register repositories
         services.AddScoped<IMp3Repository, Mp3Repository>();
         
-        // Register core services
+        // Register application services
         services.AddScoped<IMp3Service, Mp3Service>();
-        services.AddScoped<ITtsManagerService, TtsManagerService>();
-        services.AddScoped<IMp3StreamMerger, Mp3StreamMerger>();
         services.AddScoped<INewsFeedsService, NewsFeedsService>();
        
         // Register infrastructure services
         services.AddScoped<IRedisCacheService, RedisCacheService>();
         services.AddScoped<IFileStreamingService, FileStreamingService>();
         services.AddScoped<IAudioConversionService, AudioConversionService>();
-
-        // Register external clients
-        services.AddScoped<ElevenLabsClient>();
 
         return services;
     }

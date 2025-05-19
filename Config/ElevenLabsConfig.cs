@@ -9,9 +9,6 @@ namespace MyTts.Config
         public string ApiKey { get; set; } = string.Empty;
 
         [Required]
-        public string VoiceId { get; set; } = string.Empty;
-
-        [Required]
         public string Model { get; set; } = string.Empty;
 
         public int? MaxConcurrency { get; set; }
@@ -30,6 +27,7 @@ namespace MyTts.Config
         [Range(0.1, 5.0)]
         public float Speed { get; set; } = 1.0f;
 
+        [Required]
         public Dictionary<string, LanguageVoiceConfig> Feed { get; set; } = new();
 
         public ValidateOptionsResult Validate(string? name, ElevenLabsConfig options)
@@ -38,9 +36,6 @@ namespace MyTts.Config
 
             if (string.IsNullOrEmpty(options.ApiKey))
                 errors.Add("ApiKey is required");
-
-            if (string.IsNullOrEmpty(options.VoiceId))
-                errors.Add("VoiceId is required");
 
             if (string.IsNullOrEmpty(options.Model))
                 errors.Add("Model is required");
@@ -85,6 +80,7 @@ namespace MyTts.Config
 
     public class LanguageVoiceConfig
     {
+        [Required]
         public Dictionary<string, string> Voices { get; set; } = new();
     }
 }

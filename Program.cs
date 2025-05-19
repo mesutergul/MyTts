@@ -16,7 +16,7 @@ var builder = WebApplication.CreateBuilder(args);
 // Add services to the container
 builder.Services
     .AddAutoMapperServices()
-    .AddApplicationServices()
+    .AddApplicationServices(builder.Configuration)
     .AddDatabaseServices(builder.Configuration)
     .AddStorageServices(builder.Configuration)
     .AddElevenLabsServices(builder.Configuration)
