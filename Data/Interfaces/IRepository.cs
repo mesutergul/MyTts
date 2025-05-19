@@ -1,7 +1,4 @@
-using System.Collections.Generic;
-using System.Threading.Tasks;
 using MyTts.Data.Entities;
-using MyTts.Data.Interfaces;
 
 namespace MyTts.Data.Interfaces
 {

@@ -1,5 +1,4 @@
-﻿using FFMpegCore;
-using MyTts.Services.Interfaces;
+﻿using MyTts.Services.Interfaces;
 using System.Diagnostics;
 
 namespace MyTts.Services

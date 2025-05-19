@@ -1,5 +1,4 @@
 ﻿using System.ComponentModel.DataAnnotations.Schema;
-using MyTts.Data.Interfaces;
 
 namespace MyTts.Data.Entities
 {

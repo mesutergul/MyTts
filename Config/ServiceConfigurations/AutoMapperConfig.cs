@@ -1,6 +1,5 @@
 using MyTts.Data;
 using MyTts.Data.Entities;
-using MyTts.Data.Interfaces;
 using MyTts.Models;
 
 namespace MyTts.Config.ServiceConfigurations;

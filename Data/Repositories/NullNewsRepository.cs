@@ -1,5 +1,3 @@
-using AutoMapper;
-using MyTts.Data.Context;
 using MyTts.Data.Entities;
 using MyTts.Data.Interfaces;
 using MyTts.Models;

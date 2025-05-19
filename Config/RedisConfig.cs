@@ -1,6 +1,5 @@
 using System.ComponentModel.DataAnnotations;
 using Microsoft.Extensions.Options;
-using System.Collections.Generic;
 
 namespace MyTts.Config
 {

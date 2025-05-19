@@ -1,5 +1,4 @@
 ﻿using Microsoft.EntityFrameworkCore;
-using MyTts.Data.Entities;
 
 namespace MyTts.Data.Context
 {

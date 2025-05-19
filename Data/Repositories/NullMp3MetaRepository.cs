@@ -1,13 +1,6 @@
 // Null fallback for Mp3MetaRepository
 using MyTts.Data.Entities;
-
-
-using System.Collections.Generic;
-using System.Threading.Tasks;
-using AutoMapper;
 using MyTts.Data.Interfaces;
-using Microsoft.Extensions.Logging;
-using MyTts.Data.Context;
 using MyTts.Models;
 using System.Linq.Expressions;
 

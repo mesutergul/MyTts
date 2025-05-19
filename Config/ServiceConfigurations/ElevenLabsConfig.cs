@@ -1,9 +1,6 @@
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using MyTts.Services.Clients;
 using MyTts.Services.Interfaces;
-using MyTts.Config;
 using MyTts.Services;
 using ElevenLabs;
 using Polly;

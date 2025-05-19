@@ -1,8 +1,6 @@
 ﻿using FFMpegCore;
 using FFMpegCore.Pipes;
-using Microsoft.Extensions.Configuration;
 using MyTts.Models;
-using MyTts.Repositories;
 using MyTts.Services.Interfaces;
 using MyTts.Helpers;
 

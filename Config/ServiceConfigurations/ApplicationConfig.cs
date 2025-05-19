@@ -1,5 +1,3 @@
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
 using MyTts.Repositories;
 using MyTts.Services;
 using MyTts.Services.Interfaces;

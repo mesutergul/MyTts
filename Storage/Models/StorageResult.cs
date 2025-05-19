@@ -1,5 +1,3 @@
-using System;
-
 namespace MyTts.Storage.Models
 {
     public class StorageResult<T>
