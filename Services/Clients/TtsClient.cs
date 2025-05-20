@@ -127,11 +127,107 @@ namespace MyTts.Services.Clients
             }
         }
 
-        private async Task<T> ExecuteWithPoliciesAsync<T>(Func<Task<T>> operation, string operationName)
+        private async Task<T> ExecuteWithPoliciesAsync<T>(Func<Task<T>> action, CancellationToken cancellationToken)
         {
-            return await _circuitBreakerPolicy
-                .WrapAsync(_retryPolicy)
-                .ExecuteAsync(async () => await operation());
+            try
+            {
+                // Apply both policies to the action
+                return await _circuitBreakerPolicy
+                    .WrapAsync(_retryPolicy)
+                    .ExecuteAsync(async () => 
+                    {
+                        var content = await action();
+                        if (content is string text)
+                        {
+                            if (ContainsBlockedContent(text))
+                            {
+                                _logger.LogWarning("Content blocked due to policy violation");
+                                throw new InvalidOperationException("Content violates service policy");
+                            }
+                        }
+                        return content;
+                    });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error executing TTS request");
+                throw;
+            }
+        }
+
+        private bool ContainsBlockedContent(string text)
+        {
+            // Define blocked content categories
+            var blockedCategories = new Dictionary<string, string[]>
+            {
+                ["violence"] = new[] {
+                    // English
+                    "kill", "murder", "attack", "weapon", "gun", "bomb", "terrorist",
+                    "suicide", "abuse", "torture", "blood", "gore",
+                    // Turkish
+                    "öldür", "katliam", "saldırı", "silah", "bomba", "terörist",
+                    "intihar", "istismar", "işkence", "kan", "şiddet"
+                },
+                ["hate"] = new[] {
+                    // English
+                    "racist", "nazi", "supremacist", "bigot", "hate speech",
+                    "discriminate", "prejudice", "intolerant",
+                    // Turkish
+                    "ırkçı", "nazi", "üstün", "bağnaz", "nefret söylemi",
+                    "ayrımcı", "önyargı", "hoşgörüsüz"
+                },
+                ["explicit"] = new[] {
+                    // English
+                    "porn", "sex", "nude", "explicit", "adult content",
+                    "obscene", "lewd", "vulgar",
+                    // Turkish
+                    "porno", "seks", "çıplak", "müstehcen", "yetişkin içerik",
+                    "edepsiz", "ahlaksız", "kaba"
+                },
+                ["illegal"] = new[] {
+                    // English
+                    "drug", "cocaine", "heroin", "meth", "illegal",
+                    "hack", "crack", "pirate", "steal",
+                    // Turkish
+                    "uyuşturucu", "eroin", "metamfetamin", "yasadışı",
+                    "hack", "korsan", "çal", "hırsızlık"
+                },
+                ["harmful"] = new[] {
+                    // English
+                    "suicide", "self-harm", "abuse", "exploit",
+                    "scam", "fraud", "phishing",
+                    // Turkish
+                    "intihar", "kendine zarar", "istismar", "sömürü",
+                    "dolandırıcılık", "sahte", "dolandırma"
+                }
+            };
+
+            // Check for blocked content in each category
+            foreach (var category in blockedCategories)
+            {
+                if (category.Value.Any(term => 
+                    text.Contains(term, StringComparison.OrdinalIgnoreCase)))
+                {
+                    _logger.LogWarning("Content blocked due to {Category} policy violation", category.Key);
+                    return true;
+                }
+            }
+
+            // Check for excessive punctuation or special characters
+            if (text.Count(c => !char.IsLetterOrDigit(c) && !char.IsWhiteSpace(c)) > text.Length * 0.3)
+            {
+                _logger.LogWarning("Content blocked due to excessive special characters");
+                return true;
+            }
+
+            // Check for repeated characters
+            if (text.Length > 0 && text.GroupBy(c => c).Any(g => g.Count() > 10))
+            {
+                _logger.LogWarning("Content blocked due to character repetition");
+                return true;
+            }
+
+            return false;
         }
 
         public async Task<(int id, AudioProcessor FileData)> ProcessContentAsync(
@@ -170,7 +266,7 @@ namespace MyTts.Services.Clients
                     // Generate audio clip from ElevenLabs with retry and circuit breaker policies
                     var voiceClip = await ExecuteWithPoliciesAsync(
                         () => _elevenLabsClient.TextToSpeechEndpoint.TextToSpeechAsync(request, null, cancellationToken),
-                        "TextToSpeech");
+                        cancellationToken);
 
                     var audioProcessor = new AudioProcessor(voiceClip);
 
@@ -207,7 +303,7 @@ namespace MyTts.Services.Clients
             // If not in cache, fetch and cache it with retry and circuit breaker policies
             var voice = await ExecuteWithPoliciesAsync(
                 () => _elevenLabsClient.VoicesEndpoint.GetVoiceAsync(voiceId, withSettings: false, cancellationToken),
-                "GetVoice");
+                cancellationToken);
             
             _voiceCache.TryAdd(voiceId, voice);
             return voice;
