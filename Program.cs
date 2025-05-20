@@ -21,6 +21,7 @@ builder.Services
     .AddStorageServices(builder.Configuration)
     .AddElevenLabsServices(builder.Configuration)
     .AddRedisServices(builder.Configuration)
+    .AddEmailServices(builder.Configuration)
     .AddHttpClientsServices()
     .AddApiServices();
 
