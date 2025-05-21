@@ -1,6 +1,10 @@
 using MyTts.Repositories;
 using MyTts.Services;
 using MyTts.Services.Interfaces;
+using Microsoft.Extensions.Options;
+using Polly;
+using Polly.Retry;
+using Polly.CircuitBreaker;
 
 namespace MyTts.Config.ServiceConfigurations;
 
@@ -13,18 +17,22 @@ public static class ApplicationConfig
         
         // Register application services
         services.AddScoped<IMp3Service, Mp3Service>();
-        services.AddScoped<INotificationService, NotificationService>();
         
-        // Configure notification options
+        // Configure and register notification service with resilience policies
         services.Configure<NotificationOptions>(configuration.GetSection("Notifications"));
-
-        // Register HttpClient for Slack notifications
         services.AddHttpClient<INotificationService, NotificationService>(client =>
         {
             client.DefaultRequestHeaders.Add("User-Agent", "MyTts-NotificationService");
             client.Timeout = TimeSpan.FromSeconds(30);
-        });
-       
+        })
+        .AddTransientHttpErrorPolicy(policy => policy
+            .WaitAndRetryAsync(3, retryAttempt => 
+                TimeSpan.FromSeconds(Math.Pow(2, retryAttempt))))
+        .AddTransientHttpErrorPolicy(policy => policy
+            .CircuitBreakerAsync(
+                handledEventsAllowedBeforeBreaking: 2,
+                durationOfBreak: TimeSpan.FromSeconds(30)));
+
         // Register infrastructure services
         services.AddScoped<IRedisCacheService, RedisCacheService>();
         services.AddScoped<IFileStreamingService, FileStreamingService>();
