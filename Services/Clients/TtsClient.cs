@@ -217,33 +217,65 @@ namespace MyTts.Services.Clients
                 }
             };
 
-            // Check for blocked content in each category
-            foreach (var category in blockedCategories)
+            // Check for blocked content in parallel
+            var blockedCategory = blockedCategories.AsParallel()
+                .FirstOrDefault(category => category.Value.Any(term => 
+                    text.Contains(term, StringComparison.OrdinalIgnoreCase)));
+
+            if (blockedCategory.Key != null)
             {
-                if (category.Value.Any(term => 
-                    text.Contains(term, StringComparison.OrdinalIgnoreCase)))
+                _logger.LogWarning("Content blocked due to {Category} policy violation", blockedCategory.Key);
+                // Fire and forget notification
+                _ = Task.Run(async () =>
                 {
-                    _logger.LogWarning("Content blocked due to {Category} policy violation", category.Key);
-                    _notificationService.SendNotificationAsync(
-                        "Content Policy Violation",
-                        $"Content blocked due to {category.Key} policy violation",
-                        NotificationType.Warning).GetAwaiter().GetResult();
-                    return true;
+                    try
+                    {
+                        await _notificationService.SendNotificationAsync(
+                            "Content Policy Violation",
+                            $"Content blocked due to {blockedCategory.Key} policy violation",
+                            NotificationType.Warning);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Failed to send notification for content policy violation");
+                    }
+                });
+                return true;
+            }
+
+            // Check for excessive punctuation or special characters using Span<char> for better performance
+            var specialCharCount = 0;
+            foreach (var c in text.AsSpan())
+            {
+                if (!char.IsLetterOrDigit(c) && !char.IsWhiteSpace(c))
+                {
+                    specialCharCount++;
                 }
             }
 
-            // Check for excessive punctuation or special characters
-            if (text.Count(c => !char.IsLetterOrDigit(c) && !char.IsWhiteSpace(c)) > text.Length * 0.3)
+            if (specialCharCount > text.Length * 0.3)
             {
                 _logger.LogWarning("Content blocked due to excessive special characters");
                 return true;
             }
 
-            // Check for repeated characters
-            if (text.Length > 0 && text.GroupBy(c => c).Any(g => g.Count() > 10))
+            // Check for repeated characters using a more efficient approach
+            var charCounts = new Dictionary<char, int>();
+            foreach (var c in text.AsSpan())
             {
-                _logger.LogWarning("Content blocked due to character repetition");
-                return true;
+                if (charCounts.TryGetValue(c, out var count))
+                {
+                    if (count >= 10)
+                    {
+                        _logger.LogWarning("Content blocked due to character repetition");
+                        return true;
+                    }
+                    charCounts[c] = count + 1;
+                }
+                else
+                {
+                    charCounts[c] = 1;
+                }
             }
 
             return false;
@@ -283,9 +315,16 @@ namespace MyTts.Services.Clients
                     var request = await CreateTtsRequestAsync(voice, text);
 
                     // Generate audio clip from ElevenLabs with retry and circuit breaker policies
+                    var stopwatch = System.Diagnostics.Stopwatch.StartNew();
                     var voiceClip = await ExecuteWithPoliciesAsync(
                         () => _elevenLabsClient.TextToSpeechEndpoint.TextToSpeechAsync(request, null, cancellationToken),
                         cancellationToken);
+                    stopwatch.Stop();
+
+                    _logger.LogInformation(
+                        "Generated audio clip in {ElapsedMilliseconds}ms for text length {TextLength}",
+                        stopwatch.ElapsedMilliseconds,
+                        text.Length);
 
                     var audioProcessor = new AudioProcessor(voiceClip);
 

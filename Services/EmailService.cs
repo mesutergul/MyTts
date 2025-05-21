@@ -9,6 +9,7 @@ public class EmailService : IEmailService
 {
     private readonly EmailConfig _emailConfig;
     private readonly ILogger<EmailService> _logger;
+    private const int EmailTimeoutSeconds = 5;
 
     public EmailService(IOptions<EmailConfig> emailConfig, ILogger<EmailService> logger)
     {
@@ -41,10 +42,12 @@ public class EmailService : IEmailService
             using var client = new SmtpClient(_emailConfig.SmtpServer, _emailConfig.SmtpPort)
             {
                 EnableSsl = _emailConfig.EnableSsl,
-                Credentials = new System.Net.NetworkCredential(_emailConfig.SenderEmail, _emailConfig.SenderPassword)
+                Credentials = new System.Net.NetworkCredential(_emailConfig.SenderEmail, _emailConfig.SenderPassword),
+                Timeout = EmailTimeoutSeconds * 1000 // Convert seconds to milliseconds
             };
 
-            await client.SendMailAsync(message);
+            // Use Task.Run to move the synchronous SendMailAsync to a background thread
+            await Task.Run(() => client.SendMailAsync(message));
             _logger.LogInformation("Email sent successfully to {Recipients}", string.Join(", ", to));
         }
         catch (Exception ex)

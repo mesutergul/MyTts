@@ -71,10 +71,10 @@ namespace MyTts.Data.Repositories
                 .ToListAsync(cancellationToken);
         }
 
-        public async Task<Mp3Dto?> GetByIdAsync(int id, CancellationToken cancellationToken = default)
+        public async Task<Mp3Dto> GetByIdAsync(int id, CancellationToken cancellationToken = default)
         {
-            var entity = await _dbSet.FindAsync(new object[] { id }, cancellationToken);
-            return entity != null ? _mapper.Map<Mp3Dto>(entity) : null;
+            var entity = await _dbSet.AsNoTracking().FirstOrDefaultAsync(e => e.FileId == id, cancellationToken);
+            return entity != null ? _mapper.Map<Mp3Dto>(entity) : throw new KeyNotFoundException($"MP3 with ID {id} not found.");
         }
 
         public async Task<List<Mp3Dto>> GetAllAsync(CancellationToken cancellationToken = default)
@@ -97,10 +97,9 @@ namespace MyTts.Data.Repositories
 
         public async Task<Mp3Dto> FindAsync(Func<Mp3Meta, bool> predicate, CancellationToken cancellationToken = default)
         {
-            var entity = _dbSet.FirstOrDefault(predicate);
-            return entity != null ? _mapper.Map<Mp3Dto>(entity) : null!;
+            var entity = await _dbSet.AsNoTracking().FirstOrDefaultAsync(m => predicate(m), cancellationToken);
+            return entity != null ? _mapper.Map<Mp3Dto>(entity) : throw new KeyNotFoundException("Entity not found.");
         }
-
         public async Task Update(Mp3Dto dto, CancellationToken cancellationToken = default)
         {
             var entity = await _dbSet.FindAsync(new object[] { dto.FileId }, cancellationToken);
@@ -163,11 +162,7 @@ namespace MyTts.Data.Repositories
                 {
                     foreach (var record in existingRecords)
                     {
-                        var existingEntity = await _dbSet.FindAsync(new object[] { record.FileId }, cancellationToken);
-                        if (existingEntity != null)
-                        {
-                            _mapper.Map(record, existingEntity);
-                        }
+                        _mapper.Map(record, record);
                     }
                 }
 

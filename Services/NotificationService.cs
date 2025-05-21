@@ -58,34 +58,39 @@ namespace MyTts.Services
             await SendNotificationAsync(title, fullMessage, NotificationType.Error, cancellationToken);
         }
 
-        private async Task SendEmailNotificationAsync(string title, string message, NotificationType type, CancellationToken cancellationToken)
+        private Task SendEmailNotificationAsync(string title, string message, NotificationType type, CancellationToken cancellationToken)
         {
             if (string.IsNullOrEmpty(_options.EmailTo))
             {
                 _logger.LogWarning("Email notifications are enabled but EmailTo is not configured");
-                return;
+                return Task.CompletedTask;
             }
 
-            try
+            // Fire and forget email notification
+            _ = Task.Run(async () =>
             {
-                var subject = $"[{type}] {title}";
-                var body = $"""
-                    Notification Type: {type}
-                    Title: {title}
-                    Time: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC
-                    
-                    Message:
-                    {message}
-                    """;
+                try
+                {
+                    var subject = $"[{type}] {title}";
+                    var body = $"""
+                        Notification Type: {type}
+                        Title: {title}
+                        Time: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC
+                        
+                        Message:
+                        {message}
+                        """;
 
-                await _emailService.SendEmailAsync(_options.EmailTo, subject, body);
-                _logger.LogInformation("Email notification sent successfully to {Recipient}", _options.EmailTo);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to send email notification to {Recipient}", _options.EmailTo);
-                throw;
-            }
+                    await _emailService.SendEmailAsync(_options.EmailTo, subject, body);
+                    _logger.LogInformation("Email notification sent successfully to {Recipient}", _options.EmailTo);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to send email notification to {Recipient}", _options.EmailTo);
+                }
+            }, cancellationToken);
+
+            return Task.CompletedTask;
         }
 
         private async Task SendSlackNotificationAsync(string title, string message, NotificationType type, CancellationToken cancellationToken)
