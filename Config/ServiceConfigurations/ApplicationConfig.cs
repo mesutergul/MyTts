@@ -13,7 +13,17 @@ public static class ApplicationConfig
         
         // Register application services
         services.AddScoped<IMp3Service, Mp3Service>();
-     //   services.AddScoped<INewsFeedsService, NewsFeedsService>();
+        services.AddScoped<INotificationService, NotificationService>();
+        
+        // Configure notification options
+        services.Configure<NotificationOptions>(configuration.GetSection("Notifications"));
+
+        // Register HttpClient for Slack notifications
+        services.AddHttpClient<INotificationService, NotificationService>(client =>
+        {
+            client.DefaultRequestHeaders.Add("User-Agent", "MyTts-NotificationService");
+            client.Timeout = TimeSpan.FromSeconds(30);
+        });
        
         // Register infrastructure services
         services.AddScoped<IRedisCacheService, RedisCacheService>();

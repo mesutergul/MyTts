@@ -40,6 +40,7 @@ namespace MyTts.Services.Clients
         private const int BufferSize = 128 * 1024; // 128KB buffer size
         private static readonly ThreadLocal<Random> _random = new(() => new Random());
         private bool _disposed;
+        private readonly INotificationService _notificationService;
 
         public TtsClient(
             ElevenLabsClient elevenLabsClient,
@@ -48,6 +49,7 @@ namespace MyTts.Services.Clients
             ILocalStorageClient storage,
             IRedisCacheService? cache,
             IMp3StreamMerger mp3StreamMerger,
+            INotificationService notificationService,
             ILogger<TtsClient> logger)
         {
             _elevenLabsClient = elevenLabsClient ?? throw new ArgumentNullException(nameof(elevenLabsClient));
@@ -56,6 +58,7 @@ namespace MyTts.Services.Clients
             _localStorageClient = storage ?? throw new ArgumentNullException(nameof(storage));
             _cache = cache;
             _mp3StreamMerger = mp3StreamMerger ?? throw new ArgumentNullException(nameof(mp3StreamMerger));
+            _notificationService = notificationService ?? throw new ArgumentNullException(nameof(notificationService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _semaphore = new SemaphoreSlim(MaxConcurrentOperations);
             _voiceCache = new ConcurrentDictionary<string, Voice>();
@@ -83,19 +86,31 @@ namespace MyTts.Services.Clients
                 .CircuitBreakerAsync(
                     exceptionsAllowedBeforeBreaking: 2,
                     durationOfBreak: TimeSpan.FromSeconds(30),
-                    onBreak: (exception, duration) =>
+                    onBreak: async (exception, duration) =>
                     {
                         _logger.LogWarning(exception,
                             "Circuit breaker opened for {Duration} seconds due to {ExceptionType}",
                             duration.TotalSeconds, exception.GetType().Name);
+                        await _notificationService.SendNotificationAsync(
+                            "Circuit Breaker Opened",
+                            $"Service is temporarily unavailable for {duration.TotalSeconds} seconds due to {exception.GetType().Name}",
+                            NotificationType.Warning);
                     },
-                    onReset: () =>
+                    onReset: async () =>
                     {
                         _logger.LogInformation("Circuit breaker reset - service is healthy again");
+                        await _notificationService.SendNotificationAsync(
+                            "Circuit Breaker Reset",
+                            "Service is healthy and accepting requests again",
+                            NotificationType.Success);
                     },
-                    onHalfOpen: () =>
+                    onHalfOpen: async () =>
                     {
                         _logger.LogInformation("Circuit breaker half-open - testing service health");
+                        await _notificationService.SendNotificationAsync(
+                            "Circuit Breaker Testing",
+                            "Testing service health before fully reopening",
+                            NotificationType.Info);
                     });
 
             // Initialize Google Cloud Storage if configured
@@ -209,6 +224,10 @@ namespace MyTts.Services.Clients
                     text.Contains(term, StringComparison.OrdinalIgnoreCase)))
                 {
                     _logger.LogWarning("Content blocked due to {Category} policy violation", category.Key);
+                    _notificationService.SendNotificationAsync(
+                        "Content Policy Violation",
+                        $"Content blocked due to {category.Key} policy violation",
+                        NotificationType.Warning).GetAwaiter().GetResult();
                     return true;
                 }
             }
@@ -278,6 +297,12 @@ namespace MyTts.Services.Clients
                     );
 
                     _logger.LogInformation("Processed content {Id}: {LocalPath}", id, localPath);
+
+                    await _notificationService.SendNotificationAsync(
+                        "Content Processed Successfully",
+                        $"Successfully processed content {id} for language {language}",
+                        NotificationType.Success);
+
                     return (id, audioProcessor);
                 }
                 finally
@@ -288,6 +313,10 @@ namespace MyTts.Services.Clients
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error processing content {Id}", id);
+                await _notificationService.SendErrorNotificationAsync(
+                    "Content Processing Failed",
+                    $"Failed to process content {id} for language {language}",
+                    ex);
                 throw;
             }
         }
