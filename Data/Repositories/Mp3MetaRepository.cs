@@ -119,36 +119,22 @@ namespace MyTts.Data.Repositories
                 await _context.SaveChangesAsync(cancellationToken);
             }
         }
-
-        public async Task AddRangeAsync(IEnumerable<Mp3Dto> entities, CancellationToken cancellationToken = default)
+        public async Task UpdateRangeAsync(IEnumerable<Mp3Dto> dtos, CancellationToken cancellationToken = default)
+        {
+            var newRecords = dtos.ToList();
+            if (newRecords.Any())
+            {
+                var entities = newRecords.Select(x => _mapper.Map<Mp3Meta>(x));
+                _dbSet.UpdateRange(entities);
+            }
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        public async Task AddRangeAsync(IEnumerable<Mp3Dto> entities, IEnumerable<Mp3Dto> updateEntities, CancellationToken cancellationToken = default)
         {
             try
             {
-                var mp3Files = entities.ToList();
-                if (!mp3Files.Any()) return;
-
-                // Get existing IDs using a simpler query
-                var fileIds = mp3Files.Select(m => m.FileId).ToList();
-                var parameters = new List<object>();
-                var paramNames = new List<string>();
-                
-                for (int i = 0; i < fileIds.Count; i++)
-                {
-                    var paramName = $"@p{i}";
-                    paramNames.Add(paramName);
-                    parameters.Add(fileIds[i]);
-                }
-
-                var paramList = string.Join(",", paramNames);
-                var query = $"SELECT [haber_id] FROM [Haber_Ses_Dosyalari] WHERE [haber_id] IN ({paramList})";
-                
-                var existingIds = await _context.Database
-                    .SqlQueryRaw<int>(query, parameters.ToArray())
-                    .ToListAsync(cancellationToken);
-
-                // Separate new and existing records
-                var newRecords = mp3Files.Where(x => !existingIds.Contains(x.FileId)).ToList();
-                var existingRecords = mp3Files.Where(x => existingIds.Contains(x.FileId)).ToList();
+                var newRecords = entities.ToList();
+                var upRecords = updateEntities.ToList();
 
                 // Add new records
                 if (newRecords.Any())
@@ -158,15 +144,26 @@ namespace MyTts.Data.Repositories
                 }
 
                 // Update existing records
-                if (existingRecords.Any())
+                if (upRecords.Any())
                 {
-                    foreach (var record in existingRecords)
+                    foreach (var dto in upRecords)
                     {
-                        _mapper.Map(record, record);
-                    }
+                        var dentity = await _dbSet.FirstOrDefaultAsync(x => x.FileId == dto.FileId, cancellationToken);
+                        if (dentity != null)
+                        {
+                            dentity.FileUrl = dto.FileUrl;
+                            dentity.Language = dto.Language;
+                        }
+                        else
+                        {
+                            await _dbSet.AddAsync(_mapper.Map<Mp3Meta>(dto));
+                        }
+                    }                 
                 }
 
                 await _context.SaveChangesAsync(cancellationToken);
+                _logger.LogInformation("Successfully processed {NewCount} new records and {UpdateCount} updates", 
+                    newRecords.Count, upRecords.Count);
             }
             catch (Exception ex)
             {

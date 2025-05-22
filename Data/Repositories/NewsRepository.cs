@@ -1,4 +1,3 @@
-
 using MyTts.Data.Context;
 using MyTts.Data.Entities;
 using MyTts.Data.Interfaces;
@@ -15,15 +14,21 @@ namespace MyTts.Data.Repositories
         public async Task<List<HaberSummaryDto>> getSummary(int top, MansetType mansetType, CancellationToken token)
         {
             _logger.LogInformation("Connected to: " + _context.Database.GetDbConnection().Database);
+            
             var query = await _context.HaberKonumlari
-                .Include(k => k.News) // Ensure navigation property is loaded
+                .AsNoTracking()
                 .Where(k => k.KonumAdi == "ana manşet")
                 .OrderBy(k => k.Sirano)
-                .Take(20)
-                .ToListAsync();
+                .Take(top)
+                .Select(k => new HaberSummaryDto
+                {
+                    IlgiId = k.IlgiId,
+                    Baslik = k.News.Title ?? string.Empty,
+                    Ozet = k.News.Summary ?? string.Empty
+                })
+                .ToListAsync(token);
 
-            // The mapping profile applied here is HaberMappingProfile
-            return _mapper.Map<List<HaberSummaryDto>>(query);
+            return query;
         }
     }
 }

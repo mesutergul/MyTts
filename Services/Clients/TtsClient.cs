@@ -142,7 +142,7 @@ namespace MyTts.Services.Clients
             }
         }
 
-        private async Task<T> ExecuteWithPoliciesAsync<T>(Func<Task<T>> action, CancellationToken cancellationToken)
+        private async Task<T> ExecuteWithPoliciesAsync<T>(Func<Task<T>> action, int id, CancellationToken cancellationToken)
         {
             try
             {
@@ -154,10 +154,10 @@ namespace MyTts.Services.Clients
                         var content = await action();
                         if (content is string text)
                         {
-                            if (ContainsBlockedContent(text))
+                            if (ContainsBlockedContent(text, id))
                             {
-                                _logger.LogWarning("Content blocked due to policy violation");
-                                throw new InvalidOperationException("Content violates service policy");
+                                _logger.LogWarning("Content blocked due to policy violation for ID {Id}", id);
+                                throw new InvalidOperationException($"Content violates service policy for ID {id}");
                             }
                         }
                         return content;
@@ -165,12 +165,12 @@ namespace MyTts.Services.Clients
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error executing TTS request");
+                _logger.LogError(ex, "Error executing TTS request for ID {Id}", id);
                 throw;
             }
         }
 
-        private bool ContainsBlockedContent(string text)
+        private bool ContainsBlockedContent(string text, int id)
         {
             // Define blocked content categories
             var blockedCategories = new Dictionary<string, string[]>
@@ -224,7 +224,7 @@ namespace MyTts.Services.Clients
 
             if (blockedCategory.Key != null)
             {
-                _logger.LogWarning("Content blocked due to {Category} policy violation", blockedCategory.Key);
+                _logger.LogWarning("Content blocked for ID {Id} due to {Category} policy violation", id, blockedCategory.Key);
                 // Fire and forget notification
                 _ = Task.Run(async () =>
                 {
@@ -232,12 +232,12 @@ namespace MyTts.Services.Clients
                     {
                         await _notificationService.SendNotificationAsync(
                             "Content Policy Violation",
-                            $"Content blocked due to {blockedCategory.Key} policy violation",
+                            $"Content blocked for ID {id} due to {blockedCategory.Key} policy violation",
                             NotificationType.Warning);
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "Failed to send notification for content policy violation");
+                        _logger.LogError(ex, "Failed to send notification for content policy violation for ID {Id}", id);
                     }
                 });
                 return true;
@@ -255,7 +255,7 @@ namespace MyTts.Services.Clients
 
             if (specialCharCount > text.Length * 0.3)
             {
-                _logger.LogWarning("Content blocked due to excessive special characters");
+                _logger.LogWarning("Content blocked for ID {Id} due to excessive special characters", id);
                 return true;
             }
 
@@ -267,7 +267,7 @@ namespace MyTts.Services.Clients
                 {
                     if (count >= 10)
                     {
-                        _logger.LogWarning("Content blocked due to character repetition");
+                        _logger.LogWarning("Content blocked for ID {Id} due to character repetition", id);
                         return true;
                     }
                     charCounts[c] = count + 1;
@@ -281,6 +281,119 @@ namespace MyTts.Services.Clients
             return false;
         }
 
+        public async Task<string> ProcessContentsAsync(
+                 IEnumerable<HaberSummaryDto> allNews,
+                 IEnumerable<HaberSummaryDto> neededNews,
+                 IEnumerable<HaberSummaryDto> savedNews,
+                 string language,
+                 AudioType fileType,
+                 CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(neededNews);
+            var allNewsList = allNews.ToList();
+            var contentsNeededList = neededNews.ToList();
+            var contentsSavedList = savedNews.ToList();
+
+            _logger.LogInformation("Processing {Count} needed and {SavedCount} saved contents",
+                contentsNeededList.Count, contentsSavedList.Count);
+
+            if (!contentsNeededList.Any() && !contentsSavedList.Any())
+            {
+                return string.Empty;
+            }
+
+            try
+            {
+                var simdi = DateTime.Now;
+                var anchorText = TurkishDateTimeText.GunlukSeslendirmeMetniOlustur(simdi);
+                var anchor = new HaberSummaryDto()
+                {
+                    Baslik = "Seslendirme",
+                    IlgiId = TurkishDateTimeText.GetCompactTimeId(simdi),
+                    Ozet = anchorText
+                };
+
+
+                // Process needed and saved news in parallel
+                var processingTasks = new List<Task<(int id, AudioProcessor Processor)>>(
+                    contentsNeededList.Count + contentsSavedList.Count)
+                {
+                    ProcessContentAsync(
+                    anchor.Ozet,
+                    anchor.IlgiId,
+                    language,
+                    fileType,
+                    cancellationToken)
+                };
+                // Add tasks for needed news
+                processingTasks.AddRange(contentsNeededList.Select(content =>
+                    ProcessContentAsync(
+                        content.Ozet,
+                        content.IlgiId,
+                        language,
+                        fileType,
+                        cancellationToken)));
+
+                // Add tasks for saved news
+                processingTasks.AddRange(contentsSavedList.Select(content =>
+                    ProcessSavedContentAsync(content.IlgiId, fileType, cancellationToken)));
+
+                // Wait for all tasks to complete
+                var results = await Task.WhenAll(processingTasks);
+                // Create processors dictionary for efficient lookup
+                var processedFiles = results.ToDictionary(r => r.id, r => r.Processor);
+                var AnchorProcessor = processedFiles[anchor.IlgiId];
+                // Build final list in original order
+                var processors = allNewsList
+                    .Where(news => processedFiles.ContainsKey(news.IlgiId))
+                    .Select(news => processedFiles[news.IlgiId])
+                    .ToList();
+                processors.Insert(0, AnchorProcessor);
+
+                if (processors.Count > 0)
+                {
+                    _logger.LogInformation("Successfully processed {Count} files", processors.Count);
+
+                    // For a single file, return it directly
+                    if (processors.Count == 1)
+                    {
+                        return $"single_{Guid.NewGuid()}.mp3";
+                    }
+
+                    // For multiple files, merge them
+                    string breakAudioPath = StoragePathHelper.GetFullPath("break", fileType);
+                    var existsResult = await _localStorageClient.FileExistsAsync(breakAudioPath, cancellationToken);
+                    if (!existsResult.IsSuccess || !existsResult.Data)
+                    {
+                        _logger.LogWarning("Break audio file not found at {Path}, merging without breaks", breakAudioPath);
+                        breakAudioPath = null;
+                    }
+                    
+                    var merged = await _mp3StreamMerger.MergeMp3ByteArraysAsync(
+                        processors,
+                        _storageConfig.BasePath,
+                        fileType,
+                        breakAudioPath,
+                        cancellationToken);
+
+                    _logger.LogInformation("Merged stream id is {fileName}", merged);
+                    return merged;
+                }
+
+                _logger.LogWarning("No files were successfully processed");
+                return string.Empty;
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogWarning("Content processing was cancelled");
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during batch processing");
+                throw;
+            }
+        }
         public async Task<(int id, AudioProcessor FileData)> ProcessContentAsync(
             string text, int id, string language, AudioType fileType, CancellationToken cancellationToken)
         {
@@ -311,14 +424,14 @@ namespace MyTts.Services.Clients
                         randomVoice.Key, voiceId, language);
                     
                     // Try to get voice from cache first
-                    var voice = await GetOrFetchVoiceAsync(voiceId, cancellationToken);
+                    var voice = await GetOrFetchVoiceAsync(voiceId, id, cancellationToken);
                     var request = await CreateTtsRequestAsync(voice, text);
 
                     // Generate audio clip from ElevenLabs with retry and circuit breaker policies
                     var stopwatch = System.Diagnostics.Stopwatch.StartNew();
                     var voiceClip = await ExecuteWithPoliciesAsync(
                         () => _elevenLabsClient.TextToSpeechEndpoint.TextToSpeechAsync(request, null, cancellationToken),
-                        cancellationToken);
+                        id, cancellationToken);
                     stopwatch.Stop();
 
                     _logger.LogInformation(
@@ -360,7 +473,7 @@ namespace MyTts.Services.Clients
             }
         }
 
-        private async Task<Voice> GetOrFetchVoiceAsync(string voiceId, CancellationToken cancellationToken)
+        private async Task<Voice> GetOrFetchVoiceAsync(string voiceId, int id, CancellationToken cancellationToken)
         {
             // Try to get from cache first
             if (_voiceCache.TryGetValue(voiceId, out var cachedVoice))
@@ -371,6 +484,7 @@ namespace MyTts.Services.Clients
             // If not in cache, fetch and cache it with retry and circuit breaker policies
             var voice = await ExecuteWithPoliciesAsync(
                 () => _elevenLabsClient.VoicesEndpoint.GetVoiceAsync(voiceId, withSettings: false, cancellationToken),
+                id,
                 cancellationToken);
             
             _voiceCache.TryAdd(voiceId, voice);
@@ -467,7 +581,29 @@ namespace MyTts.Services.Clients
             await _cache.SetAsync($"audio:{id}", json, TimeSpan.FromDays(7), cancellationToken);
             _logger.LogInformation("Stored metadata in Redis for {Id}", id);
         }
-
+        private async Task<(int id, AudioProcessor Processor)> ProcessSavedContentAsync(
+                int ilgiId,
+                AudioType fileType,
+                CancellationToken cancellationToken)
+        {
+            try
+            {
+                string fullPath = StoragePathHelper.GetFullPathById(ilgiId, fileType);
+                var readResult = await _localStorageClient.ReadAllBytesAsync(fullPath, cancellationToken);
+                if (!readResult.IsSuccess)
+                {
+                    throw readResult.Error!.Exception;
+                }
+                var voiceClip = new VoiceClip(readResult.Data!);
+                var audioProcessor = new AudioProcessor(voiceClip);
+                return (ilgiId, audioProcessor);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error processing saved content {Id}", ilgiId);
+                throw;
+            }
+        }
         public async ValueTask DisposeAsync()
         {
             if (_disposed) return;

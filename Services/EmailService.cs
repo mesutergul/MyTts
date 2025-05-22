@@ -2,6 +2,8 @@ using System.Net.Mail;
 using Microsoft.Extensions.Options;
 using MyTts.Config;
 using MyTts.Services.Interfaces;
+using Polly;
+using Polly.Retry;
 
 namespace MyTts.Services;
 
@@ -9,12 +11,29 @@ public class EmailService : IEmailService
 {
     private readonly EmailConfig _emailConfig;
     private readonly ILogger<EmailService> _logger;
-    private const int EmailTimeoutSeconds = 5;
+    private readonly AsyncRetryPolicy _retryPolicy;
+    private const int EmailTimeoutSeconds = 30;
 
     public EmailService(IOptions<EmailConfig> emailConfig, ILogger<EmailService> logger)
     {
         _emailConfig = emailConfig.Value;
         _logger = logger;
+        
+        // Configure retry policy
+        _retryPolicy = Policy
+            .Handle<SmtpException>()
+            .Or<IOException>()
+            .WaitAndRetryAsync(
+                _emailConfig.MaxRetries,
+                retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
+                onRetry: (exception, timeSpan, retryCount, context) =>
+                {
+                    _logger.LogWarning(exception, 
+                        "Retry {RetryCount} after {Delay}ms due to {ErrorType}", 
+                        retryCount, 
+                        timeSpan.TotalMilliseconds,
+                        exception.GetType().Name);
+                });
     }
 
     public async Task SendEmailAsync(string to, string subject, string body, bool isHtml = false)
@@ -26,33 +45,43 @@ public class EmailService : IEmailService
     {
         try
         {
-            using var message = new MailMessage
+            await _retryPolicy.ExecuteAsync(async () =>
             {
-                From = new MailAddress(_emailConfig.SenderEmail, _emailConfig.SenderName),
-                Subject = subject,
-                Body = body,
-                IsBodyHtml = isHtml
-            };
+                using var message = new MailMessage
+                {
+                    From = new MailAddress(_emailConfig.SenderEmail, _emailConfig.SenderName),
+                    Subject = subject,
+                    Body = body,
+                    IsBodyHtml = isHtml
+                };
 
-            foreach (var recipient in to)
-            {
-                message.To.Add(recipient);
-            }
+                if (!string.IsNullOrEmpty(_emailConfig.ReplyTo))
+                {
+                    message.ReplyToList.Add(_emailConfig.ReplyTo);
+                }
 
-            using var client = new SmtpClient(_emailConfig.SmtpServer, _emailConfig.SmtpPort)
-            {
-                EnableSsl = _emailConfig.EnableSsl,
-                Credentials = new System.Net.NetworkCredential(_emailConfig.SenderEmail, _emailConfig.SenderPassword),
-                Timeout = EmailTimeoutSeconds * 1000 // Convert seconds to milliseconds
-            };
+                foreach (var recipient in to)
+                {
+                    message.To.Add(recipient);
+                }
 
-            // Use Task.Run to move the synchronous SendMailAsync to a background thread
-            await Task.Run(() => client.SendMailAsync(message));
-            _logger.LogInformation("Email sent successfully to {Recipients}", string.Join(", ", to));
+                using var client = new SmtpClient(_emailConfig.SmtpServer, _emailConfig.SmtpPort)
+                {
+                    EnableSsl = _emailConfig.EnableSsl,
+                    Credentials = new System.Net.NetworkCredential(_emailConfig.SenderEmail, _emailConfig.SenderPassword),
+                    Timeout = EmailTimeoutSeconds * 1000, // Convert seconds to milliseconds
+                    DeliveryMethod = SmtpDeliveryMethod.Network
+                };
+
+                await client.SendMailAsync(message);
+                _logger.LogInformation("Email sent successfully to {Recipients}", string.Join(", ", to));
+            });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to send email to {Recipients}", string.Join(", ", to));
+            _logger.LogError(ex, "Failed to send email to {Recipients} after {MaxRetries} retries", 
+                string.Join(", ", to), 
+                _emailConfig.MaxRetries);
             throw;
         }
     }

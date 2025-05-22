@@ -22,6 +22,5 @@ namespace MyTts.Services.Interfaces
         Task ConvertMp3ToM4A(string inputPath, string outputPath);
         Task<List<int>> GetExistingMetaList(List<int> myList, CancellationToken cancellationToken);
         Task SaveMp3MetadataAsync(int id, string localPath, string language, CancellationToken cancellationToken);
-        Task SaveMp3MetadataBatchAsync(List<Mp3Dto> metadataList, CancellationToken cancellationToken);
     }
 }
