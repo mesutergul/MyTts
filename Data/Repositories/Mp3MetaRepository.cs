@@ -45,29 +45,11 @@ namespace MyTts.Data.Repositories
                 return new List<int>();
             }
 
-            // Use a simpler query with direct IN clause
-            var query = @"
-                SELECT TOP(500) [h].[haber_id]
-                FROM [Haber_Ses_Dosyalari] AS [h]
-                WHERE [h].[haber_id] IN ({0})
-                ORDER BY [h].[id] DESC";
-
-            // Create parameters for the IN clause
-            var parameters = new List<object>();
-            var paramNames = new List<string>();
-            
-            for (int i = 0; i < fileIdsToCheck.Count; i++)
-            {
-                var paramName = $"@p{i}";
-                paramNames.Add(paramName);
-                parameters.Add(fileIdsToCheck[i]);
-            }
-
-            var paramList = string.Join(",", paramNames);
-            var formattedQuery = string.Format(query, paramList);
-
-            return await _context.Database
-                .SqlQueryRaw<int>(formattedQuery, parameters.ToArray())
+            return await _dbSet
+                .OrderByDescending(x => x.Id)
+                .Take(500)
+                .Where(x => fileIdsToCheck.Contains(x.FileId))  
+                .Select(x => x.FileId)             
                 .ToListAsync(cancellationToken);
         }
 
@@ -129,13 +111,14 @@ namespace MyTts.Data.Repositories
             }
             await _context.SaveChangesAsync(cancellationToken);
         }
-        public async Task AddRangeAsync(IEnumerable<Mp3Dto> entities, IEnumerable<Mp3Dto> updateEntities, CancellationToken cancellationToken = default)
+        public async Task AddRangeAsync(List<Mp3Dto> allRecords, CancellationToken cancellationToken = default)
         {
             try
             {
-                var newRecords = entities.ToList();
-                var upRecords = updateEntities.ToList();
-
+                var idRecords = allRecords.Select(x => x.FileId).ToList();
+                var existingEntities = await GetExistingFilesInLast100Async(idRecords, cancellationToken);
+                var newRecords = allRecords.Where(x => !existingEntities.Any(y => y.FileId == x.FileId)).ToList();
+                Dictionary<int, Mp3Dto> updateRecords = allRecords.Where(x => existingEntities.Any(y => y.FileId == x.FileId)).ToDictionary(x => x.FileId);
                 // Add new records
                 if (newRecords.Any())
                 {
@@ -144,32 +127,38 @@ namespace MyTts.Data.Repositories
                 }
 
                 // Update existing records
-                if (upRecords.Any())
+                if (existingEntities.Any())
                 {
-                    foreach (var dto in upRecords)
+                    foreach (var meta in existingEntities)
                     {
-                        var dentity = await _dbSet.FirstOrDefaultAsync(x => x.FileId == dto.FileId, cancellationToken);
-                        if (dentity != null)
-                        {
-                            dentity.FileUrl = dto.FileUrl;
-                            dentity.Language = dto.Language;
-                        }
-                        else
-                        {
-                            await _dbSet.AddAsync(_mapper.Map<Mp3Meta>(dto));
-                        }
-                    }                 
+                        meta.FileUrl = updateRecords[meta.FileId].FileUrl;
+                        meta.Language = updateRecords[meta.FileId].Language;
+                    }
                 }
 
                 await _context.SaveChangesAsync(cancellationToken);
-                _logger.LogInformation("Successfully processed {NewCount} new records and {UpdateCount} updates", 
-                    newRecords.Count, upRecords.Count);
+                _logger.LogInformation("Successfully processed {NewCount} new records and {UpdateCount} updates",
+                    newRecords.Count, updateRecords.Count);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error adding MP3 files to database");
                 throw;
             }
+        }
+         public async Task<List<Mp3Meta>> GetExistingFilesInLast100Async(List<int> fileIdsToCheck, CancellationToken cancellationToken)
+        {
+            if (fileIdsToCheck == null || !fileIdsToCheck.Any())
+            {
+                return new List<Mp3Meta>();
+            }
+            var list = await _dbSet
+                .OrderByDescending(x => x.Id)
+                .Take(100)
+                .Where(x => fileIdsToCheck.Contains(x.FileId))               
+                .ToListAsync(cancellationToken);
+
+            return list;
         }
     }
 }

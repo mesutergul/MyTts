@@ -52,31 +52,20 @@ namespace MyTts.Services
                 var (neededNewsList, savedNewsList) = await checkNewsList(newsList, language, fileType, cancellationToken);
                 // Process needed news in parallel
                 await _ttsClient.ProcessContentsAsync(newsList, neededNewsList, savedNewsList, language, fileType, cancellationToken);
-                //var tasks = neededNewsList.Select(news => 
-                //    _ttsClient.ProcessContentAsync(news.Ozet, news.IlgiId, language, fileType, cancellationToken));
-                //var results = await Task.WhenAll(tasks);
 
                 // Start SQL operations as fire-and-forget
-                var metadataInDb = await checkNewsListInDB(newsList, fileType, cancellationToken);
-                var metadataList = metadataInDb.neededNewsList.Select(news => new Mp3Dto
+               
+                var metadataList = newsList.Select(news => new Mp3Dto
                 {
                     FileId = news.IlgiId,
                     FileUrl = StoragePathHelper.GetFullPathById(news.IlgiId, fileType),
                     Language = language
                 }).ToList();
 
-                var updateList = metadataInDb.savedNewsList.Select(news => new Mp3Dto
-                {
-                    FileId = news.IlgiId,
-                    FileUrl = StoragePathHelper.GetFullPathById(news.IlgiId, fileType),
-                    Language = language
-                }).ToList();
-
-                _logger.LogInformation("Starting background SQL operations for {Count} files, potentially updates for {Countof}", metadataList.Count, updateList.Count);
+                _logger.LogInformation("Starting background SQL operations for {Count} files", metadataList.Count);
 
                 // Create a copy of the metadata list for the background task
                 var metadataCopy = new List<Mp3Dto>(metadataList);
-                var updateCopy = new List<Mp3Dto>(updateList);
 
                 // Create a new scope for the background task
                 _ = Task.Run(async () =>
@@ -86,13 +75,13 @@ namespace MyTts.Services
                         using var scope = _serviceScopeFactory.CreateScope();
                         var repository = scope.ServiceProvider.GetRequiredService<IMp3Repository>();
 
-                        _logger.LogInformation("Background SQL operation started for {Count} files, potentially updates for {Countof}", metadataCopy.Count, updateCopy.Count);
-                        await repository.SaveMp3MetadataToSqlBatchAsync(metadataCopy, updateCopy, AudioType.Mp3, cancellationToken);
-                        _logger.LogInformation("Successfully saved metadata for {Count} files in background, potentially updates for {Countof} in background", metadataCopy.Count, updateCopy.Count);
+                        _logger.LogInformation("Background SQL operation started for {Count} files", metadataCopy.Count);
+                        await repository.SaveMp3MetadataToSqlBatchAsync(metadataCopy, AudioType.Mp3, cancellationToken);
+                        _logger.LogInformation("Successfully saved metadata for {Count} files in background", metadataCopy.Count);
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "Error saving metadata in background for {Count} files, potentially updates for {Countof}", metadataCopy.Count, updateCopy.Count);
+                        _logger.LogError(ex, "Error saving metadata in background for {Count} files", metadataCopy.Count);
                     }
                 }, cancellationToken);
 
@@ -125,13 +114,13 @@ namespace MyTts.Services
             var savedNewsList = new List<HaberSummaryDto>();
             foreach (var news in newsList)
             {
-                if (!await _mp3FileRepository.FileExistsAnywhereAsync(news.IlgiId, language, fileType, cancellationToken))
+                if (await _mp3FileRepository.FileExistsAnywhereAsync(news.IlgiId, language, fileType, cancellationToken))
                 {
-                    neededNewsList.Add(news);
+                    savedNewsList.Add(news);                   
                 }
                 else
                 {
-                    savedNewsList.Add(news);
+                    neededNewsList.Add(news);
                 }
             }
             return (neededNewsList, savedNewsList);
@@ -518,12 +507,12 @@ namespace MyTts.Services
             }
         }
 
-        public async Task SaveMp3MetadataBatchAsync(List<Mp3Dto> metadataList, List<Mp3Dto> upmetadataList, CancellationToken cancellationToken)
+        public async Task SaveMp3MetadataBatchAsync(List<Mp3Dto> metadataList, CancellationToken cancellationToken)
         {
             try
             {
                 // Save metadata to SQL in batch
-                await _mp3FileRepository.SaveMp3MetadataToSqlBatchAsync(metadataList, upmetadataList, AudioType.Mp3, cancellationToken);
+                await _mp3FileRepository.SaveMp3MetadataToSqlBatchAsync(metadataList, AudioType.Mp3, cancellationToken);
                 _logger.LogDebug("Saved batch metadata to SQL for {Count} files", metadataList.Count);
             }
             catch (Exception ex)
@@ -533,12 +522,12 @@ namespace MyTts.Services
             }
         }
 
-        private async Task SaveMp3MetadataBatchAsyncInternal(List<Mp3Dto> metadataList, List<Mp3Dto> upmetadataList, CancellationToken cancellationToken)
+        private async Task SaveMp3MetadataBatchAsyncInternal(List<Mp3Dto> metadataList, CancellationToken cancellationToken)
         {
             try
             {
                 // Save metadata to SQL in batch
-                await _mp3FileRepository.SaveMp3MetadataToSqlBatchAsync(metadataList, upmetadataList, AudioType.Mp3, cancellationToken);
+                await _mp3FileRepository.SaveMp3MetadataToSqlBatchAsync(metadataList, AudioType.Mp3, cancellationToken);
                 _logger.LogDebug("Saved batch metadata to SQL for {Count} files", metadataList.Count);
             }
             catch (Exception ex)

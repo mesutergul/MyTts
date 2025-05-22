@@ -9,6 +9,6 @@ namespace MyTts.Data.Interfaces
         Task<bool> ExistByIdAsync(int id, CancellationToken cancellationToken);
         Task<List<int>> GetExistingFileIdsInLast500Async(List<int> values, CancellationToken cancellationToken);
         Task<Mp3Dto> GetByColumnAsync(Expression<Func<Mp3Meta, bool>> predicate, CancellationToken cancellationToken);
-        Task AddRangeAsync(IEnumerable<Mp3Dto> newEntities, IEnumerable<Mp3Dto> updateEntities, CancellationToken cancellationToken);
+        Task AddRangeAsync(List<Mp3Dto> newEntities, CancellationToken cancellationToken);
     }
 }

@@ -70,7 +70,7 @@ namespace MyTts.Data.Repositories
             return Task.CompletedTask;
         }
 
-        Task IMp3MetaRepository.AddRangeAsync(IEnumerable<Mp3Dto> entities, IEnumerable<Mp3Dto> upentities, CancellationToken cancellationToken)
+        Task IMp3MetaRepository.AddRangeAsync(List<Mp3Dto> entities, CancellationToken cancellationToken)
         {
             // This method is not needed for the null implementation
             return Task.CompletedTask;

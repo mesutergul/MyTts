@@ -7,7 +7,7 @@ namespace MyTts.Repositories
         Task<byte[]> LoadMp3FileAsync(int filePath, string language, AudioType fileType, CancellationToken cancellationToken);
         Task SaveMp3FileAsync(int filePath, byte[] fileData, AudioType fileType, CancellationToken cancellationToken);
         Task<List<Mp3Dto>> LoadListMp3MetadatasAsync(AudioType fileType, CancellationToken cancellationToken);
-        Task SaveMp3MetadataToSqlBatchAsync(List<Mp3Dto> newMp3Files, List<Mp3Dto> updateMp3Files, AudioType fileType, CancellationToken cancellationToken);
+        Task SaveMp3MetadataToSqlBatchAsync(List<Mp3Dto> newMp3Files, AudioType fileType, CancellationToken cancellationToken);
         Task SaveMp3MetadataToJsonAndCacheAsync(List<Mp3Dto> mp3Files, AudioType fileType, CancellationToken cancellationToken);
         Task DeleteMp3FileAsync(string filePath, CancellationToken cancellationToken);
         Task<bool> Mp3FileExistsAsync(int id, AudioType fileType, CancellationToken cancellationToken);

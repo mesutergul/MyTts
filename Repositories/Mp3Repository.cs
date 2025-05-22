@@ -613,7 +613,7 @@ namespace MyTts.Repositories
             }
         }
 
-        public async Task SaveMp3MetadataToSqlBatchAsync(List<Mp3Dto> newMp3Files, List<Mp3Dto> updateMp3Files, AudioType fileType, CancellationToken cancellationToken)
+        public async Task SaveMp3MetadataToSqlBatchAsync(List<Mp3Dto> newMp3Files, AudioType fileType, CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(newMp3Files);
 
@@ -629,7 +629,7 @@ namespace MyTts.Repositories
                 try
                 {
                     // Save to SQL database in batch
-                    await _mp3MetaRepository.AddRangeAsync(newMp3Files, updateMp3Files, cancellationToken);
+                    await _mp3MetaRepository.AddRangeAsync(newMp3Files, cancellationToken);
                     _logger.LogInformation("Successfully saved {Count} files to SQL", newMp3Files.Count);
                 }
                 finally
