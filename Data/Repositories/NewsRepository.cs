@@ -23,8 +23,8 @@ namespace MyTts.Data.Repositories
                 .Select(k => new HaberSummaryDto
                 {
                     IlgiId = k.IlgiId,
-                    Baslik = k.News.Title ?? string.Empty,
-                    Ozet = k.News.Summary ?? string.Empty
+                    Baslik = k.News == null ? string.Empty : k.News.Title ?? string.Empty,
+                    Ozet = k.News == null ? string.Empty : k.News.Summary ?? string.Empty
                 })
                 .ToListAsync(token);
 

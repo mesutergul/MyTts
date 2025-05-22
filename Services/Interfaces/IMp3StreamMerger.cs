@@ -8,7 +8,7 @@ namespace MyTts.Services.Interfaces
             IReadOnlyList<AudioProcessor> audioProcessors,
             string basePath,
             AudioType fileType,
-            string? breakAudioPath = null,
+            string breakAudioPath,
             CancellationToken cancellationToken = default);
     }
 }

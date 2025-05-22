@@ -9,20 +9,18 @@ namespace MyTts.Services
     public sealed class Mp3StreamMerger : IMp3StreamMerger, IAsyncDisposable
     {
         private readonly ILogger<Mp3StreamMerger> _logger;
-        private readonly SemaphoreSlim _mergeLock;
         private bool _disposed;
 
         public Mp3StreamMerger(ILogger<Mp3StreamMerger> logger, IConfiguration configuration)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _mergeLock = new SemaphoreSlim(1, 1);
         }
 
         public async Task<string> MergeMp3ByteArraysAsync(
             IReadOnlyList<AudioProcessor> audioProcessors,
             string basePath,
             AudioType fileType,
-            string? breakAudioPath = null,
+            string breakAudioPath,
             CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(audioProcessors);
@@ -31,15 +29,11 @@ namespace MyTts.Services
                 throw new ArgumentException("No audio processors provided", nameof(audioProcessors));
             }
             var outputFilePath = "merged";
-            var lockTaken = false;
+            
             try
             {
-                await _mergeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
-                lockTaken = true;
-                
                 if (audioProcessors.Count == 1)
                 {
-                    _logger.LogInformation("Only one processor provided - returning directly");
                     return outputFilePath;
                 }
                 
@@ -47,7 +41,6 @@ namespace MyTts.Services
                 await MergeAudioProcessorsAsync(audioProcessors, outputStream, outputFilePath, fileType, breakAudioPath, cancellationToken).ConfigureAwait(false);
 
                 outputStream.Position = 0;
-                _logger.LogInformation("Merged audio processors successfully");
                 return outputFilePath;
             }
             catch (OperationCanceledException)
@@ -60,13 +53,6 @@ namespace MyTts.Services
                 _logger.LogError(ex, "Error in MergeMp3ByteArraysAsync");
                 throw;
             }
-            finally
-            {
-                if (lockTaken)
-                {
-                    _mergeLock.Release();
-                }
-            }
         }
 
         private async Task MergeAudioProcessorsAsync(
@@ -74,7 +60,7 @@ namespace MyTts.Services
             MemoryStream outputStream,
             string filePath,
             AudioType fileType,
-            string? breakAudioPath,
+            string breakAudioPath,
             CancellationToken cancellationToken)
         {
             var streamPipeSources = new List<StreamPipeSource>();
@@ -85,10 +71,7 @@ namespace MyTts.Services
             {
                 var ffmpegArgs = await CreateFfmpegArgumentsAsync(processors, streamPipeSources, streamsToDispose, breakAudioPath, cancellationToken).ConfigureAwait(false);
                 
-                // Calculate total number of inputs (processors + break audio between them)
-                int totalInputs = breakAudioPath != null ? processors.Count * 2 - 1 : processors.Count;
-                
-                // Create the filter complex command for concatenating all inputs
+                int totalInputs = !string.IsNullOrEmpty(breakAudioPath) ? processors.Count * 2 - 1 : processors.Count;
                 var filterComplex = CreateFilterComplexCommand(totalInputs);
 
                 await ffmpegArgs
@@ -106,7 +89,7 @@ namespace MyTts.Services
                 if (outputStream.Length > 0)
                 {
                     string fullPath = StoragePathHelper.GetFullPath(filePath, fileType);
-                    _logger.LogInformation("Saving merged audio from MemoryStream to file: {FilePath}, length: {length}", filePath, outputStream.Length);
+                    _logger.LogInformation("Saving merged audio to {FilePath} ({Length} bytes)", filePath, outputStream.Length);
 
                     outputStream.Position = 0;
                     await using (var fileStream = new FileStream(
@@ -119,11 +102,10 @@ namespace MyTts.Services
                     {
                         await outputStream.CopyToAsync(fileStream, 128*1024, cancellationToken).ConfigureAwait(false);
                     }
-                    _logger.LogInformation("Merged audio successfully saved to {FilePath}", filePath);
                 }
                 else
                 {
-                    _logger.LogWarning("FFmpeg process completed but outputStream is empty. No data to save to file.");
+                    _logger.LogWarning("FFmpeg process completed but outputStream is empty");
                 }
             }
             catch (OperationCanceledException)
@@ -217,7 +199,6 @@ namespace MyTts.Services
         {
             if (!_disposed)
             {
-                _mergeLock?.Dispose();
                 _disposed = true;
             }
             await ValueTask.CompletedTask;

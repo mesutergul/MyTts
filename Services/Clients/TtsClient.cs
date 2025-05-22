@@ -360,24 +360,70 @@ namespace MyTts.Services.Clients
                         return $"single_{Guid.NewGuid()}.mp3";
                     }
 
-                    // For multiple files, merge them
+                    // For multiple files, merge them in background
                     string breakAudioPath = StoragePathHelper.GetFullPath("break", fileType);
                     var existsResult = await _localStorageClient.FileExistsAsync(breakAudioPath, cancellationToken);
                     if (!existsResult.IsSuccess || !existsResult.Data)
                     {
                         _logger.LogWarning("Break audio file not found at {Path}, merging without breaks", breakAudioPath);
-                        breakAudioPath = null;
+                        breakAudioPath = string.Empty;
                     }
-                    
-                    var merged = await _mp3StreamMerger.MergeMp3ByteArraysAsync(
-                        processors,
-                        _storageConfig.BasePath,
-                        fileType,
-                        breakAudioPath,
-                        cancellationToken);
 
-                    _logger.LogInformation("Merged stream id is {fileName}", merged);
-                    return merged;
+                    // Start merge operation in background
+                    var mergeTask = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+                            var retryCount = 0;
+                            var merged = await _retryPolicy.ExecuteAsync(async () =>
+                            {
+                                try
+                                {
+                                    return await _mp3StreamMerger.MergeMp3ByteArraysAsync(
+                                        processors,
+                                        _storageConfig.BasePath,
+                                        fileType,
+                                        breakAudioPath,
+                                        cancellationToken);
+                                }
+                                catch (Exception ex)
+                                {
+                                    retryCount++;
+                                    _logger.LogWarning(ex, "Failed to merge MP3 files, attempt {RetryCount}", retryCount);
+                                    throw;
+                                }
+                            });
+                            stopwatch.Stop();
+
+                            _logger.LogInformation(
+                                "Merged {Count} MP3 files in {ElapsedMilliseconds}ms",
+                                processors.Count,
+                                stopwatch.ElapsedMilliseconds);
+
+                            // Send notification about successful merge
+                            await _notificationService.SendNotificationAsync(
+                                "MP3 Merge Completed",
+                                $"Successfully merged {processors.Count} files in {stopwatch.ElapsedMilliseconds}ms",
+                                NotificationType.Success);
+
+                            return merged;
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Failed to merge MP3 files after all retries");
+                            await _notificationService.SendErrorNotificationAsync(
+                                "MP3 Merge Failed",
+                                $"Failed to merge {processors.Count} files after all retries",
+                                ex);
+                            throw;
+                        }
+                    }, cancellationToken);
+
+                    // Return a temporary ID that can be used to track the merge progress
+                    var mergeId = $"merge_{Guid.NewGuid()}";
+                    _logger.LogInformation("Started background merge operation with ID: {MergeId}", mergeId);
+                    return mergeId;
                 }
 
                 _logger.LogWarning("No files were successfully processed");
