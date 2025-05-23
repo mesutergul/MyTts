@@ -17,10 +17,11 @@ using MyTts.Services.Interfaces;
 using Polly;
 using Polly.Retry;
 using Polly.CircuitBreaker;
+using System.Threading;
 
 namespace MyTts.Services.Clients
 {
-    public class TtsClient : IAsyncDisposable
+    public class TtsClient : ITtsClient, IAsyncDisposable
     {
         private readonly ElevenLabsClient _elevenLabsClient;
         private readonly StorageClient? _googleStorageClient;
@@ -361,14 +362,13 @@ namespace MyTts.Services.Clients
                     }
 
                     // For multiple files, merge them in background
-                    string breakAudioPath = StoragePathHelper.GetFullPath("break", fileType);
-                    var existsResult = await _localStorageClient.FileExistsAsync(breakAudioPath, cancellationToken);
-                    if (!existsResult.IsSuccess || !existsResult.Data)
-                    {
-                        _logger.LogWarning("Break audio file not found at {Path}, merging without breaks", breakAudioPath);
-                        breakAudioPath = string.Empty;
-                    }
+                    string breakAudioPath = StoragePathHelper.GetFullPath("separator", fileType);
+                    string startAudioPath = StoragePathHelper.GetFullPath("merged_haber_basi", fileType);
+                    string endAudioPath = StoragePathHelper.GetFullPath("merged_haber_sonu", fileType);
 
+                    breakAudioPath= await checkFilePaths(breakAudioPath, cancellationToken);
+                    startAudioPath = await checkFilePaths(startAudioPath, cancellationToken);
+                    endAudioPath = await checkFilePaths(endAudioPath, cancellationToken);
                     // Start merge operation in background
                     var mergeTask = Task.Run(async () =>
                     {
@@ -385,6 +385,8 @@ namespace MyTts.Services.Clients
                                         _storageConfig.BasePath,
                                         fileType,
                                         breakAudioPath,
+                                        startAudioPath,
+                                        endAudioPath,
                                         cancellationToken);
                                 }
                                 catch (Exception ex)
@@ -440,6 +442,17 @@ namespace MyTts.Services.Clients
                 throw;
             }
         }
+        private async Task<string> checkFilePaths(string path, CancellationToken cancellationToken)
+        {
+            var existsResult = await _localStorageClient.FileExistsAsync(path, cancellationToken);
+            var result = path;
+            if (!existsResult.IsSuccess || !existsResult.Data)
+            {
+                _logger.LogWarning("Break audio file not found at {Path}, merging without breaks", path);
+                result = string.Empty;
+            }
+            return result;
+        } 
         public async Task<(int id, AudioProcessor FileData)> ProcessContentAsync(
             string text, int id, string language, AudioType fileType, CancellationToken cancellationToken)
         {
@@ -627,10 +640,11 @@ namespace MyTts.Services.Clients
             await _cache.SetAsync($"audio:{id}", json, TimeSpan.FromDays(7), cancellationToken);
             _logger.LogInformation("Stored metadata in Redis for {Id}", id);
         }
-        private async Task<(int id, AudioProcessor Processor)> ProcessSavedContentAsync(
-                int ilgiId,
-                AudioType fileType,
-                CancellationToken cancellationToken)
+
+        public async Task<(int id, AudioProcessor Processor)> ProcessSavedContentAsync(
+            int ilgiId,
+            AudioType fileType,
+            CancellationToken cancellationToken)
         {
             try
             {
@@ -650,6 +664,7 @@ namespace MyTts.Services.Clients
                 throw;
             }
         }
+
         public async ValueTask DisposeAsync()
         {
             if (_disposed) return;

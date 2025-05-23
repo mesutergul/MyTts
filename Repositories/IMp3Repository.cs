@@ -25,5 +25,7 @@ namespace MyTts.Repositories
         Task<List<int>> GetExistingMetaList(List<int> values, CancellationToken cancellationToken);
         Task<NewsDto> LoadNewsAsync(int news, CancellationToken cancellationToken);
         Task<byte[]> ReadFileFromDiskAsync(int filePath, AudioType fileType = AudioType.Mp3, CancellationToken cancellationToken = default);
+        Task<Dictionary<int, string>> GetExistingHashList(List<int> values, CancellationToken cancellationToken);
+
     }
 }

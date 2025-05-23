@@ -12,19 +12,20 @@ namespace MyTts.Data
             //CreateMap<Mp3Dto, Mp3Meta>();
 
             CreateMap<Mp3Meta, Mp3Dto>()
-                .ForMember(dest => dest.FileId, opt => opt.MapFrom(src => src.FileId))
-                .ForMember(dest => dest.FileUrl, opt => opt.MapFrom(src => src.FileUrl))
-                .ForMember(dest => dest.Language, opt => opt.MapFrom(src => src.Language))
-                .ForMember(dest => dest.CreatedDate, opt => opt.MapFrom(src => src.CreatedDate))
-                .ForMember(dest => dest.Enabled, opt => opt.MapFrom(src => src.Enabled));
+                 .ForMember(dest => dest.FileId, opt => opt.MapFrom(src => src.FileId))
+                 .ForMember(dest => dest.FileUrl, opt => opt.MapFrom(src => src.FileUrl))
+                 .ForMember(dest => dest.Language, opt => opt.MapFrom(src => src.Language))
+                 .ForMember(dest => dest.CreatedDate, opt => opt.MapFrom(src => src.CreatedDate))
+                 .ForMember(dest => dest.Enabled, opt => opt.MapFrom(src => src.Enabled))
+                 .ForMember(dest => dest.OzetHash, opt => opt.MapFrom(src => src.OzetHash));
 
             CreateMap<Mp3Dto, Mp3Meta>()
                 .ForMember(dest => dest.FileId, opt => opt.MapFrom(src => src.FileId))
                 .ForMember(dest => dest.FileUrl, opt => opt.MapFrom(src => src.FileUrl))
                 .ForMember(dest => dest.Language, opt => opt.MapFrom(src => src.Language))
                 .ForMember(dest => dest.CreatedDate, opt => opt.MapFrom(src => src.CreatedDate))
-                .ForMember(dest => dest.Enabled, opt => opt.MapFrom(src => src.Enabled));
-
+                .ForMember(dest => dest.Enabled, opt => opt.MapFrom(src => src.Enabled))
+                .ForMember(dest => dest.OzetHash, opt => opt.MapFrom(src => src.OzetHash));
         }
     }
 

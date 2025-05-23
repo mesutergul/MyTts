@@ -8,5 +8,6 @@ namespace MyTts.Models
         public string Language { get; set; } = string.Empty;
         public DateTime CreatedDate { get; set; } = DateTime.UtcNow;
         public bool Enabled { get; set; }
+        public string? OzetHash { get; set; }
     }
 }

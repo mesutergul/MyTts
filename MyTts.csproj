@@ -36,12 +36,16 @@
     <PackageReference Include="SlackNet" Version="0.16.1" />
     <PackageReference Include="StackExchange.Redis" Version="2.8.31" />
   </ItemGroup>
+
   <ItemGroup>
-    <None Update="test.csv"> <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory> </None>
-  </ItemGroup> 
-  <!-- <ItemGroup>
-    <None Update="ffmpeg-bin\**\*.*">
+    <None Update="test.csv">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-  </ItemGroup> -->
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="ffmpeg-bin\**\*.*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
 </Project>

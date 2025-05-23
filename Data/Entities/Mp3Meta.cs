@@ -19,6 +19,9 @@ namespace MyTts.Data.Entities
 
         [Column("durum")]
         public bool Enabled { get; set; }
+       
+        [Column("ozet_hash")]
+        public string? OzetHash { get; set; }
 
         // Add other properties as needed, based on your database schema
     }

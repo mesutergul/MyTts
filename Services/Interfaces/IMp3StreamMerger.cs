@@ -9,6 +9,8 @@ namespace MyTts.Services.Interfaces
             string basePath,
             AudioType fileType,
             string breakAudioPath,
+            string startAudioPath,
+            string endAudioPath,
             CancellationToken cancellationToken = default);
     }
 }

@@ -75,5 +75,7 @@ namespace MyTts.Data.Repositories
             // This method is not needed for the null implementation
             return Task.CompletedTask;
         }
+        public Task<Dictionary<int, string>> GetExistingHashesAsync(List<int> fileIdsToCheck, CancellationToken cancellationToken) => Task.FromResult(new Dictionary<int, string>());
+
     }
 }

@@ -701,6 +701,27 @@ namespace MyTts.Repositories
                 _dbLock.Release();
             }
         }
+        public async Task<Dictionary<int, string>> GetExistingHashList(List<int> myList, CancellationToken cancellationToken)
+        {
+            try
+            {
+                await _dbLock.WaitAsync(cancellationToken);
+                try
+                {
+                    _logger.LogDebug("Loading MP3 files from database");
+                    return await _mp3MetaRepository.GetExistingHashesAsync(myList, cancellationToken);
+                }
+                finally
+                {
+                    _dbLock.Release();
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to execute test query");
+                throw;
+            }
+        }
 
         #endregion
 

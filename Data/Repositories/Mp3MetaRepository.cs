@@ -152,13 +152,45 @@ namespace MyTts.Data.Repositories
             {
                 return new List<Mp3Meta>();
             }
-            var list = await _dbSet
-                .OrderByDescending(x => x.Id)
-                .Take(100)
-                .Where(x => fileIdsToCheck.Contains(x.FileId))               
-                .ToListAsync(cancellationToken);
 
-            return list;
+            var result = new List<Mp3Meta>();
+            foreach (var id in fileIdsToCheck)
+            {
+                var entity = await _dbSet
+                    .Where(x => x.FileId == id)
+                    .FirstOrDefaultAsync(cancellationToken);
+
+                if (entity != null)
+                {
+                    result.Add(entity);
+                }
+            }
+
+            return result;
+        }
+        public async Task<Dictionary<int, string>> GetExistingHashesAsync(List<int> fileIdsToCheck, CancellationToken cancellationToken)
+        {
+            if (fileIdsToCheck == null || !fileIdsToCheck.Any())
+            {
+                return new Dictionary<int, string>();
+            }
+
+            var result = new Dictionary<int, string>();
+            foreach (var id in fileIdsToCheck)
+            {
+                var exists = await _dbSet
+                    .Where(x => x.FileId == id)
+                    .Select(x => x.OzetHash)
+                    .FirstOrDefaultAsync(cancellationToken);
+
+                if (exists != null)
+                {
+                    result.Add(id, exists);
+                }
+            }
+
+            return result;
         }
     }
+
 }

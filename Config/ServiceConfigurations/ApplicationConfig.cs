@@ -1,6 +1,7 @@
 using MyTts.Repositories;
 using MyTts.Services;
 using MyTts.Services.Interfaces;
+using MyTts.Services.Clients;
 using Microsoft.Extensions.Options;
 using Polly;
 using Polly.Retry;
@@ -17,6 +18,7 @@ public static class ApplicationConfig
         
         // Register application services
         services.AddScoped<IMp3Service, Mp3Service>();
+        services.AddScoped<ITtsClient, TtsClient>();
         
         // Configure and register notification service with resilience policies
         services.Configure<NotificationOptions>(configuration.GetSection("Notifications"));
@@ -36,7 +38,8 @@ public static class ApplicationConfig
         // Register infrastructure services
         services.AddScoped<IRedisCacheService, RedisCacheService>();
         services.AddScoped<IFileStreamingService, FileStreamingService>();
-      //  services.AddScoped<IAudioConversionService, AudioConversionService>();
+        //  services.AddScoped<IAudioConversionService, AudioConversionService>();
+        services.AddSingleton(typeof(ICache<,>), typeof(LimitedMemoryCache<,>));
 
         return services;
     }

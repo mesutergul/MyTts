@@ -12,8 +12,9 @@ namespace MyTts.Services
     {
         private readonly ILogger<Mp3Service> _logger;
         private readonly IMp3Repository _mp3FileRepository;
-        private readonly TtsClient _ttsClient;
+        private readonly ITtsClient _ttsClient;
         private readonly IRedisCacheService? _cache;
+        private readonly ICache<int, string> _ozetCache;
         private readonly SemaphoreSlim _processingSemaphore;
         private const int MaxConcurrentProcessing = 1;
         private bool _disposed;
@@ -22,8 +23,9 @@ namespace MyTts.Services
         public Mp3Service(
             ILogger<Mp3Service> logger,
             IMp3Repository mp3FileRepository,
-            TtsClient ttsClient,
+            ITtsClient ttsClient,
             IRedisCacheService cache,
+            ICache<int, string> ozetCache,
             IServiceScopeFactory serviceScopeFactory)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -31,6 +33,7 @@ namespace MyTts.Services
             _ttsClient = ttsClient ?? throw new ArgumentNullException(nameof(ttsClient));
             _cache = cache ?? throw new ArgumentNullException(nameof(cache));
             _processingSemaphore = new SemaphoreSlim(MaxConcurrentProcessing);
+            _ozetCache = ozetCache;
             _serviceScopeFactory = serviceScopeFactory ?? throw new ArgumentNullException(nameof(serviceScopeFactory));
         }
         public async Task<string> CreateMultipleMp3Async(
@@ -54,12 +57,17 @@ namespace MyTts.Services
                 await _ttsClient.ProcessContentsAsync(newsList, neededNewsList, savedNewsList, language, fileType, cancellationToken);
 
                 // Start SQL operations as fire-and-forget
-               
-                var metadataList = newsList.Select(news => new Mp3Dto
-                {
-                    FileId = news.IlgiId,
-                    FileUrl = StoragePathHelper.GetFullPathById(news.IlgiId, fileType),
-                    Language = language
+
+                var metadataList = newsList.Select(news => {
+                    var myHash = TextHasher.ComputeMd5Hash(news.Ozet);
+                    _ozetCache.Set(news.IlgiId, myHash);
+                    return new Mp3Dto
+                    {
+                        FileId = news.IlgiId,
+                        FileUrl = StoragePathHelper.GetFullPathById(news.IlgiId, fileType),
+                        Language = language,
+                        OzetHash = myHash
+                    };
                 }).ToList();
 
                 _logger.LogInformation("Starting background SQL operations for {Count} files", metadataList.Count);
@@ -112,9 +120,11 @@ namespace MyTts.Services
         {
             var neededNewsList = new List<HaberSummaryDto>();
             var savedNewsList = new List<HaberSummaryDto>();
+           // var existingHashList = await _mp3FileRepository.GetExistingHashList(newsList.Select(x => x.IlgiId).ToList(), cancellationToken);
             foreach (var news in newsList)
             {
-                if (await _mp3FileRepository.FileExistsAnywhereAsync(news.IlgiId, language, fileType, cancellationToken))
+                var isSame = _ozetCache.TryGetValue(news.IlgiId, out var existingHash) && TextHasher.HasTextChangedMd5(news.Ozet, existingHash);
+                if (await _mp3FileRepository.FileExistsAnywhereAsync(news.IlgiId, language, fileType, cancellationToken) && isSame)
                 {
                     savedNewsList.Add(news);                   
                 }
