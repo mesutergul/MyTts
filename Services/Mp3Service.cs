@@ -61,6 +61,7 @@ namespace MyTts.Services
                 var metadataList = newsList.Select(news => {
                     var myHash = TextHasher.ComputeMd5Hash(news.Ozet);
                     _ozetCache.Set(news.IlgiId, myHash);
+                    _logger.LogInformation("Hash for {Id}: {Hash}", news.IlgiId, myHash);
                     return new Mp3Dto
                     {
                         FileId = news.IlgiId,
@@ -124,7 +125,7 @@ namespace MyTts.Services
             foreach (var news in newsList)
             {
                 var existingHash = _ozetCache.Get(news.IlgiId);
-                var isSame = existingHash == null || TextHasher.HasTextChangedMd5(news.Ozet, existingHash);
+                var isSame = existingHash == null || !TextHasher.HasTextChangedMd5(news.Ozet, existingHash);
                 if (await _mp3FileRepository.FileExistsAnywhereAsync(news.IlgiId, language, fileType, cancellationToken) && isSame)
                 {
                     savedNewsList.Add(news);                   

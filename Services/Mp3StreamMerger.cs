@@ -3,15 +3,18 @@ using FFMpegCore.Pipes;
 using MyTts.Models;
 using MyTts.Services.Interfaces;
 using MyTts.Helpers;
+using System.Threading;
 
 namespace MyTts.Services
 {
     public sealed class Mp3StreamMerger : IMp3StreamMerger, IAsyncDisposable
     {
         private readonly ILogger<Mp3StreamMerger> _logger;
+        private static readonly SemaphoreSlim _mergeSemaphore = new(MaxConcurrentMerges);
         private bool _disposed;
         private const int BufferSize = 81920; // 80KB buffer
         private const int MaxRetries = 3;
+        private const int MaxConcurrentMerges = 2; // Limit concurrent merge operations
 
         public Mp3StreamMerger(ILogger<Mp3StreamMerger> logger, IConfiguration configuration)
         {
@@ -33,19 +36,27 @@ namespace MyTts.Services
                 throw new ArgumentException("No audio processors provided", nameof(audioProcessors));
             }
             var outputFilePath = "merged";
-            
+
             try
             {
                 if (audioProcessors.Count == 1)
                 {
                     return outputFilePath;
                 }
-                
-                using var outputStream = new MemoryStream();
-                await MergeAudioProcessorsAsync(audioProcessors, outputStream, outputFilePath, fileType, breakAudioPath, startAudioPath, endAudioPath, cancellationToken).ConfigureAwait(false);
 
-                outputStream.Position = 0;
-                return outputFilePath;
+                await _mergeSemaphore.WaitAsync(cancellationToken);
+                try
+                {
+                    using var outputStream = new MemoryStream();
+                    await MergeAudioProcessorsAsync(audioProcessors, outputStream, outputFilePath, fileType, breakAudioPath, startAudioPath, endAudioPath, cancellationToken).ConfigureAwait(false);
+
+                    outputStream.Position = 0;
+                    return outputFilePath;
+                }
+                finally
+                {
+                    _mergeSemaphore.Release();
+                }
             }
             catch (OperationCanceledException)
             {
@@ -73,7 +84,7 @@ namespace MyTts.Services
             var streamsToDispose = new List<Stream>();
             var codec = fileType.Equals(AudioType.Mp3) ? "libmp3lame" : "aac";
             var retryCount = 0;
-            
+
             try
             {
                 while (retryCount < MaxRetries)
@@ -81,16 +92,14 @@ namespace MyTts.Services
                     try
                     {
                         var ffmpegArgs = await CreateFfmpegArgumentsAsync(processors, streamPipeSources, streamsToDispose, breakAudioPath, startAudioPath, endAudioPath, cancellationToken).ConfigureAwait(false);
-                        
+
                         int totalInputs = !string.IsNullOrEmpty(breakAudioPath) ? processors.Count * 2 - 2 : processors.Count;
                         totalInputs = !string.IsNullOrEmpty(startAudioPath) ? totalInputs + 1 : totalInputs;
                         totalInputs = !string.IsNullOrEmpty(endAudioPath) ? totalInputs + 1 : totalInputs;
                         var filterComplex = CreateFilterComplexCommand(totalInputs);
 
-                        // Configure FFmpeg with proper settings
                         var ffmpegOptions = new FFOptions
                         {
-                            BinaryFolder = Path.Combine(AppContext.BaseDirectory, "ffmpeg-bin"),
                             TemporaryFilesFolder = Path.GetTempPath()
                         };
 
@@ -136,7 +145,7 @@ namespace MyTts.Services
                         _logger.LogWarning(ex, "Pipe error during merge, retry {RetryCount} of {MaxRetries}", retryCount, MaxRetries);
                         await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, retryCount)), cancellationToken); // Exponential backoff
                         outputStream.Position = 0; // Reset stream position
-                        
+
                         // Clean up streams before retry
                         foreach (var stream in streamsToDispose)
                         {
@@ -244,6 +253,7 @@ namespace MyTts.Services
             if (!_disposed)
             {
                 _disposed = true;
+                // Don't dispose the static semaphore
             }
             await ValueTask.CompletedTask;
         }

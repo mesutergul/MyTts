@@ -370,7 +370,7 @@ namespace MyTts.Services.Clients
                     startAudioPath = await checkFilePaths(startAudioPath, cancellationToken);
                     endAudioPath = await checkFilePaths(endAudioPath, cancellationToken);
                     // Start merge operation in background
-                    var mergeTask = Task.Run(async () =>
+                    _ = Task.Run(async () =>
                     {
                         try
                         {
@@ -408,8 +408,6 @@ namespace MyTts.Services.Clients
                                 "MP3 Merge Completed",
                                 $"Successfully merged {processors.Count} files in {stopwatch.ElapsedMilliseconds}ms",
                                 NotificationType.Success);
-
-                            return merged;
                         }
                         catch (Exception ex)
                         {
@@ -418,7 +416,6 @@ namespace MyTts.Services.Clients
                                 "MP3 Merge Failed",
                                 $"Failed to merge {processors.Count} files after all retries",
                                 ex);
-                            throw;
                         }
                     }, cancellationToken);
 

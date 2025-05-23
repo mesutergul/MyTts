@@ -42,37 +42,9 @@ namespace MyTts.Services
                 }
                 else
                 {
-                    // Test the webhook URL at startup
-                    try
-                    {
-                        var testPayload = new { text = "Testing Slack webhook configuration..." };
-                        var content = new StringContent(
-                            JsonSerializer.Serialize(testPayload),
-                            System.Text.Encoding.UTF8,
-                            "application/json");
-
-                        var response = _httpClient.PostAsync(_options.SlackWebhookUrl, content).GetAwaiter().GetResult();
-                        if (!response.IsSuccessStatusCode)
-                        {
-                            var errorContent = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
-                            _logger.LogInformation("Slack webhook URL validation failed. Status: {StatusCode}, Error: {Error}. Slack notifications will be disabled.",
-                                response.StatusCode, errorContent);
-                            _slackEnabled = false;
-                            _slackWebhookUrl = null;
-                        }
-                        else
-                        {
-                            _slackEnabled = true;
-                            _slackWebhookUrl = _options.SlackWebhookUrl;
-                            _logger.LogInformation("Slack notifications are enabled and properly configured");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogInformation(ex, "Failed to validate Slack webhook URL. Slack notifications will be disabled.");
-                        _slackEnabled = false;
-                        _slackWebhookUrl = null;
-                    }
+                    _slackEnabled = true;
+                    _slackWebhookUrl = _options.SlackWebhookUrl;
+                    _logger.LogInformation("Slack notifications are enabled and will be validated on first use");
                 }
             }
             else
