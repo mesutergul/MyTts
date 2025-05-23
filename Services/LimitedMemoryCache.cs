@@ -32,6 +32,8 @@ namespace MyTts.Services
 
         public void Set(TKey key, TValue value)
         {
+            ArgumentNullException.ThrowIfNull(key);
+            
             lock (_lock)
             {
                 if (!_cache.TryGetValue(key, out _))
@@ -50,23 +52,33 @@ namespace MyTts.Services
 
         public TValue Get(TKey key)
         {
+            ArgumentNullException.ThrowIfNull(key);
+            
             lock (_lock)
             {
-                return _cache.TryGetValue(key, out TValue value) ? value : default;
+                TValue? result = default;
+                return _cache.TryGetValue(key, out result) ? result! : default!;
             }
         }
 
         public bool TryGetValue(TKey key, out TValue value)
         {
+            ArgumentNullException.ThrowIfNull(key);
+            value = default!;
+            
             lock (_lock)
             {
-                return _cache.TryGetValue(key, out value);
+                TValue? result = default;
+                var found = _cache.TryGetValue(key, out result);
+                value = result!;
+                return found;
             }
         }
 
         public void Remove(TKey key)
         {
-            lock (_lock)
+            ArgumentNullException.ThrowIfNull(key);
+            lock(_lock)
             {
                 _cache.Remove(key);
                 _keyOrder.Remove(key);
