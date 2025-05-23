@@ -3,38 +3,27 @@ using Microsoft.Extensions.Options;
 using MyTts.Config;
 using MyTts.Services.Interfaces;
 using Polly;
-using Polly.Retry;
 
 namespace MyTts.Services
 {
-
     public class EmailService : IEmailService
     {
-        private readonly EmailConfig _emailConfig;
         private readonly ILogger<EmailService> _logger;
-        private readonly AsyncRetryPolicy _retryPolicy;
-        private const int EmailTimeoutSeconds = 30;
+        private readonly EmailConfig _emailConfig;
+        private readonly IAsyncPolicy _retryPolicy;
+        private readonly IAsyncPolicy _circuitBreakerPolicy;
 
-        public EmailService(IOptions<EmailConfig> emailConfig, ILogger<EmailService> logger)
+        public EmailService(
+            ILogger<EmailService> logger,
+            IOptions<EmailConfig> emailConfig,
+            IEnumerable<IAsyncPolicy> policies)
         {
-            _emailConfig = emailConfig.Value;
-            _logger = logger;
-
-            // Configure retry policy
-            _retryPolicy = Policy
-                .Handle<SmtpException>()
-                .Or<IOException>()
-                .WaitAndRetryAsync(
-                    _emailConfig.MaxRetries,
-                    retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
-                    onRetry: (exception, timeSpan, retryCount, context) =>
-                    {
-                        _logger.LogWarning(exception,
-                            "Retry {RetryCount} after {Delay}ms due to {ErrorType}",
-                            retryCount,
-                            timeSpan.TotalMilliseconds,
-                            exception.GetType().Name);
-                    });
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _emailConfig = emailConfig?.Value ?? throw new ArgumentNullException(nameof(emailConfig));
+            
+            var policyList = policies.ToList();
+            _retryPolicy = policyList[0];
+            _circuitBreakerPolicy = policyList[1];
         }
 
         public async Task SendEmailAsync(string to, string subject, string body, bool isHtml = false)
@@ -44,45 +33,65 @@ namespace MyTts.Services
 
         public async Task SendEmailAsync(List<string> to, string subject, string body, bool isHtml = false)
         {
+            var context = new Context();
+            context["recipient"] = string.Join(", ", to);
+
             try
             {
-                await _retryPolicy.ExecuteAsync(async () =>
-                {
-                    using var message = new MailMessage
+                await _circuitBreakerPolicy
+                    .WrapAsync(_retryPolicy)
+                    .ExecuteAsync(async (ctx) =>
                     {
-                        From = new MailAddress(_emailConfig.SenderEmail, _emailConfig.SenderName),
-                        Subject = subject,
-                        Body = body,
-                        IsBodyHtml = isHtml
-                    };
+                        using var client = new SmtpClient(_emailConfig.SmtpServer, _emailConfig.SmtpPort)
+                        {
+                            EnableSsl = _emailConfig.EnableSsl,
+                            Credentials = new System.Net.NetworkCredential(_emailConfig.SenderEmail, _emailConfig.SenderPassword),
+                            Timeout = _emailConfig.TimeoutSeconds * 1000, // Convert seconds to milliseconds
+                            DeliveryMethod = SmtpDeliveryMethod.Network,
+                            UseDefaultCredentials = false
+                        };
 
-                    if (!string.IsNullOrEmpty(_emailConfig.ReplyTo))
-                    {
-                        message.ReplyToList.Add(_emailConfig.ReplyTo);
-                    }
+                        using var message = new MailMessage
+                        {
+                            From = new MailAddress(_emailConfig.SenderEmail, _emailConfig.SenderName),
+                            Subject = subject,
+                            Body = body,
+                            IsBodyHtml = isHtml,
+                            Priority = MailPriority.Normal
+                        };
 
-                    foreach (var recipient in to)
-                    {
-                        message.To.Add(recipient);
-                    }
+                        // Add headers to help with deliverability
+                        message.Headers.Add("X-Mailer", "MyTts Notification System");
+                        message.Headers.Add("X-Priority", "3");
+                        message.Headers.Add("X-MSMail-Priority", "Normal");
 
-                    using var client = new SmtpClient(_emailConfig.SmtpServer, _emailConfig.SmtpPort)
-                    {
-                        EnableSsl = _emailConfig.EnableSsl,
-                        Credentials = new System.Net.NetworkCredential(_emailConfig.SenderEmail, _emailConfig.SenderPassword),
-                        Timeout = EmailTimeoutSeconds * 1000, // Convert seconds to milliseconds
-                        DeliveryMethod = SmtpDeliveryMethod.Network
-                    };
+                        if (!string.IsNullOrEmpty(_emailConfig.ReplyTo))
+                        {
+                            message.ReplyToList.Add(_emailConfig.ReplyTo);
+                        }
 
-                    await client.SendMailAsync(message);
-                    _logger.LogInformation("Email sent successfully to {Recipients}", string.Join(", ", to));
-                });
+                        foreach (var recipient in to)
+                        {
+                            message.To.Add(recipient);
+                        }
+
+                        try
+                        {
+                            await client.SendMailAsync(message);
+                            _logger.LogInformation("Email sent successfully to {Recipients}", string.Join(", ", to));
+                        }
+                        catch (SmtpException ex)
+                        {
+                            _logger.LogError(ex, "SMTP error while sending email to {Recipients}. Status code: {StatusCode}, Response: {Response}",
+                                string.Join(", ", to), ex.StatusCode, ex.Message);
+                            throw;
+                        }
+                    }, context);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to send email to {Recipients} after {MaxRetries} retries",
-                    string.Join(", ", to),
-                    _emailConfig.MaxRetries);
+                _logger.LogError(ex, "Failed to send email to {Recipients} after all retries. Error: {Error}",
+                    string.Join(", ", to), ex.Message);
                 throw;
             }
         }

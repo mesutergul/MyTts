@@ -123,7 +123,8 @@ namespace MyTts.Services
            // var existingHashList = await _mp3FileRepository.GetExistingHashList(newsList.Select(x => x.IlgiId).ToList(), cancellationToken);
             foreach (var news in newsList)
             {
-                var isSame = _ozetCache.TryGetValue(news.IlgiId, out var existingHash) && TextHasher.HasTextChangedMd5(news.Ozet, existingHash);
+                var existingHash = _ozetCache.Get(news.IlgiId);
+                var isSame = existingHash == null || TextHasher.HasTextChangedMd5(news.Ozet, existingHash);
                 if (await _mp3FileRepository.FileExistsAnywhereAsync(news.IlgiId, language, fileType, cancellationToken) && isSame)
                 {
                     savedNewsList.Add(news);                   

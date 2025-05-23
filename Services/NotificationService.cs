@@ -11,6 +11,8 @@ namespace MyTts.Services
         private readonly NotificationOptions _options;
         private readonly HttpClient _httpClient;
         private readonly IEmailService _emailService;
+        private bool _slackEnabled;
+        private readonly string? _slackWebhookUrl;
 
         public NotificationService(
             ILogger<NotificationService> logger,
@@ -22,129 +24,196 @@ namespace MyTts.Services
             _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
             _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
             _emailService = emailService ?? throw new ArgumentNullException(nameof(emailService));
-        }
 
-        public async Task SendNotificationAsync(string title, string message, NotificationType type, CancellationToken cancellationToken = default)
-        {
-            try
+            // Validate Slack configuration at startup
+            if (_options.EnableSlackNotifications)
             {
-                // Log the notification
-                _logger.LogInformation("Notification: {Title} - {Message} ({Type})", title, message, type);
-
-                // Send to configured channels
-                var tasks = new List<Task>();
-
-                if (_options.EnableEmailNotifications)
+                if (string.IsNullOrEmpty(_options.SlackWebhookUrl))
                 {
-                    tasks.Add(SendEmailNotificationAsync(title, message, type, cancellationToken));
+                    _logger.LogInformation("Slack notifications are enabled but webhook URL is not configured. Slack notifications will be disabled.");
+                    _slackEnabled = false;
+                    _slackWebhookUrl = null;
                 }
-
-                if (_options.EnableSlackNotifications && !string.IsNullOrEmpty(_options.SlackWebhookUrl))
+                else if (!IsValidSlackWebhookUrl(_options.SlackWebhookUrl))
                 {
-                    tasks.Add(SendSlackNotificationAsync(title, message, type, cancellationToken));
+                    _logger.LogInformation("Slack notifications are enabled but webhook URL is invalid. Slack notifications will be disabled.");
+                    _slackEnabled = false;
+                    _slackWebhookUrl = null;
                 }
+                else
+                {
+                    // Test the webhook URL at startup
+                    try
+                    {
+                        var testPayload = new { text = "Testing Slack webhook configuration..." };
+                        var content = new StringContent(
+                            JsonSerializer.Serialize(testPayload),
+                            System.Text.Encoding.UTF8,
+                            "application/json");
 
-                await Task.WhenAll(tasks);
+                        var response = _httpClient.PostAsync(_options.SlackWebhookUrl, content).GetAwaiter().GetResult();
+                        if (!response.IsSuccessStatusCode)
+                        {
+                            var errorContent = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                            _logger.LogInformation("Slack webhook URL validation failed. Status: {StatusCode}, Error: {Error}. Slack notifications will be disabled.",
+                                response.StatusCode, errorContent);
+                            _slackEnabled = false;
+                            _slackWebhookUrl = null;
+                        }
+                        else
+                        {
+                            _slackEnabled = true;
+                            _slackWebhookUrl = _options.SlackWebhookUrl;
+                            _logger.LogInformation("Slack notifications are enabled and properly configured");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogInformation(ex, "Failed to validate Slack webhook URL. Slack notifications will be disabled.");
+                        _slackEnabled = false;
+                        _slackWebhookUrl = null;
+                    }
+                }
             }
-            catch (Exception ex)
+            else
             {
-                _logger.LogError(ex, "Failed to send notification: {Title}", title);
+                _slackEnabled = false;
+                _slackWebhookUrl = null;
+                _logger.LogInformation("Slack notifications are disabled");
             }
         }
 
-        public async Task SendErrorNotificationAsync(string title, string message, Exception? exception = null, CancellationToken cancellationToken = default)
+        public Task SendNotificationAsync(string title, string message, NotificationType type, CancellationToken cancellationToken = default)
         {
-            var fullMessage = exception == null ? message : $"{message}\nException: {exception}";
-            await SendNotificationAsync(title, fullMessage, NotificationType.Error, cancellationToken);
-        }
-
-        private Task SendEmailNotificationAsync(string title, string message, NotificationType type, CancellationToken cancellationToken)
-        {
-            if (string.IsNullOrEmpty(_options.EmailTo))
-            {
-                _logger.LogWarning("Email notifications are enabled but EmailTo is not configured");
-                return Task.CompletedTask;
-            }
+            // Log the notification
+            _logger.LogInformation("Notification: {Title} - {Message} ({Type})", title, message, type);
 
             // Fire and forget email notification
-            _ = Task.Run(async () =>
+            if (_options.EnableEmailNotifications)
             {
-                try
+                _ = Task.Run(async () =>
                 {
-                    var subject = $"[{type}] {title}";
-                    var body = $"""
-                        Notification Type: {type}
-                        Title: {title}
-                        Time: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC
-                        
-                        Message:
-                        {message}
-                        """;
+                    try
+                    {
+                        await SendEmailNotificationAsync(title, message, type, cancellationToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Failed to send email notification");
+                    }
+                }, cancellationToken);
+            }
 
-                    await _emailService.SendEmailAsync(_options.EmailTo, subject, body);
-                    _logger.LogInformation("Email notification sent successfully to {Recipient}", _options.EmailTo);
-                }
-                catch (Exception ex)
+            // Fire and forget Slack notification only if properly configured
+            if (_slackEnabled && !string.IsNullOrEmpty(_slackWebhookUrl))
+            {
+                _ = Task.Run(async () =>
                 {
-                    _logger.LogError(ex, "Failed to send email notification to {Recipient}", _options.EmailTo);
-                }
-            }, cancellationToken);
+                    try
+                    {
+                        await SendSlackNotificationAsync(title, message, type, cancellationToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogInformation("Failed to send Slack notification: {Error}", ex.Message);
+                        // Disable Slack notifications for future calls
+                        _slackEnabled = false;
+                    }
+                }, cancellationToken);
+            }
 
             return Task.CompletedTask;
         }
 
-        private async Task SendSlackNotificationAsync(string title, string message, NotificationType type, CancellationToken cancellationToken)
+        public Task SendErrorNotificationAsync(string title, string message, Exception? exception = null, CancellationToken cancellationToken = default)
         {
-            if (string.IsNullOrEmpty(_options.SlackWebhookUrl))
+            var fullMessage = exception == null ? message : $"{message}\nException: {exception}";
+            return SendNotificationAsync(title, fullMessage, NotificationType.Error, cancellationToken);
+        }
+
+        private async Task SendEmailNotificationAsync(string title, string message, NotificationType type, CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrEmpty(_options.EmailTo))
             {
-                _logger.LogWarning("Slack notifications are enabled but webhook URL is not configured");
+                _logger.LogInformation("Email notifications are enabled but EmailTo is not configured");
                 return;
             }
 
+            var subject = $"[{type}] {title}";
+            var body = $"""
+                Notification Type: {type}
+                Title: {title}
+                Time: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC
+                
+                Message:
+                {message}
+                """;
+
+            await _emailService.SendEmailAsync(_options.EmailTo, subject, body);
+            _logger.LogInformation("Email notification sent successfully to {Recipient}", _options.EmailTo);
+        }
+
+        private async Task SendSlackNotificationAsync(string title, string message, NotificationType type, CancellationToken cancellationToken)
+        {
+            if (!_slackEnabled || string.IsNullOrEmpty(_slackWebhookUrl))
+            {
+                _logger.LogInformation("Slack notifications are not properly configured");
+                return;
+            }
+
+            var payload = new
+            {
+                text = $"*[{type}] {title}*\n{message}",
+                username = "TTS Notification Bot",
+                icon_emoji = type switch
+                {
+                    NotificationType.Success => ":white_check_mark:",
+                    NotificationType.Warning => ":warning:",
+                    NotificationType.Error => ":x:",
+                    _ => ":information_source:"
+                }
+            };
+
+            var content = new StringContent(
+                JsonSerializer.Serialize(payload),
+                System.Text.Encoding.UTF8,
+                "application/json");
+
             try
             {
-                var color = type switch
-                {
-                    NotificationType.Error => "#FF0000",
-                    NotificationType.Warning => "#FFA500",
-                    NotificationType.Success => "#00FF00",
-                    _ => "#0000FF"
-                };
-
-                var payload = new
-                {
-                    attachments = new[]
-                    {
-                        new
-                        {
-                            color,
-                            title,
-                            text = message,
-                            footer = $"Type: {type} | Time: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC",
-                            ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
-                        }
-                    }
-                };
-
-                var json = JsonSerializer.Serialize(payload);
-                var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
-
-                var response = await _httpClient.PostAsync(_options.SlackWebhookUrl, content, cancellationToken);
-                
+                var response = await _httpClient.PostAsync(_slackWebhookUrl, content, cancellationToken);
                 if (!response.IsSuccessStatusCode)
                 {
                     var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
-                    _logger.LogWarning("Slack webhook returned non-success status code: {StatusCode}. Response: {Response}", 
-                        response.StatusCode, errorContent);
+                    _logger.LogInformation("Slack API returned {StatusCode}: {Error}", response.StatusCode, errorContent);
+                    _slackEnabled = false;
                     return;
                 }
-
                 _logger.LogInformation("Slack notification sent successfully");
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to send Slack notification");
-                // Don't throw the exception, just log it
+                _logger.LogInformation("Failed to send Slack notification: {Error}", ex.Message);
+                _slackEnabled = false;
+            }
+        }
+
+        private static bool IsValidSlackWebhookUrl(string? webhookUrl)
+        {
+            if (string.IsNullOrEmpty(webhookUrl))
+                return false;
+
+            try
+            {
+                var uri = new Uri(webhookUrl);
+                return uri.Scheme == "https" &&
+                       uri.Host == "hooks.slack.com" &&
+                       uri.AbsolutePath.StartsWith("/services/", StringComparison.OrdinalIgnoreCase) &&
+                       uri.AbsolutePath.Split('/').Length >= 4; // Valid Slack webhook URLs have at least 4 segments
+            }
+            catch (UriFormatException)
+            {
+                return false;
             }
         }
     }
