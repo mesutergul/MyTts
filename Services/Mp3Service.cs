@@ -4,7 +4,8 @@ using MyTts.Repositories;
 using MyTts.Services.Interfaces;
 using MyTts.Helpers;
 using System.Diagnostics;
-using MyTts.Services.Clients;
+using System.Speech.Synthesis;
+using System.Speech.AudioFormat;
 
 namespace MyTts.Services
 {
@@ -43,6 +44,12 @@ namespace MyTts.Services
             CancellationToken cancellationToken)
         {
             await _processingSemaphore.WaitAsync(cancellationToken);
+            // SpeechSynthesizer synthesizer = new SpeechSynthesizer();
+            // synthesizer.SetOutputToAudioStream(new MemoryStream(), new SpeechAudioFormatInfo(44100, AudioBitsPerSample.Sixteen, AudioChannel.Mono));
+            // synthesizer.SelectVoice("Microsoft Zira Desktop");
+            // synthesizer.Rate = 0;
+            // synthesizer.Volume = 100;   
+            // synthesizer.Speak("Merhaba, bu bir test sesidir.");
             try
             {
                 var newsList = await GetNewsList(cancellationToken);
@@ -51,14 +58,15 @@ namespace MyTts.Services
                     newsList = CsvFileReader.ReadHaberSummariesFromCsv(StoragePathHelper.GetFullPath("test", AudioType.Csv))
                         .Select(x => new HaberSummaryDto() { Baslik = x.Baslik, IlgiId = x.IlgiId, Ozet = x.Ozet }).ToList();
                 }
-               
+
                 var (neededNewsList, savedNewsList) = await checkNewsList(newsList, language, fileType, cancellationToken);
                 // Process needed news in parallel
                 await _ttsClient.ProcessContentsAsync(newsList, neededNewsList, savedNewsList, language, fileType, cancellationToken);
 
                 // Start SQL operations as fire-and-forget
 
-                var metadataList = newsList.Select(news => {
+                var metadataList = newsList.Select(news =>
+                {
                     var myHash = TextHasher.ComputeMd5Hash(news.Ozet);
                     _ozetCache.Set(news.IlgiId, myHash);
                     _logger.LogInformation("Hash for {Id}: {Hash}", news.IlgiId, myHash);

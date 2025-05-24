@@ -1,0 +1,125 @@
+<!-- index.html: Simple SPA-style layout -->
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>JWT Auth Demo</title>
+</head>
+
+<body>
+    <nav>
+        <button onclick="showLogin()">Login</button>
+        <button onclick="showRegister()">Register</button>
+        <button onclick="callProtectedFeed()">Call /feed</button>
+        <button onclick="logout()">Logout</button>
+    </nav>
+
+    <div id="content"></div>
+
+    <script>
+        function showLogin() {
+            document.getElementById("content").innerHTML = `
+        <h2>Login</h2>
+        <form id="loginForm">
+          <input type="email" id="email" placeholder="Email" required />
+          <input type="password" id="password" placeholder="Password" required />
+          <button type="submit">Login</button>
+        </form>
+      `;
+
+            document.getElementById("loginForm").addEventListener("submit", async (e) => {
+                e.preventDefault();
+                const response = await fetch("/api/auth/login", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        email: document.getElementById("email").value,
+                        password: document.getElementById("password").value
+                    }),
+                });
+                const result = await response.json();
+                if (response.ok) {
+                    localStorage.setItem("token", result.token);
+                    alert("Login successful");
+                } else {
+                    alert(result.message || "Login failed");
+                }
+            });
+        }
+
+        function showRegister() {
+            document.getElementById("content").innerHTML = `
+        <h2>Register</h2>
+        <form id="registerForm">
+          <input type="email" id="email" placeholder="Email" required />
+          <input type="password" id="password" placeholder="Password (min 8 chars)" required />
+          <input type="text" id="firstName" placeholder="First Name" />
+          <input type="text" id="lastName" placeholder="Last Name" />
+          <button type="submit">Register</button>
+        </form>
+      `;
+
+            document.getElementById("registerForm").addEventListener("submit", async (e) => {
+                e.preventDefault();
+                const response = await fetch("/api/auth/register", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        email: document.getElementById("email").value,
+                        password: document.getElementById("password").value,
+                        firstName: document.getElementById("firstName").value,
+                        lastName: document.getElementById("lastName").value
+                    }),
+                });
+                const result = await response.json();
+                if (response.ok) {
+                    alert("Registration successful. Please log in.");
+                    showLogin();
+                } else {
+                    alert(result.message || "Registration failed");
+                }
+            });
+        }
+
+        function callProtectedFeed() {
+            const token = localStorage.getItem("token");
+            if (!token) {
+                alert("Please log in first.");
+                return;
+            }
+
+            const language = "tr"; // Example language
+            const limit = 10;
+
+            fetch(`/api/mp3/feed/${language}`, {
+                method: "GET",
+                headers: {
+                    Authorization: `Bearer ${token}`
+                }
+            })
+                .then(async res => {
+                    const data = await res.json();
+                    if (res.ok) {
+                        alert("Feed call succeeded. File path: " + data.filePath);
+                    } else {
+                        alert("Feed call failed: " + (data.message || JSON.stringify(data)));
+                    }
+                })
+                .catch(err => {
+                    alert("Error calling feed: " + err.message);
+                });
+        }
+
+        function logout() {
+            localStorage.removeItem("token");
+            alert("Logged out");
+        }
+
+        // Optional: Auto-show login form on load
+        showLogin();
+    </script>
+</body>
+
+</html>

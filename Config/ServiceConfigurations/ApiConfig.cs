@@ -1,4 +1,7 @@
+using Microsoft.AspNetCore.Identity;
 using MyTts.Controllers;
+using MyTts.Data.Context;
+using MyTts.Models.Auth;
 using MyTts.Services;
 using MyTts.Services.Interfaces;
 
@@ -21,7 +24,7 @@ public static class ApiConfig
                     .AllowCredentials();
             });
         });
-
+ 
         // Register services
         services.AddScoped<IFileStreamingService, FileStreamingService>();
 
@@ -29,10 +32,10 @@ public static class ApiConfig
         services.AddEndpointsApiExplorer();
         services.AddOpenApi();
         
-        // Register controllers
-        services.AddControllers()
-            .AddApplicationPart(typeof(Mp3Controller).Assembly)
-            .AddControllersAsServices();
+        // // Register controllers
+        // services.AddControllers()
+        //     .AddApplicationPart(typeof(Mp3Controller).Assembly)
+        //     .AddControllersAsServices();
 
         return services;
     }
