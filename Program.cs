@@ -4,6 +4,14 @@ using Microsoft.AspNetCore.HttpOverrides;
 using MyTts.Models.Auth;
 using Microsoft.AspNetCore.Identity;
 
+/*
+set TOKEN $(curl -s -X POST http://localhost:5209/api/auth/login \
+      -H "Content-Type: application/json" \
+      -d '{"email": "admin@example.com", "password": "Admin123!"}' | jq -r '.token')
+curl -X GET http://localhost:5209/api/auth/me \
+          -H "Authorization: Bearer $TOKEN"
+*/
+
 // // Configure FFmpeg with absolute path
 // string baseDir = AppContext.BaseDirectory;
 // string ffmpegDir = Path.Combine(baseDir, "ffmpeg-bin");

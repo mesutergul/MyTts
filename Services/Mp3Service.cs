@@ -53,11 +53,11 @@ namespace MyTts.Services
             try
             {
                 var newsList = await GetNewsList(cancellationToken);
-                if (newsList.Count == 0)
-                {
-                    newsList = CsvFileReader.ReadHaberSummariesFromCsv(StoragePathHelper.GetFullPath("test", AudioType.Csv))
-                        .Select(x => new HaberSummaryDto() { Baslik = x.Baslik, IlgiId = x.IlgiId, Ozet = x.Ozet }).ToList();
-                }
+                // if (newsList.Count == 0)
+                // {
+                //     newsList = CsvFileReader.ReadHaberSummariesFromCsv(StoragePathHelper.GetFullPath("test", AudioType.Csv))
+                //         .Select(x => new HaberSummaryDto() { Baslik = x.Baslik, IlgiId = x.IlgiId, Ozet = x.Ozet }).ToList();
+                // }
 
                 var (neededNewsList, savedNewsList) = await checkNewsList(newsList, language, fileType, cancellationToken);
                 // Process needed news in parallel

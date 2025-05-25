@@ -26,7 +26,7 @@ namespace MyTts.Services
             _entryOptions = new MemoryCacheEntryOptions
             {
                 Size = 1,
-                SlidingExpiration = TimeSpan.FromMinutes(10)
+                SlidingExpiration = TimeSpan.FromHours(48)
             };
         }
 

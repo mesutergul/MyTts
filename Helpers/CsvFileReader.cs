@@ -3,7 +3,7 @@ using CsvHelper;
 using CsvHelper.Configuration;
 using CsvHelper.Configuration.Attributes;
 
-namespace MyTts.Services
+namespace MyTts.Helpers
 {
     public static class CsvFileReader
     {

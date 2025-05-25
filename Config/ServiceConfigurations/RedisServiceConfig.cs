@@ -110,7 +110,8 @@ public static class RedisServiceConfig
 
                 try
                 {
-                    return new RedisCacheService(connection, config, logger);
+                    var circuitBreakerLogger = sp.GetRequiredService<ILogger<RedisCircuitBreaker>>();
+                    return new RedisCacheService(connection, config, logger, circuitBreakerLogger);
                 }
                 catch (Exception ex)
                 {

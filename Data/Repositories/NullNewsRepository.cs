@@ -1,6 +1,7 @@
 using MyTts.Data.Entities;
 using MyTts.Data.Interfaces;
 using MyTts.Models;
+using MyTts.Helpers;
 
 namespace MyTts.Data.Repositories
 {
@@ -22,7 +23,23 @@ namespace MyTts.Data.Repositories
         public Task<News> GetByIdAsync(int id, CancellationToken cancellationToken) => Task.FromResult<News>(null!);
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
         public Task Update(News entity, CancellationToken cancellationToken) => Task.CompletedTask;
-        public Task<List<HaberSummaryDto>> getSummary(int count, MansetType type, CancellationToken cancellationToken) => Task.FromResult(new List<HaberSummaryDto>());
+        
+        public Task<List<HaberSummaryDto>> getSummary(int count, MansetType type, CancellationToken cancellationToken)
+        {
+            try
+            {
+                var summaries = CsvFileReader.ReadHaberSummariesFromCsv(StoragePathHelper.GetFullPath("test", AudioType.Csv))
+                    .Select(x => new HaberSummaryDto() { Baslik = x.Baslik, IlgiId = x.IlgiId, Ozet = x.Ozet })
+                    .Take(count)
+                    .ToList();
+                
+                return Task.FromResult(summaries);
+            }
+            catch (Exception)
+            {
+                return Task.FromResult(new List<HaberSummaryDto>());
+            }
+        }
 
         Task<NewsDto> IRepository<News, NewsDto>.GetByIdAsync(int id, CancellationToken cancellationToken)
         {
