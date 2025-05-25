@@ -39,9 +39,10 @@ builder.Services
     .AddAuthenticationServices(builder.Configuration)
     .AddStorageServices(builder.Configuration)
     .AddElevenLabsServices(builder.Configuration)
+    .AddGeminiAiConfiguration(builder.Configuration)
     .AddRedisServices(builder.Configuration)
     .AddEmailServices(builder.Configuration)
-    .AddHttpClientsServices()
+    .AddHttpClients() // Updated to use the new method name from HttpClientsConfig
     .AddApiServices();
 
 var app = builder.Build();

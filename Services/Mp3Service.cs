@@ -6,6 +6,8 @@ using MyTts.Helpers;
 using System.Diagnostics;
 using System.Speech.Synthesis;
 using System.Speech.AudioFormat;
+using System.IO;
+using System.Linq;
 
 namespace MyTts.Services
 {
@@ -20,11 +22,13 @@ namespace MyTts.Services
         private const int MaxConcurrentProcessing = 1;
         private bool _disposed;
         private readonly IServiceScopeFactory _serviceScopeFactory;
+        private readonly IGeminiTtsClient _geminiTtsClient;
 
         public Mp3Service(
             ILogger<Mp3Service> logger,
             IMp3Repository mp3FileRepository,
-            ITtsClient ttsClient,
+            ITtsClient ttsClient, // Existing ElevenLabs client
+            IGeminiTtsClient geminiTtsClient, // New Gemini client
             IRedisCacheService cache,
             ICache<int, string> ozetCache,
             IServiceScopeFactory serviceScopeFactory)
@@ -32,79 +36,158 @@ namespace MyTts.Services
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _mp3FileRepository = mp3FileRepository ?? throw new ArgumentNullException(nameof(mp3FileRepository));
             _ttsClient = ttsClient ?? throw new ArgumentNullException(nameof(ttsClient));
+            _geminiTtsClient = geminiTtsClient ?? throw new ArgumentNullException(nameof(geminiTtsClient)); // Initialize here
             _cache = cache ?? throw new ArgumentNullException(nameof(cache));
             _processingSemaphore = new SemaphoreSlim(MaxConcurrentProcessing);
             _ozetCache = ozetCache;
             _serviceScopeFactory = serviceScopeFactory ?? throw new ArgumentNullException(nameof(serviceScopeFactory));
         }
         public async Task<string> CreateMultipleMp3Async(
-            string language,
+            string language, // This should be a language code like "en-US" for Gemini
             int limit,
-            AudioType fileType,
+            AudioType fileType, // Ensure this is compatible with Gemini (e.g., MP3)
             CancellationToken cancellationToken)
         {
             await _processingSemaphore.WaitAsync(cancellationToken);
-            // SpeechSynthesizer synthesizer = new SpeechSynthesizer();
-            // synthesizer.SetOutputToAudioStream(new MemoryStream(), new SpeechAudioFormatInfo(44100, AudioBitsPerSample.Sixteen, AudioChannel.Mono));
-            // synthesizer.SelectVoice("Microsoft Zira Desktop");
-            // synthesizer.Rate = 0;
-            // synthesizer.Volume = 100;   
-            // synthesizer.Speak("Merhaba, bu bir test sesidir.");
             try
             {
                 var newsList = await GetNewsList(cancellationToken);
-                if (newsList.Count == 0)
+                if (!newsList.Any())
                 {
-                    newsList = CsvFileReader.ReadHaberSummariesFromCsv(StoragePathHelper.GetFullPath("test", AudioType.Csv))
-                        .Select(x => new HaberSummaryDto() { Baslik = x.Baslik, IlgiId = x.IlgiId, Ozet = x.Ozet }).ToList();
+                    _logger.LogWarning("No news items found to process.");
+                    // Optionally, fallback to CSV or other sources like the original method
+                    // newsList = CsvFileReader.ReadHaberSummariesFromCsv(...) 
+                }
+
+                // Filter newsList by limit if necessary
+                if (limit > 0 && newsList.Count > limit)
+                {
+                    newsList = newsList.Take(limit).ToList();
                 }
 
                 var (neededNewsList, savedNewsList) = await checkNewsList(newsList, language, fileType, cancellationToken);
-                // Process needed news in parallel
-                await _ttsClient.ProcessContentsAsync(newsList, neededNewsList, savedNewsList, language, fileType, cancellationToken);
 
-                // Start SQL operations as fire-and-forget
+                _logger.LogInformation("Attempting to process {Count} news items with Gemini TTS.", neededNewsList.Count()); // Use Count() for IEnumerable
 
-                var metadataList = newsList.Select(news =>
+                var processedNewsMetadata = new List<Mp3Dto>();
+                int geminiSuccessCount = 0;
+                int geminiFailureCount = 0;
+
+                foreach (var newsItem in neededNewsList)
                 {
-                    var myHash = TextHasher.ComputeMd5Hash(news.Ozet);
-                    _ozetCache.Set(news.IlgiId, myHash);
-                    _logger.LogInformation("Hash for {Id}: {Hash}", news.IlgiId, myHash);
-                    return new Mp3Dto
+                    if (cancellationToken.IsCancellationRequested)
                     {
-                        FileId = news.IlgiId,
-                        FileUrl = StoragePathHelper.GetFullPathById(news.IlgiId, fileType),
-                        Language = language,
-                        OzetHash = myHash
-                    };
-                }).ToList();
+                        _logger.LogInformation("Cancellation requested, stopping MP3 creation.");
+                        break;
+                    }
 
-                _logger.LogInformation("Starting background SQL operations for {Count} files", metadataList.Count);
-
-                // Create a copy of the metadata list for the background task
-                var metadataCopy = new List<Mp3Dto>(metadataList);
-
-                // Create a new scope for the background task
-                _ = Task.Run(async () =>
-                {
                     try
                     {
-                        using var scope = _serviceScopeFactory.CreateScope();
-                        var repository = scope.ServiceProvider.GetRequiredService<IMp3Repository>();
+                        _logger.LogInformation("Processing news ID {NewsId} with Gemini: {Title}", newsItem.IlgiId, newsItem.Baslik);
+                        // Assuming 'language' parameter is compatible with Gemini (e.g., "en-US")
+                        // VoiceName can be null to use default from config, or specify one if API supports
+                        Stream audioStream = await _geminiTtsClient.SynthesizeSpeechAsync(
+                            newsItem.Ozet,
+                            language,
+                            null, // Or a specific voice/model name if available and configurable
+                            cancellationToken);
 
-                        _logger.LogInformation("Background SQL operation started for {Count} files", metadataCopy.Count);
-                        await repository.SaveMp3MetadataToSqlBatchAsync(metadataCopy, AudioType.Mp3, cancellationToken);
-                        _logger.LogInformation("Successfully saved metadata for {Count} files in background", metadataCopy.Count);
+                        if (audioStream != null && audioStream != Stream.Null && audioStream.Length > 0)
+                        {
+                            // Save the stream to a local file
+                            var localPath = StoragePathHelper.GetFullPathById(newsItem.IlgiId, fileType); // Assuming fileType is Mp3
+                            string? directory = Path.GetDirectoryName(localPath);
+                            if (directory != null && !Directory.Exists(directory))
+                            {
+                                Directory.CreateDirectory(directory);
+                            }
+
+                            using (var fileStream = new FileStream(localPath, FileMode.Create, FileAccess.Write))
+                            {
+                                await audioStream.CopyToAsync(fileStream, cancellationToken);
+                            }
+                            await audioStream.DisposeAsync();
+                            _logger.LogInformation("Successfully saved Gemini MP3 for news ID {NewsId} to {Path}", newsItem.IlgiId, localPath);
+
+                            // Add to metadata for saving
+                            var myHash = TextHasher.ComputeMd5Hash(newsItem.Ozet);
+                            _ozetCache.Set(newsItem.IlgiId, myHash); // Keep existing cache logic
+                            processedNewsMetadata.Add(new Mp3Dto
+                            {
+                                FileId = newsItem.IlgiId,
+                                FileUrl = StoragePathHelper.GetStorageKey(newsItem.IlgiId), // Or localPath depending on what FileUrl represents
+                                Language = language,
+                                OzetHash = myHash,
+                                FileType = fileType // Store the file type
+                            });
+                        }
+                        else
+                        {
+                            _logger.LogWarning("Gemini TTS returned null or empty stream for news ID {NewsId} ({Title}).", newsItem.IlgiId, newsItem.Baslik);
+                            geminiFailureCount++;
+                        }
+                    }
+                    catch (OperationCanceledException opEx)
+                    {
+                        _logger.LogWarning(opEx, "Gemini TTS operation was canceled for news ID {NewsId} ({Title}). Skipping this item.", newsItem.IlgiId, newsItem.Baslik);
+                        geminiFailureCount++;
+                        // Re-throw if the main cancellationToken was triggered, otherwise continue
+                        if (cancellationToken.IsCancellationRequested) throw;
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "Error saving metadata in background for {Count} files", metadataCopy.Count);
+                        _logger.LogError(ex, "Error processing news ID {NewsId} ({Title}) with Gemini TTS. Skipping this item.", newsItem.IlgiId, newsItem.Baslik);
+                        geminiFailureCount++;
+                        // Optionally, decide if one failure should stop all, or continue (current: continues)
                     }
-                }, cancellationToken);
+                }
 
+                if (processedNewsMetadata.Any())
+                {
+                    _logger.LogInformation("Starting background SQL operations for {Count} successfully Gemini-processed files.", processedNewsMetadata.Count);
+                    // Background task to save metadata
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            using var scope = _serviceScopeFactory.CreateScope();
+                            var repository = scope.ServiceProvider.GetRequiredService<IMp3Repository>();
+                            await repository.SaveMp3MetadataToSqlBatchAsync(processedNewsMetadata, fileType, CancellationToken.None); // Use CancellationToken.None for fire-and-forget
+                            _logger.LogInformation("Successfully saved metadata for {Count} Gemini-processed files in background.", processedNewsMetadata.Count);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Error saving metadata in background for {Count} Gemini-processed files.", processedNewsMetadata.Count);
+                        }
+                    }); // No await, fire and forget
+                }
+                
+                int attemptedCount = neededNewsList.Count(); // Total items attempted with Gemini
+                geminiSuccessCount = processedNewsMetadata.Count; // Items successfully processed and saved by Gemini
+                // geminiFailureCount is already calculated in the loop
 
+                _logger.LogInformation(
+                    "Gemini TTS processing summary for language {Language}: Attempted: {AttemptedCount}, Succeeded: {SucceededCount}, Failed: {FailedCount}",
+                    language, attemptedCount, geminiSuccessCount, geminiFailureCount);
 
-                return "Processing completed successfully";
+                // The original method calls _ttsClient.ProcessContentsAsync - this has been replaced by the Gemini-specific loop for 'neededNewsList'.
+                // If 'savedNewsList' or other items still need processing by the old _ttsClient, that logic would need to be re-introduced or handled separately.
+                // For now, this method primarily focuses on processing 'neededNewsList' with Gemini.
+
+                return $"Gemini TTS processing for language '{language}': {attemptedCount} items attempted, {geminiSuccessCount} succeeded, {geminiFailureCount} failed.";
+            }
+            catch (OperationCanceledException opEx)
+            {
+                _logger.LogWarning(opEx, "CreateMultipleMp3Async operation was canceled.");
+                // Rethrow to ensure the operation is marked as canceled for the caller
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "An unexpected error occurred in CreateMultipleMp3Async (Gemini TTS path).");
+                // Consider the overall status. If some items were processed, it might not be a total failure.
+                // The return string will reflect 0 successes if it reaches here before any processing.
+                return $"Processing completed with an unexpected error: {ex.Message}";
             }
             finally
             {
@@ -465,6 +548,11 @@ namespace MyTts.Services
             if (_ttsClient is IAsyncDisposable disposableTtsClient)
             {
                 await disposableTtsClient.DisposeAsync();
+            }
+            // Also dispose Gemini client if it's IAsyncDisposable
+            if (_geminiTtsClient is IAsyncDisposable disposableGeminiClient)
+            {
+                await disposableGeminiClient.DisposeAsync();
             }
         }
 
