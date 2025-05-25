@@ -39,6 +39,7 @@ builder.Services
     .AddAuthenticationServices(builder.Configuration)
     .AddStorageServices(builder.Configuration)
     .AddElevenLabsServices(builder.Configuration)
+    .AddCloudTtsConfiguration(builder.Configuration)
     .AddRedisServices(builder.Configuration)
     .AddEmailServices(builder.Configuration)
     .AddHttpClientsServices()

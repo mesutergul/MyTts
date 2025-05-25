@@ -19,48 +19,6 @@ public static class ElevenLabsServiceConfig
             .ValidateDataAnnotations()
             .ValidateOnStart();
 
-        // Configure resilience policies
-        services.AddSingleton<AsyncRetryPolicy>(sp =>
-        {
-            return Policy
-                .Handle<Exception>()
-                .WaitAndRetryAsync(3, retryAttempt => 
-                    TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
-                    onRetry: (exception, timeSpan, retryCount, context) =>
-                    {
-                        var logger = sp.GetRequiredService<ILogger<ElevenLabsClient>>();
-                        logger.LogWarning(exception, 
-                            "Retry {RetryCount} after {Delay}ms for operation {OperationKey}", 
-                            retryCount, timeSpan.TotalMilliseconds, context.OperationKey);
-                    });
-        });
-
-        services.AddSingleton<AsyncCircuitBreakerPolicy>(sp =>
-        {
-            return Policy
-                .Handle<Exception>()
-                .CircuitBreakerAsync(
-                    exceptionsAllowedBeforeBreaking: 2,
-                    durationOfBreak: TimeSpan.FromSeconds(30),
-                    onBreak: (exception, duration) =>
-                    {
-                        var logger = sp.GetRequiredService<ILogger<ElevenLabsClient>>();
-                        logger.LogWarning(exception,
-                            "Circuit breaker opened for {Duration} seconds due to {ExceptionType}",
-                            duration.TotalSeconds, exception.GetType().Name);
-                    },
-                    onReset: () =>
-                    {
-                        var logger = sp.GetRequiredService<ILogger<ElevenLabsClient>>();
-                        logger.LogInformation("Circuit breaker reset - service is healthy again");
-                    },
-                    onHalfOpen: () =>
-                    {
-                        var logger = sp.GetRequiredService<ILogger<ElevenLabsClient>>();
-                        logger.LogInformation("Circuit breaker half-open - testing service health");
-                    });
-        });
-
         // Register ElevenLabs client with proper initialization
         services.AddScoped(sp =>
         {

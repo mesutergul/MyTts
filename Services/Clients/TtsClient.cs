@@ -25,6 +25,7 @@ namespace MyTts.Services.Clients
     {
         private readonly ElevenLabsClient _elevenLabsClient;
         private readonly StorageClient? _googleStorageClient;
+        private readonly ICloudTtsClient _geminiTtsClient;
         private readonly IRedisCacheService? _cache;
         private readonly IOptions<ElevenLabsConfig> _config;
         private readonly ILogger<TtsClient> _logger;
@@ -45,6 +46,7 @@ namespace MyTts.Services.Clients
 
         public TtsClient(
             ElevenLabsClient elevenLabsClient,
+            ICloudTtsClient geminiTtsClient,
             IOptions<ElevenLabsConfig> config,
             IOptions<StorageConfiguration> storageConfig,
             ILocalStorageClient storage,
@@ -58,6 +60,7 @@ namespace MyTts.Services.Clients
             _storageConfig = storageConfig?.Value ?? throw new ArgumentNullException(nameof(storageConfig));
             _localStorageClient = storage ?? throw new ArgumentNullException(nameof(storage));
             _cache = cache;
+            _geminiTtsClient = geminiTtsClient ?? throw new ArgumentNullException(nameof(geminiTtsClient));
             _mp3StreamMerger = mp3StreamMerger ?? throw new ArgumentNullException(nameof(mp3StreamMerger));
             _notificationService = notificationService ?? throw new ArgumentNullException(nameof(notificationService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -449,12 +452,44 @@ namespace MyTts.Services.Clients
                 result = string.Empty;
             }
             return result;
-        } 
+        }
+        private async Task<(int id, AudioProcessor FileData)> ProcessGeminiContentAsync(
+            string text, int id, string language, AudioType fileType, CancellationToken cancellationToken)
+        {
+            var localPath = StoragePathHelper.GetFullPathById(id, fileType);
+
+            try
+            {
+                await _semaphore.WaitAsync(cancellationToken);
+                try
+                {
+                    _logger.LogInformation("Processing news ID {NewsId} with Gemini: {Title}", id, text);
+                    // Assuming 'language' parameter is compatible with Gemini (e.g., "en-US")
+                    // VoiceName can be null to use default from config, or specify one if API supports
+                    var audioBytes = await _geminiTtsClient.SynthesizeSpeechAsync(
+                        text,
+                        "tr-TR", // Assuming Turkish for this example, adjust as needed
+                        "tr-TR-Standard-A", // Or a specific voice/model name if available and configurable
+                        cancellationToken);
+                    AudioProcessor audioProcessor= new AudioProcessor(new VoiceClip(audioBytes));
+                    return (id, audioProcessor);
+                }
+                finally
+                {
+                    _semaphore.Release();
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error processing content {Id}", id);
+                throw;
+            }
+        }
         public async Task<(int id, AudioProcessor FileData)> ProcessContentAsync(
             string text, int id, string language, AudioType fileType, CancellationToken cancellationToken)
         {
             var localPath = StoragePathHelper.GetFullPathById(id, fileType);
-             
+
             try
             {
                 await _semaphore.WaitAsync(cancellationToken);
@@ -475,10 +510,10 @@ namespace MyTts.Services.Clients
                     var voices = languageConfig.Voices.ToList();
                     var randomVoice = voices[_random.Value!.Next(voices.Count)];
                     var voiceId = randomVoice.Value;
-                    
-                    _logger.LogInformation("Selected voice {VoiceName} ({VoiceId}) for language {Language}", 
+
+                    _logger.LogInformation("Selected voice {VoiceName} ({VoiceId}) for language {Language}",
                         randomVoice.Key, voiceId, language);
-                    
+
                     // Try to get voice from cache first
                     var voice = await GetOrFetchVoiceAsync(voiceId, id, cancellationToken);
                     var request = await CreateTtsRequestAsync(voice, text);
@@ -661,7 +696,24 @@ namespace MyTts.Services.Clients
                 throw;
             }
         }
-
+public async Task<AudioProcessor> ConvertStreamToAudioProcessorAsync(
+    Stream audioStream, 
+    CancellationToken cancellationToken = default)
+{
+    ArgumentNullException.ThrowIfNull(audioStream);
+    
+    // Use MemoryStream with initial capacity if you know approximate size
+    using var memoryStream = audioStream.CanSeek 
+        ? new MemoryStream((int)audioStream.Length) 
+        : new MemoryStream();
+        
+    await audioStream.CopyToAsync(memoryStream, 81920, cancellationToken); // Use 80KB buffer
+    
+    // Create VoiceClip directly from MemoryStream's buffer to avoid extra copy
+    var audioData = memoryStream.ToArray();
+    var voiceClip = new VoiceClip(audioData);
+    return new AudioProcessor(voiceClip);
+}
         public async ValueTask DisposeAsync()
         {
             if (_disposed) return;
