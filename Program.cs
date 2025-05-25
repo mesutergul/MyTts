@@ -69,8 +69,8 @@ using (var scope = app.Services.CreateScope())
         }
     }
 
-    var adminEmail = "admin@example.com";
-    var adminPassword = "Admin123!";
+    var adminEmail = builder.Configuration["AdminUser:Email"] ?? "admin@example.com";
+    var adminPassword = builder.Configuration["AdminUser:Password"] ?? "Admin123!";
 
     var adminUser = await userManager.FindByEmailAsync(adminEmail);
     if (adminUser == null)
@@ -79,7 +79,11 @@ using (var scope = app.Services.CreateScope())
         {
             UserName = adminEmail,
             Email = adminEmail,
-            EmailConfirmed = true
+            EmailConfirmed = true,
+            FirstName = "Admin",
+            LastName = "User",
+            IsActive = true,
+            DailyRequestLimit = 1000 // Set a higher limit for admin
         };
 
         var result = await userManager.CreateAsync(adminUser, adminPassword);
