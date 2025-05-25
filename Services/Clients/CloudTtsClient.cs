@@ -105,7 +105,7 @@ namespace MyTts.Services.Clients
 
         public async ValueTask DisposeAsync()
         {
-            GC.SuppressFinalize(this);
+            await Task.Run(() => GC.SuppressFinalize(this));
         }
     }
 }
