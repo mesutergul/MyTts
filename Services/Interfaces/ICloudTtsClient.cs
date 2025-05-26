@@ -17,7 +17,7 @@ namespace MyTts.Services.Interfaces
         Task<byte[]> SynthesizeSpeechAsync(
             string text,
             string languageCode,
-            string? voiceName, // Or other relevant parameters like gender, speaking rate
+            string voiceName, // Or other relevant parameters like gender, speaking rate
             CancellationToken cancellationToken);
 
         // Add other methods if needed, for example, to list available voices

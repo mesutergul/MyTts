@@ -106,7 +106,7 @@ namespace MyTts.Services
 
                         var ffmpegOptions = new FFOptions
                         {
-                            BinaryFolder = Path.Combine(AppContext.BaseDirectory, "ffmpeg-bin"),
+                           // BinaryFolder = Path.Combine(AppContext.BaseDirectory, "ffmpeg-bin"),
                             TemporaryFilesFolder = Path.GetTempPath()
                         };
 

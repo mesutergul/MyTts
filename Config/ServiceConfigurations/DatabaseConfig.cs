@@ -50,7 +50,7 @@ namespace MyTts.Config.ServiceConfigurations
             }
             else if (defaultDatabaseType == DatabaseType.PostgreSql)
             {
-                dbAvailable = !string.IsNullOrEmpty(defaultConnectionString) && false;//TestPgSqlConnection(defaultConnectionString);
+                dbAvailable = !string.IsNullOrEmpty(defaultConnectionString) && TestPgSqlConnection(defaultConnectionString);
             }
             // If DatabaseType is InMemory, dbAvailable will remain false, leading to ConfigureInMemoryDatabase
             // If Database:Type is not configured, it will default to SqlServer by Enum.TryParse and then attempt to test.

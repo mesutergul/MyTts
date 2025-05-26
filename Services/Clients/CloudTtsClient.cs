@@ -39,7 +39,7 @@ namespace MyTts.Services.Clients
             }
         }
 
-        public async Task<byte[]> SynthesizeSpeechAsync(string text, string languageCode, string voiceName, CancellationToken cancellationToken = default)
+        public async Task<byte[]> SynthesizeSpeechAsync(string text, string languageCode, string voiceName="tr-TR-Standard-A", CancellationToken cancellationToken = default)
         {
             if (!_isEnabled || _client == null)
             {
