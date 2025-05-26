@@ -41,9 +41,6 @@ public static class ElevenLabsServiceConfig
             return new ElevenLabsClient(auth, settings);
         });
         
-        // Register TTS client
-        services.AddScoped<TtsClient>();
-        
         // Register MP3 stream merger
         services.AddScoped<IMp3StreamMerger, Mp3StreamMerger>();
 

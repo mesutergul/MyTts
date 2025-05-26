@@ -46,7 +46,7 @@ namespace MyTts.Config.ServiceConfigurations
             bool dbAvailable = false;
             if (defaultDatabaseType == DatabaseType.SqlServer)
             {
-                dbAvailable = !string.IsNullOrEmpty(defaultConnectionString) && false;//TestSqlConnection(defaultConnectionString);
+                dbAvailable = !string.IsNullOrEmpty(defaultConnectionString) && TestSqlConnection(defaultConnectionString);
             }
             else if (defaultDatabaseType == DatabaseType.PostgreSql)
             {

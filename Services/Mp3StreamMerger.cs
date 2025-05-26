@@ -15,6 +15,8 @@ namespace MyTts.Services
         private const int BufferSize = 81920; // 80KB buffer
         private const int MaxRetries = 3;
         private const int MaxConcurrentMerges = 2; // Limit concurrent merge operations
+        private const int RetryDelayMs = 2000; // Base delay for retries
+        private const int ProcessTimeoutMs = 30000; // 30 second timeout for FFmpeg process
 
         public Mp3StreamMerger(ILogger<Mp3StreamMerger> logger, IConfiguration configuration)
         {
@@ -84,6 +86,7 @@ namespace MyTts.Services
             var streamsToDispose = new List<Stream>();
             var codec = fileType.Equals(AudioType.Mp3) ? "libmp3lame" : "aac";
             var retryCount = 0;
+            var lastException = default(Exception);
 
             try
             {
@@ -91,6 +94,9 @@ namespace MyTts.Services
                 {
                     try
                     {
+                        // Check cancellation before starting the operation
+                        cancellationToken.ThrowIfCancellationRequested();
+
                         var ffmpegArgs = await CreateFfmpegArgumentsAsync(processors, streamPipeSources, streamsToDispose, breakAudioPath, startAudioPath, endAudioPath, cancellationToken).ConfigureAwait(false);
 
                         int totalInputs = !string.IsNullOrEmpty(breakAudioPath) ? processors.Count * 2 - 2 : processors.Count;
@@ -100,62 +106,103 @@ namespace MyTts.Services
 
                         var ffmpegOptions = new FFOptions
                         {
+                            BinaryFolder = Path.Combine(AppContext.BaseDirectory, "ffmpeg-bin"),
                             TemporaryFilesFolder = Path.GetTempPath()
                         };
 
-                        await ffmpegArgs
-                            .OutputToPipe(
-                                new StreamPipeSink(outputStream),
-                                options => options
-                                    .WithAudioCodec(codec)
-                                    .WithAudioBitrate(128)
-                                    .WithCustomArgument($"-f {fileType}")
-                                    .WithCustomArgument(filterComplex)
-                                    .WithCustomArgument("-y"))
-                            .CancellableThrough(cancellationToken)
-                            .ProcessAsynchronously(true, ffmpegOptions);
+                        // Create a linked cancellation token with timeout
+                        using var timeoutCts = new CancellationTokenSource(ProcessTimeoutMs);
+                        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
 
-                        if (outputStream.Length > 0)
+                        try
                         {
-                            string fullPath = StoragePathHelper.GetFullPath(filePath, fileType);
-                            _logger.LogInformation("Saving merged audio to {FilePath} ({Length} bytes)", filePath, outputStream.Length);
+                            await ffmpegArgs
+                                .OutputToPipe(
+                                    new StreamPipeSink(outputStream),
+                                    options => options
+                                        .WithAudioCodec(codec)
+                                        .WithAudioBitrate(128)
+                                        .WithCustomArgument($"-f {fileType}")
+                                        .WithCustomArgument(filterComplex)
+                                        .WithCustomArgument("-y"))
+                                .CancellableThrough(linkedCts.Token)
+                                .ProcessAsynchronously(true, ffmpegOptions);
 
-                            outputStream.Position = 0;
-                            await using (var fileStream = new FileStream(
-                                fullPath,
-                                FileMode.Create,
-                                FileAccess.Write,
-                                FileShare.None,
-                                bufferSize: BufferSize,
-                                FileOptions.Asynchronous | FileOptions.SequentialScan))
+                            if (outputStream.Length > 0)
                             {
-                                await outputStream.CopyToAsync(fileStream, BufferSize, cancellationToken).ConfigureAwait(false);
+                                string fullPath = StoragePathHelper.GetFullPath(filePath, fileType);
+                                _logger.LogInformation("Saving merged audio to {FilePath} ({Length} bytes)", filePath, outputStream.Length);
+
+                                outputStream.Position = 0;
+                                await using (var fileStream = new FileStream(
+                                    fullPath,
+                                    FileMode.Create,
+                                    FileAccess.Write,
+                                    FileShare.Read | FileShare.Delete,
+                                    bufferSize: BufferSize,
+                                    FileOptions.Asynchronous | FileOptions.SequentialScan))
+                                {
+                                    try 
+                                    {
+                                        await outputStream.CopyToAsync(fileStream, BufferSize, linkedCts.Token).ConfigureAwait(false);
+                                        await fileStream.FlushAsync(linkedCts.Token);
+                                        return; // Success, exit the retry loop
+                                    }
+                                    catch (IOException ex)
+                                    {
+                                        _logger.LogError(ex, "Error writing to file {FilePath}", fullPath);
+                                        throw new IOException($"Failed to write merged file: {ex.Message}", ex);
+                                    }
+                                }
                             }
-                            return; // Success, exit the retry loop
+                            else
+                            {
+                                _logger.LogWarning("FFmpeg process completed but outputStream is empty");
+                                throw new IOException("FFmpeg process completed but output stream is empty");
+                            }
                         }
-                        else
+                        catch (OperationCanceledException) when (timeoutCts.Token.IsCancellationRequested)
                         {
-                            _logger.LogWarning("FFmpeg process completed but outputStream is empty");
-                            throw new IOException("FFmpeg process completed but output stream is empty");
+                            _logger.LogWarning("FFmpeg process timed out after {Timeout}ms", ProcessTimeoutMs);
+                            throw new TimeoutException($"FFmpeg process timed out after {ProcessTimeoutMs}ms");
                         }
                     }
-                    catch (IOException ex) when (ex.Message.Contains("Pipe is broken") && retryCount < MaxRetries - 1)
+                    catch (OperationCanceledException)
                     {
+                        _logger.LogInformation("Merge operation cancelled during attempt {RetryCount}", retryCount + 1);
+                        throw;
+                    }
+                    catch (Exception ex) when (retryCount < MaxRetries - 1)
+                    {
+                        lastException = ex;
                         retryCount++;
-                        _logger.LogWarning(ex, "Pipe error during merge, retry {RetryCount} of {MaxRetries}", retryCount, MaxRetries);
-                        await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, retryCount)), cancellationToken); // Exponential backoff
-                        outputStream.Position = 0; // Reset stream position
+                        var delay = RetryDelayMs * (int)Math.Pow(2, retryCount - 1); // Exponential backoff
+                        _logger.LogWarning(ex, "Error during merge attempt {RetryCount}, retrying in {Delay}ms", retryCount, delay);
+                        
+                        try
+                        {
+                            await Task.Delay(delay, cancellationToken);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            _logger.LogInformation("Retry delay cancelled");
+                            throw;
+                        }
 
-                        // Clean up streams before retry
+                        // Clean up resources before retry
                         foreach (var stream in streamsToDispose)
                         {
                             try { await stream.DisposeAsync(); } catch { }
                         }
                         streamsToDispose.Clear();
                         streamPipeSources.Clear();
+                        outputStream.Position = 0;
+                        outputStream.SetLength(0);
                     }
                 }
-                throw new IOException($"Failed to merge audio files after {MaxRetries} attempts");
+
+                // If we get here, all retries failed
+                throw new IOException($"Failed to merge audio files after {MaxRetries} attempts", lastException);
             }
             catch (OperationCanceledException)
             {
@@ -169,6 +216,7 @@ namespace MyTts.Services
             }
             finally
             {
+                // Ensure all resources are cleaned up
                 foreach (var source in streamPipeSources)
                 {
                     try

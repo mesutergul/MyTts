@@ -19,7 +19,7 @@ public static class ApplicationConfig
         // Register application services
         services.AddScoped<IMp3Service, Mp3Service>();
         services.AddScoped<ITtsClient, TtsClient>();
-        
+
         // Configure and register notification service with resilience policies
         services.Configure<NotificationOptions>(configuration.GetSection("Notifications"));
         services.AddHttpClient<INotificationService, NotificationService>(client =>
@@ -37,7 +37,6 @@ public static class ApplicationConfig
 
         // Register infrastructure services
         services.AddScoped<IRedisCacheService, RedisCacheService>();
-        services.AddScoped<IFileStreamingService, FileStreamingService>();
         //  services.AddScoped<IAudioConversionService, AudioConversionService>();
         services.AddSingleton(typeof(ICache<,>), typeof(LimitedMemoryCache<,>));
 

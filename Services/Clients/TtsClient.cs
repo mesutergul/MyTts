@@ -151,8 +151,8 @@ namespace MyTts.Services.Clients
             try
             {
                 // Apply both policies to the action
-                return await _circuitBreakerPolicy
-                    .WrapAsync(_retryPolicy)
+            return await _circuitBreakerPolicy
+                .WrapAsync(_retryPolicy)
                     .ExecuteAsync(async () => 
                     {
                         var content = await action();
@@ -489,7 +489,7 @@ namespace MyTts.Services.Clients
             string text, int id, string language, AudioType fileType, CancellationToken cancellationToken)
         {
             var localPath = StoragePathHelper.GetFullPathById(id, fileType);
-
+             
             try
             {
                 await _semaphore.WaitAsync(cancellationToken);
@@ -510,10 +510,10 @@ namespace MyTts.Services.Clients
                     var voices = languageConfig.Voices.ToList();
                     var randomVoice = voices[_random.Value!.Next(voices.Count)];
                     var voiceId = randomVoice.Value;
-
-                    _logger.LogInformation("Selected voice {VoiceName} ({VoiceId}) for language {Language}",
+                    
+                    _logger.LogInformation("Selected voice {VoiceName} ({VoiceId}) for language {Language}", 
                         randomVoice.Key, voiceId, language);
-
+                    
                     // Try to get voice from cache first
                     var voice = await GetOrFetchVoiceAsync(voiceId, id, cancellationToken);
                     var request = await CreateTtsRequestAsync(voice, text);

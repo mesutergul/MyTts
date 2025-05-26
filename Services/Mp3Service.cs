@@ -53,11 +53,6 @@ namespace MyTts.Services
             try
             {
                 var newsList = await GetNewsList(cancellationToken);
-                // if (newsList.Count == 0)
-                // {
-                //     newsList = CsvFileReader.ReadHaberSummariesFromCsv(StoragePathHelper.GetFullPath("test", AudioType.Csv))
-                //         .Select(x => new HaberSummaryDto() { Baslik = x.Baslik, IlgiId = x.IlgiId, Ozet = x.Ozet }).ToList();
-                // }
 
                 var (neededNewsList, savedNewsList) = await checkNewsList(newsList, language, fileType, cancellationToken);
                 // Process needed news in parallel
@@ -93,14 +88,38 @@ namespace MyTts.Services
                         var repository = scope.ServiceProvider.GetRequiredService<IMp3Repository>();
 
                         _logger.LogInformation("Background SQL operation started for {Count} files", metadataCopy.Count);
-                        await repository.SaveMp3MetadataToSqlBatchAsync(metadataCopy, AudioType.Mp3, cancellationToken);
-                        _logger.LogInformation("Successfully saved metadata for {Count} files in background", metadataCopy.Count);
+                        
+                        // Split the metadata into smaller chunks to reduce transaction time
+                        const int chunkSize = 5;
+                        for (int i = 0; i < metadataCopy.Count; i += chunkSize)
+                        {
+                            var chunk = metadataCopy.Skip(i).Take(chunkSize).ToList();
+                            try
+                            {
+                                await repository.SaveMp3MetadataToSqlBatchAsync(chunk, AudioType.Mp3, CancellationToken.None);
+                                _logger.LogInformation("Successfully saved chunk {ChunkNumber} of {TotalChunks} in background", 
+                                    (i / chunkSize) + 1, 
+                                    (int)Math.Ceiling(metadataCopy.Count / (double)chunkSize));
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogError(ex, "Error saving chunk {ChunkNumber} of {TotalChunks} in background", 
+                                    (i / chunkSize) + 1, 
+                                    (int)Math.Ceiling(metadataCopy.Count / (double)chunkSize));
+                            }
+                        }
+                        
+                        _logger.LogInformation("Successfully saved all metadata for {Count} files in background", metadataCopy.Count);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        _logger.LogInformation("Background SQL operation was cancelled");
                     }
                     catch (Exception ex)
                     {
                         _logger.LogError(ex, "Error saving metadata in background for {Count} files", metadataCopy.Count);
                     }
-                }, cancellationToken);
+                }, CancellationToken.None); // Use CancellationToken.None for background task
 
 
 

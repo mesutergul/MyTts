@@ -12,30 +12,30 @@ curl -X GET http://localhost:5209/api/auth/me \
           -H "Authorization: Bearer $TOKEN"
 */
 
-// // Configure FFmpeg with absolute path
-// string baseDir = AppContext.BaseDirectory;
-// string ffmpegDir = Path.Combine(baseDir, "ffmpeg-bin");
+// Configure FFmpeg with absolute path
+string baseDir = AppContext.BaseDirectory;
+string ffmpegDir = Path.Combine(baseDir, "ffmpeg-bin");
 
-// // Ensure FFmpeg directory exists
-// if (!Directory.Exists(ffmpegDir))
-// {
-//     throw new DirectoryNotFoundException($"FFmpeg directory not found at: {ffmpegDir}");
-// }
+// Ensure FFmpeg directory exists
+if (!Directory.Exists(ffmpegDir))
+{
+    throw new DirectoryNotFoundException($"FFmpeg directory not found at: {ffmpegDir}");
+}
 
-// // Ensure FFmpeg executables exist
-// string ffmpegExe = Path.Combine(ffmpegDir, "ffmpeg.exe");
-// string ffprobeExe = Path.Combine(ffmpegDir, "ffprobe.exe");
+// Ensure FFmpeg executables exist
+string ffmpegExe = Path.Combine(ffmpegDir, "ffmpeg.exe");
+string ffprobeExe = Path.Combine(ffmpegDir, "ffprobe.exe");
 
-// if (!File.Exists(ffmpegExe) || !File.Exists(ffprobeExe))
-// {
-//     throw new FileNotFoundException($"FFmpeg executables not found in: {ffmpegDir}");
-// }
+if (!File.Exists(ffmpegExe) || !File.Exists(ffprobeExe))
+{
+    throw new FileNotFoundException($"FFmpeg executables not found in: {ffmpegDir}");
+}
 
-// FFMpegCore.GlobalFFOptions.Configure(new FFMpegCore.FFOptions
-// {
-//     BinaryFolder = ffmpegDir,
-//     TemporaryFilesFolder = Path.GetTempPath()
-// });
+FFMpegCore.GlobalFFOptions.Configure(new FFMpegCore.FFOptions
+{
+    BinaryFolder = ffmpegDir,
+    TemporaryFilesFolder = Path.GetTempPath()
+});
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -78,7 +78,7 @@ using (var scope = app.Services.CreateScope())
     }
 
     var adminEmail = builder.Configuration["AdminUser:Email"] ?? "admin@example.com";
-    var adminPassword = builder.Configuration["AdminUser:Password"] ?? "Admin123!";
+    var adminPassword = builder.Configuration["AdminUser:Password"] ?? "Admin123";
 
     var adminUser = await userManager.FindByEmailAsync(adminEmail);
     if (adminUser == null)

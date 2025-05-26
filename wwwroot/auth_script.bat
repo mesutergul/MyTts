@@ -7,37 +7,86 @@ set "CREDENTIALS_FILE=%USERPROFILE%\.mytts_credentials"
 set "LANGUAGE=%1"
 if "%LANGUAGE%"=="" set "LANGUAGE=tr"
 
+echo ===========================
+echo  MyTTS Authentication Script
+echo ===========================
 echo Using language: %LANGUAGE%
+echo API URL: %API_URL%
+echo Credentials file: %CREDENTIALS_FILE%
+echo.
 
-:: Function to get credentials
-:get_credentials
+:: Get credentials
 if exist "%CREDENTIALS_FILE%" (
-    :: Read credentials from file
-    set /p EMAIL=<"%CREDENTIALS_FILE%"
-    set /p PASSWORD=<"%CREDENTIALS_FILE%"
+    for /f "tokens=1*" %%a in (%CREDENTIALS_FILE%) do (
+        set "EMAIL=%%a"
+        set "PASSWORD=%%b"
+    )
+    if not defined EMAIL (
+        echo ERROR: Email not found in credentials file
+        goto :clear_credentials
+    )
+    if not defined PASSWORD (
+        echo ERROR: Password not found in credentials file
+        goto :clear_credentials
+    )
+    echo Using saved credentials for: !EMAIL!
 ) else (
-    :: Prompt for credentials and save them
-    set /p "EMAIL=Enter email: "
-    set /p "PASSWORD=Enter password: "
-    echo %EMAIL%> "%CREDENTIALS_FILE%"
-    echo %PASSWORD%>> "%CREDENTIALS_FILE%"
-    :: Set file permissions (Windows equivalent of chmod 600)
-    icacls "%CREDENTIALS_FILE%" /inheritance:r /grant:r "%USERNAME%:(R,W)"
+    goto :prompt_credentials
 )
-goto :eof
 
-:: Function to get token
 :get_token
+echo.
 echo Getting authentication token...
-for /f "tokens=*" %%a in ('curl -s -X POST "%API_URL%/api/auth/login" -H "Content-Type: application/json" -d "{\"email\": \"%EMAIL%\", \"password\": \"%PASSWORD%\"}" ^| powershell -Command "$input | ConvertFrom-Json | Select-Object -ExpandProperty token"') do set "TOKEN=%%a"
-goto :eof
+echo {"email":"%EMAIL%","password":"%PASSWORD%"} > "%TEMP%\login.json"
 
-:: Main script
-call :get_credentials
-call :get_token
+curl -s -X POST "%API_URL%/api/auth/login" ^
+     -H "Content-Type: application/json" ^
+     -d "@%TEMP%\login.json" ^
+     -o "%TEMP%\token_response.json"
 
-:: Make the API call
+:: Parse token with jq
+for /f "usebackq delims=" %%a in (`jq -r ".token" "%TEMP%\token_response.json"`) do set "TOKEN=%%a"
+
+if "%TOKEN%"=="" (
+    echo ERROR: Failed to get token. Check credentials or API.
+    echo Showing response:
+    type "%TEMP%\token_response.json"
+    goto :error
+)
+
+echo Token received successfully.
+
+:: API Call
+echo.
 echo Making authenticated API call...
-curl -s -X GET "%API_URL%/api/mp3/feed/%LANGUAGE%" -H "Authorization: Bearer %TOKEN%" -H "Content-Type: application/json"
+curl -s -X GET "%API_URL%/api/mp3/feed/%LANGUAGE%" ^
+     -H "Authorization: Bearer %TOKEN%" ^
+     -H "Content-Type: application/json"
 
-endlocal 
+goto :end
+
+:prompt_credentials
+echo Please enter your credentials:
+set /p "EMAIL=Enter email: "
+set /p "PASSWORD=Enter password: "
+(
+    echo %EMAIL% %PASSWORD%
+) > "%CREDENTIALS_FILE%"
+echo Credentials saved to %CREDENTIALS_FILE%
+goto :get_token
+
+:clear_credentials
+echo Clearing invalid credentials...
+del "%CREDENTIALS_FILE%" >nul 2>&1
+goto :prompt_credentials
+
+:error
+echo.
+echo Script failed with errors.
+goto :end
+
+:end
+del "%TEMP%\login.json" >nul 2>&1
+del "%TEMP%\token_response.json" >nul 2>&1
+endlocal
+pause >nul

@@ -113,36 +113,94 @@ namespace MyTts.Data.Repositories
         }
         public async Task AddRangeAsync(List<Mp3Dto> allRecords, CancellationToken cancellationToken = default)
         {
+            if (allRecords == null || !allRecords.Any())
+            {
+                _logger.LogWarning("No records provided to AddRangeAsync");
+                return;
+            }
+
             try
             {
-                var idRecords = allRecords.Select(x => x.FileId).ToList();
-                var existingEntities = await GetExistingFilesInLast100Async(idRecords, cancellationToken);
-                var newRecords = allRecords.Where(x => !existingEntities.Any(y => y.FileId == x.FileId)).ToList();
-                Dictionary<int, Mp3Dto> updateRecords = allRecords.Where(x => existingEntities.Any(y => y.FileId == x.FileId)).ToDictionary(x => x.FileId);
-                // Add new records
-                if (newRecords.Any())
+                var strategy = _context.Database.CreateExecutionStrategy();
+                await strategy.ExecuteAsync(async () =>
                 {
-                    var newEntities = newRecords.Select(x => _mapper.Map<Mp3Meta>(x));
-                    await _dbSet.AddRangeAsync(newEntities, cancellationToken);
-                }
-
-                // Update existing records
-                if (existingEntities.Any())
-                {
-                    foreach (var meta in existingEntities)
+                    using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+                    try
                     {
-                        meta.FileUrl = updateRecords[meta.FileId].FileUrl;
-                        meta.Language = updateRecords[meta.FileId].Language;
-                    }
-                }
+                        var idRecords = allRecords.Select(x => x.FileId).ToList();
+                        var existingEntities = await GetExistingFilesInLast100Async(idRecords, cancellationToken);
+                        var newRecords = allRecords.Where(x => !existingEntities.Any(y => y.FileId == x.FileId)).ToList();
+                        Dictionary<int, Mp3Dto> updateRecords = allRecords.Where(x => existingEntities.Any(y => y.FileId == x.FileId)).ToDictionary(x => x.FileId);
 
-                await _context.SaveChangesAsync(cancellationToken);
-                _logger.LogInformation("Successfully processed {NewCount} new records and {UpdateCount} updates",
-                    newRecords.Count, updateRecords.Count);
+                        // Add new records
+                        if (newRecords.Any())
+                        {
+                            var newEntities = newRecords.Select(x => _mapper.Map<Mp3Meta>(x));
+                            await _dbSet.AddRangeAsync(newEntities, cancellationToken);
+                            _logger.LogInformation("Adding {Count} new records", newRecords.Count);
+                        }
+
+                        // Update existing records
+                        if (existingEntities.Any())
+                        {
+                            foreach (var meta in existingEntities)
+                            {
+                                if (updateRecords.TryGetValue(meta.FileId, out var updateRecord))
+                                {
+                                    meta.FileUrl = updateRecord.FileUrl;
+                                    meta.Language = updateRecord.Language;
+                                }
+                            }
+                            _logger.LogInformation("Updating {Count} existing records", existingEntities.Count);
+                        }
+
+                        await _context.SaveChangesAsync(cancellationToken);
+                        await transaction.CommitAsync(cancellationToken);
+                        
+                        _logger.LogInformation("Successfully processed {NewCount} new records and {UpdateCount} updates",
+                            newRecords.Count, updateRecords.Count);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        try
+                        {
+                            await transaction.RollbackAsync(CancellationToken.None);
+                        }
+                        catch (Exception rollbackEx)
+                        {
+                            _logger.LogWarning(rollbackEx, "Error during transaction rollback after cancellation");
+                        }
+                        _logger.LogInformation("Operation was cancelled");
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        try
+                        {
+                            await transaction.RollbackAsync(CancellationToken.None);
+                        }
+                        catch (Exception rollbackEx)
+                        {
+                            _logger.LogWarning(rollbackEx, "Error during transaction rollback");
+                        }
+                        _logger.LogError(ex, "Error during database transaction");
+                        throw;
+                    }
+                });
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogInformation("Operation was cancelled while adding MP3 files");
+                throw;
+            }
+            catch (DbUpdateException ex)
+            {
+                _logger.LogError(ex, "Database update error while adding MP3 files");
+                throw;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error adding MP3 files to database");
+                _logger.LogError(ex, "Unexpected error while adding MP3 files to database");
                 throw;
             }
         }
