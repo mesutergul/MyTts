@@ -510,7 +510,7 @@ namespace MyTts.Services.Clients
                     var voices = languageConfig.Voices.ToList();
                     var randomVoice = voices[_random.Value!.Next(voices.Count)];
                     var voiceId = randomVoice.Value;
-                    
+                    // "Gulsu": "jbJMQWv1eS4YjQ6PCcn6",
                     _logger.LogInformation("Selected voice {VoiceName} ({VoiceId}) for language {Language}", 
                         randomVoice.Key, voiceId, language);
                     
