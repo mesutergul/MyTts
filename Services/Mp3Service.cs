@@ -53,7 +53,15 @@ namespace MyTts.Services
             try
             {
                 var newsList = await GetNewsList(cancellationToken);
-
+                var simdi = DateTime.Now;
+                var anchorText = TurkishDateTimeText.GunlukSeslendirmeMetniOlustur(simdi);
+                var anchor = new HaberSummaryDto()
+                {
+                    Baslik = "Seslendirme",
+                    IlgiId = TurkishDateTimeText.GetCompactTimeId(simdi),
+                    Ozet = anchorText
+                };
+                newsList.Insert(0, anchor);
                 var (neededNewsList, savedNewsList) = await checkNewsList(newsList, language, fileType, cancellationToken);
                 // Process needed news in parallel
                 await _ttsClient.ProcessContentsAsync(newsList, neededNewsList, savedNewsList, language, fileType, cancellationToken);
@@ -148,11 +156,17 @@ namespace MyTts.Services
         {
             var neededNewsList = new List<HaberSummaryDto>();
             var savedNewsList = new List<HaberSummaryDto>();
-           // var existingHashList = await _mp3FileRepository.GetExistingHashList(newsList.Select(x => x.IlgiId).ToList(), cancellationToken);
+            var existingHashList = new Dictionary<int, string>();
+            //  215 nolu servera sürekli restart atıldığı için cache uçuyor
+            if (_ozetCache.IsEmpty()) {
+                existingHashList = await _mp3FileRepository.GetExistingHashList(newsList.Select(x => x.IlgiId).ToList(), cancellationToken);
+                _ozetCache.SetRange(existingHashList);
+            }
             foreach (var news in newsList)
             {
                 var existingHash = _ozetCache.Get(news.IlgiId);
                 var isSame = existingHash == null || !TextHasher.HasTextChangedMd5(news.Ozet, existingHash);
+               
                 if (await _mp3FileRepository.FileExistsAnywhereAsync(news.IlgiId, language, fileType, cancellationToken) && isSame)
                 {
                     savedNewsList.Add(news);                   
@@ -281,7 +295,7 @@ namespace MyTts.Services
                 filePath,
                 FileMode.Open,
                 FileAccess.Read,
-                FileShare.Read,
+                FileShare.ReadWrite,
                 bufferSize: isStreaming ? 81920 : 4096,
                 options: FileOptions.Asynchronous | FileOptions.SequentialScan
             );
@@ -441,7 +455,7 @@ namespace MyTts.Services
                     filePath,
                     FileMode.Open,
                     FileAccess.Read,
-                    FileShare.Read,
+                    FileShare.ReadWrite,
                     4096, // Default buffer size
                     FileOptions.Asynchronous | FileOptions.SequentialScan
                 );

@@ -13,7 +13,7 @@ set TOKEN $(curl -s -X POST http://localhost:5209/api/auth/login \
 curl -X GET http://localhost:5209/api/auth/me \
           -H "Authorization: Bearer $TOKEN"
 */
-/* 
+ 
 // Configure FFmpeg with absolute path
 string baseDir = AppContext.BaseDirectory;
 string ffmpegDir = Path.Combine(baseDir, "ffmpeg-bin");
@@ -38,7 +38,7 @@ FFMpegCore.GlobalFFOptions.Configure(new FFMpegCore.FFOptions
     BinaryFolder = ffmpegDir,
     TemporaryFilesFolder = Path.GetTempPath()
 });
-*/
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container

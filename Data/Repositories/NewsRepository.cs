@@ -16,15 +16,20 @@ namespace MyTts.Data.Repositories
             _logger.LogInformation("Connected to: " + _context.Database.GetDbConnection().Database);
             
             var query = await _context.HaberKonumlari
-                .AsNoTracking()
                 .Where(k => k.KonumAdi == "ana manşet")
                 .OrderBy(k => k.Sirano)
-                .Take(top)
+                .Join(
+                    _context.News,
+                    k => k.IlgiId,
+                    h => h.Id,
+                    (k, h) => new { Konum = k, Haber = h }
+                )
+                .Take(20)
                 .Select(k => new HaberSummaryDto
                 {
-                    IlgiId = k.IlgiId,
-                    Baslik = k.News == null ? string.Empty : k.News.Title ?? string.Empty,
-                    Ozet = k.News == null ? string.Empty : k.News.Summary ?? string.Empty
+                    IlgiId = k.Haber.Id,
+                    Baslik = k.Haber == null ? string.Empty : k.Haber.Title ?? string.Empty,
+                    Ozet = k.Haber == null ? string.Empty : k.Haber.Summary ?? string.Empty
                 })
                 .ToListAsync(token);
 

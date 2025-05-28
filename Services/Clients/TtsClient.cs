@@ -308,27 +308,27 @@ namespace MyTts.Services.Clients
 
             try
             {
-                var simdi = DateTime.Now;
-                var anchorText = TurkishDateTimeText.GunlukSeslendirmeMetniOlustur(simdi);
-                var anchor = new HaberSummaryDto()
-                {
-                    Baslik = "Seslendirme",
-                    IlgiId = TurkishDateTimeText.GetCompactTimeId(simdi),
-                    Ozet = anchorText
-                };
+                //var simdi = DateTime.Now;
+                //var anchorText = TurkishDateTimeText.GunlukSeslendirmeMetniOlustur(simdi);
+                //var anchor = new HaberSummaryDto()
+                //{
+                //    Baslik = "Seslendirme",
+                //    IlgiId = TurkishDateTimeText.GetCompactTimeId(simdi),
+                //    Ozet = anchorText
+                //};
 
 
                 // Process needed and saved news in parallel
                 var processingTasks = new List<Task<(int id, AudioProcessor Processor)>>(
-                    contentsNeededList.Count + contentsSavedList.Count)
-                {
-                    ProcessContentAsync(
-                    anchor.Ozet,
-                    anchor.IlgiId,
-                    language,
-                    fileType,
-                    cancellationToken)
-                };
+                    contentsNeededList.Count + contentsSavedList.Count);
+                //{
+                //    ProcessContentAsync(
+                //    anchor.Ozet,
+                //    anchor.IlgiId,
+                //    language,
+                //    fileType,
+                //    cancellationToken)
+                //};
                 // Add tasks for needed news
                 processingTasks.AddRange(contentsNeededList.Select(content =>
                     ProcessContentAsync(
@@ -346,13 +346,13 @@ namespace MyTts.Services.Clients
                 var results = await Task.WhenAll(processingTasks);
                 // Create processors dictionary for efficient lookup
                 var processedFiles = results.ToDictionary(r => r.id, r => r.Processor);
-                var AnchorProcessor = processedFiles[anchor.IlgiId];
+               // var AnchorProcessor = processedFiles[anchor.IlgiId];
                 // Build final list in original order
                 var processors = allNewsList
                     .Where(news => processedFiles.ContainsKey(news.IlgiId))
                     .Select(news => processedFiles[news.IlgiId])
                     .ToList();
-                processors.Insert(0, AnchorProcessor);
+              //  processors.Insert(0, AnchorProcessor);
 
                 if (processors.Count > 0)
                 {

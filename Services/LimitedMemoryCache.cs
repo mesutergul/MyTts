@@ -3,6 +3,10 @@ using MyTts.Services.Interfaces;
 
 namespace MyTts.Services
 {
+    using System;
+    using System.Collections.Generic;
+    using Microsoft.Extensions.Caching.Memory;
+
     public class LimitedMemoryCache<TKey, TValue> : ICache<TKey, TValue>
     {
         private readonly MemoryCache _cache;
@@ -33,7 +37,7 @@ namespace MyTts.Services
         public void Set(TKey key, TValue value)
         {
             ArgumentNullException.ThrowIfNull(key);
-            
+
             lock (_lock)
             {
                 if (!_cache.TryGetValue(key, out _))
@@ -50,14 +54,36 @@ namespace MyTts.Services
             }
         }
 
+        public void SetRange(Dictionary<TKey, TValue> existingHashList)
+        {
+            if (existingHashList == null)
+                throw new ArgumentNullException(nameof(existingHashList));
+
+            lock (_lock)
+            {
+                foreach (var kvp in existingHashList)
+                {
+                    if (!_cache.TryGetValue(kvp.Key, out _))
+                    {
+                        _keyOrder.AddLast(kvp.Key);
+                    }
+                    _cache.Set(kvp.Key, kvp.Value, _entryOptions);
+                }
+
+                if (_keyOrder.Count > _softLimit)
+                {
+                    TrimToSoftLimit();
+                }
+            }
+        }
+
         public TValue Get(TKey key)
         {
             ArgumentNullException.ThrowIfNull(key);
-            
+
             lock (_lock)
             {
-                TValue? result = default;
-                return _cache.TryGetValue(key, out result) ? result! : default!;
+                return _cache.TryGetValue(key, out TValue result) ? result : default!;
             }
         }
 
@@ -65,11 +91,10 @@ namespace MyTts.Services
         {
             ArgumentNullException.ThrowIfNull(key);
             value = default!;
-            
+
             lock (_lock)
             {
-                TValue? result = default;
-                var found = _cache.TryGetValue(key, out result);
+                var found = _cache.TryGetValue(key, out TValue result);
                 value = result!;
                 return found;
             }
@@ -78,10 +103,35 @@ namespace MyTts.Services
         public void Remove(TKey key)
         {
             ArgumentNullException.ThrowIfNull(key);
-            lock(_lock)
+            lock (_lock)
             {
                 _cache.Remove(key);
                 _keyOrder.Remove(key);
+            }
+        }
+
+        /// <summary>
+        /// Number of items currently in the cache.
+        /// </summary>
+        public int Count
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    return _keyOrder.Count;
+                }
+            }
+        }
+
+        /// <summary>
+        /// True if the cache has no entries.
+        /// </summary>
+        public bool IsEmpty()
+        {
+            lock (_lock)
+            {
+                return _keyOrder.Count == 0;
             }
         }
 
@@ -98,5 +148,6 @@ namespace MyTts.Services
             }
         }
     }
+
 
 }

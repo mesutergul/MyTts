@@ -33,14 +33,38 @@ namespace MyTts.Helpers
 
         public static string SaatVeDakikaYaziyaCevir(DateTime zaman)
         {
-            int saat = zaman.Hour;
-            int dakika = zaman.Minute;
+            // two-digit strings
+            string hh = zaman.Hour.ToString("D2");   // e.g. "01" or "10"
+            string mm = zaman.Minute.ToString("D2"); // e.g. "03" or "15"
 
-            string saatYazi = GunSayisiYaziyaCevir(saat);
-            string dakikaYazi = GunSayisiYaziyaCevir(dakika);
+            string hoursText;
+            if (hh[0] == '0')
+            {
+                // digit-by-digit for 0x
+                hoursText = $"{GunSayisiYaziyaCevir(0)} {GunSayisiYaziyaCevir(hh[1] - '0')}";
+            }
+            else
+            {
+                // whole number for >=10
+                hoursText = GunSayisiYaziyaCevir(zaman.Hour);
+            }
 
-            return $"{saatYazi} {dakikaYazi}".Trim();
+            //string minutesText;
+            //if (mm[0] == '0')
+            //{
+            //    // digit-by-digit for 0x
+            //    minutesText = $"{GunSayisiYaziyaCevir(0)} {GunSayisiYaziyaCevir(mm[1] - '0')}";
+            //}
+            //else
+            //{
+            //    // whole number for >=10
+            //    minutesText = GunSayisiYaziyaCevir(zaman.Minute);
+            //}
+
+            //return $"{hoursText} {minutesText}".Trim();
+            return $"{hoursText} sıfır sıfır".Trim();
         }
+
 
         public static string GunSayisiYaziyaCevir(int sayi)
         {
@@ -59,10 +83,11 @@ namespace MyTts.Helpers
 
             return sonuc.Trim();
         }
-        public static int GetCompactTimeId(DateTime dt)
-        {
-            return int.Parse($"{dt.Month:D2}{dt.Day:D2}{dt.Hour:D2}{dt.Minute:D2}");
-        }
+        public static int GetCompactTimeId(DateTime dt) => int.Parse(dt.ToString("yyyyMMddHH"));
+        //public static int GetCompactTimeId(DateTime dt)
+        //{
+        //    return int.Parse($"{dt.Month:D2}{dt.Day:D2}{dt.Hour:D2}{dt.Minute:D2}");
+        //}
     }
 
 }

@@ -113,7 +113,7 @@ namespace MyTts.Storage
                         filePath,
                         FileMode.Open,
                         FileAccess.Read,
-                        FileShare.Read,
+                        FileShare.ReadWrite,
                         _options.BufferSize,
                         FileOptions.Asynchronous | FileOptions.SequentialScan
                     )),

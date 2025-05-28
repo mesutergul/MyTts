@@ -106,7 +106,7 @@ namespace MyTts.Services
 
                         var ffmpegOptions = new FFOptions
                         {
-                           // BinaryFolder = Path.Combine(AppContext.BaseDirectory, "ffmpeg-bin"),
+                            BinaryFolder = Path.Combine(AppContext.BaseDirectory, "ffmpeg-bin"),
                             TemporaryFilesFolder = Path.GetTempPath()
                         };
 
@@ -138,7 +138,7 @@ namespace MyTts.Services
                                     fullPath,
                                     FileMode.Create,
                                     FileAccess.Write,
-                                    FileShare.Read | FileShare.Delete,
+                                    FileShare.ReadWrite | FileShare.Delete,
                                     bufferSize: BufferSize,
                                     FileOptions.Asynchronous | FileOptions.SequentialScan))
                                 {
