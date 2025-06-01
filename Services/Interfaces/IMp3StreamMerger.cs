@@ -1,4 +1,9 @@
+using System;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 using MyTts.Models;
+using Polly;
 
 namespace MyTts.Services.Interfaces
 {
@@ -11,6 +16,7 @@ namespace MyTts.Services.Interfaces
             string breakAudioPath,
             string startAudioPath,
             string endAudioPath,
+            ResilienceContext resilienceContext = default,
             CancellationToken cancellationToken = default);
     }
 }

@@ -45,23 +45,13 @@ public static class StorageServiceConfig
         });
 
         // Configure retry policy for storage operations
-        services.AddSingleton<AsyncRetryPolicy>(sp =>
+        services.AddSingleton<ResiliencePipeline<string>>(sp =>
         {
             var options = sp.GetRequiredService<IOptions<LocalStorageOptions>>().Value;
-            var logger = sp.GetRequiredService<ILogger<LocalStorageClient>>();
-
-            return Policy
-                .Handle<IOException>()
-                .Or<UnauthorizedAccessException>()
-                .WaitAndRetryAsync(
-                    options.MaxRetries,
-                    retryAttempt => options.RetryDelay * Math.Pow(2, retryAttempt - 1),
-                    onRetry: (exception, timeSpan, retryCount, context) =>
-                    {
-                        logger.LogWarning(exception,
-                            "Retry {RetryCount} after {Delay}ms for storage operation {OperationKey}",
-                            retryCount, timeSpan.TotalMilliseconds, context.OperationKey);
-                    });
+            var policyFactory = sp.GetRequiredService<SharedPolicyFactory>();
+            return policyFactory.GetStorageRetryPolicy<string>(
+                options.MaxRetries,
+                (int)options.RetryDelay.TotalSeconds);
         });
 
         // Get the configuration instance for initialization

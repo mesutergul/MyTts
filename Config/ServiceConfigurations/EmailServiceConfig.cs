@@ -1,13 +1,10 @@
 using MyTts.Services;
 using MyTts.Services.Interfaces;
-using MyTts.Config;
 using Microsoft.Extensions.Options;
 using System.Net;
-using System.Net.Mail;
-using Microsoft.Extensions.Logging;
 using Polly;
-using Polly.Retry;
-using Polly.CircuitBreaker;
+using System.Net.Mail;
+using MyTts.Models;
 
 namespace MyTts.Config.ServiceConfigurations
 {
@@ -50,48 +47,22 @@ namespace MyTts.Config.ServiceConfigurations
             });
 
             // Register Polly policies
-            services.AddSingleton<IAsyncPolicy>(sp =>
+            services.AddSingleton<ResiliencePipeline<SmtpResponse>>(sp =>
             {
                 var config = sp.GetRequiredService<IOptions<EmailConfig>>().Value;
-                var logger = sp.GetRequiredService<ILogger<EmailService>>();
+                var policyFactory = sp.GetRequiredService<SharedPolicyFactory>();
 
-                return Policy
-                    .Handle<SmtpException>()
-                    .Or<InvalidOperationException>()
-                    .WaitAndRetryAsync(config.MaxRetries, retryAttempt =>
-                        TimeSpan.FromSeconds(config.RetryDelaySeconds * Math.Pow(2, retryAttempt)),
-                        onRetry: (exception, timeSpan, retryCount, context) =>
-                        {
-                            logger.LogWarning(exception,
-                                "Retry {RetryCount} after {Delay}ms for email to {Recipient}. Error: {Error}",
-                                retryCount, timeSpan.TotalMilliseconds, context["recipient"], exception.Message);
-                        });
-            });
+                var retryPolicy = policyFactory.GetEmailRetryPolicy<SmtpResponse>(
+                    maxRetries: config.MaxRetries,
+                    retryDelaySeconds: config.RetryDelaySeconds);
 
-            services.AddSingleton<IAsyncPolicy>(sp =>
-            {
-                var logger = sp.GetRequiredService<ILogger<EmailService>>();
+                var circuitBreakerPolicy = policyFactory.GetEmailCircuitBreakerPolicy<SmtpResponse>(
+                    exceptionsAllowedBeforeBreaking: 5,
+                    durationOfBreakInMinutes: 1);
 
-                return Policy
-                    .Handle<SmtpException>()
-                    .Or<InvalidOperationException>()
-                    .CircuitBreakerAsync(
-                        exceptionsAllowedBeforeBreaking: 2,
-                        durationOfBreak: TimeSpan.FromMinutes(5),
-                        onBreak: (exception, duration) =>
-                        {
-                            logger.LogWarning(exception,
-                                "Circuit breaker opened for {Duration} seconds due to SMTP issues. Error: {Error}",
-                                duration.TotalSeconds, exception.Message);
-                        },
-                        onReset: () =>
-                        {
-                            logger.LogInformation("Circuit breaker reset - email service is healthy again");
-                        },
-                        onHalfOpen: () =>
-                        {
-                            logger.LogInformation("Circuit breaker half-open - testing email service health");
-                        });
+                return new ResiliencePipelineBuilder<SmtpResponse>()
+                    .AddPipeline(retryPolicy)
+                    .AddPipeline(circuitBreakerPolicy).Build();
             });
 
             return services;

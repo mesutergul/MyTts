@@ -4,6 +4,7 @@ using MyTts.Models;
 using MyTts.Services.Interfaces;
 using MyTts.Helpers;
 using System.Threading;
+using Polly;
 
 namespace MyTts.Services
 {
@@ -30,6 +31,7 @@ namespace MyTts.Services
             string breakAudioPath,
             string startAudioPath,
             string endAudioPath,
+            ResilienceContext resilienceContext,
             CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(audioProcessors);

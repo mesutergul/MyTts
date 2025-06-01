@@ -18,6 +18,7 @@ using Polly;
 using Polly.Retry;
 using Polly.CircuitBreaker;
 using System.Threading;
+using MyTts.Config.ServiceConfigurations;
 
 namespace MyTts.Services.Clients
 {
@@ -36,13 +37,12 @@ namespace MyTts.Services.Clients
         private readonly JsonSerializerOptions _jsonOptions;
         private readonly StorageConfiguration _storageConfig;
         private readonly ConcurrentDictionary<string, Voice> _voiceCache;
-        private readonly AsyncRetryPolicy _retryPolicy;
-        private readonly AsyncCircuitBreakerPolicy _circuitBreakerPolicy;
         private const int MaxConcurrentOperations = 10;
         private const int BufferSize = 128 * 1024; // 128KB buffer size
         private static readonly ThreadLocal<Random> _random = new(() => new Random());
         private bool _disposed;
         private readonly INotificationService _notificationService;
+        private readonly SharedPolicyFactory _sharedPolicyFactory;
 
         public TtsClient(
             ElevenLabsClient elevenLabsClient,
@@ -53,6 +53,7 @@ namespace MyTts.Services.Clients
             IRedisCacheService? cache,
             IMp3StreamMerger mp3StreamMerger,
             INotificationService notificationService,
+            SharedPolicyFactory sharedPolicyFactory,
             ILogger<TtsClient> logger)
         {
             _elevenLabsClient = elevenLabsClient ?? throw new ArgumentNullException(nameof(elevenLabsClient));
@@ -63,6 +64,7 @@ namespace MyTts.Services.Clients
             _geminiTtsClient = geminiTtsClient ?? throw new ArgumentNullException(nameof(geminiTtsClient));
             _mp3StreamMerger = mp3StreamMerger ?? throw new ArgumentNullException(nameof(mp3StreamMerger));
             _notificationService = notificationService ?? throw new ArgumentNullException(nameof(notificationService));
+            _sharedPolicyFactory = sharedPolicyFactory ?? throw new ArgumentNullException(nameof(sharedPolicyFactory));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _semaphore = new SemaphoreSlim(MaxConcurrentOperations);
             _voiceCache = new ConcurrentDictionary<string, Voice>();
@@ -71,52 +73,6 @@ namespace MyTts.Services.Clients
                 PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
                 DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
             };
-
-            // Configure retry policy
-            _retryPolicy = Policy
-                .Handle<Exception>()
-                .WaitAndRetryAsync(3, retryAttempt => 
-                    TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
-                    onRetry: (exception, timeSpan, retryCount, context) =>
-                    {
-                        _logger.LogWarning(exception, 
-                            "Retry {RetryCount} after {Delay}ms for operation {OperationKey}", 
-                            retryCount, timeSpan.TotalMilliseconds, context.OperationKey);
-                    });
-
-            // Configure circuit breaker policy
-            _circuitBreakerPolicy = Policy
-                .Handle<Exception>()
-                .CircuitBreakerAsync(
-                    exceptionsAllowedBeforeBreaking: 2,
-                    durationOfBreak: TimeSpan.FromSeconds(30),
-                    onBreak: async (exception, duration) =>
-                    {
-                        _logger.LogWarning(exception,
-                            "Circuit breaker opened for {Duration} seconds due to {ExceptionType}",
-                            duration.TotalSeconds, exception.GetType().Name);
-                        await _notificationService.SendNotificationAsync(
-                            "Circuit Breaker Opened",
-                            $"Service is temporarily unavailable for {duration.TotalSeconds} seconds due to {exception.GetType().Name}",
-                            NotificationType.Warning);
-                    },
-                    onReset: async () =>
-                    {
-                        _logger.LogInformation("Circuit breaker reset - service is healthy again");
-                        await _notificationService.SendNotificationAsync(
-                            "Circuit Breaker Reset",
-                            "Service is healthy and accepting requests again",
-                            NotificationType.Success);
-                    },
-                    onHalfOpen: async () =>
-                    {
-                        _logger.LogInformation("Circuit breaker half-open - testing service health");
-                        await _notificationService.SendNotificationAsync(
-                            "Circuit Breaker Testing",
-                            "Testing service health before fully reopening",
-                            NotificationType.Info);
-                    });
-
             // Initialize Google Cloud Storage if configured
             if (_storageConfig.Disks.TryGetValue("gcloud", out var gcloudDisk) && gcloudDisk.Enabled && gcloudDisk.Config != null)
             {
@@ -148,141 +104,31 @@ namespace MyTts.Services.Clients
 
         private async Task<T> ExecuteWithPoliciesAsync<T>(Func<Task<T>> action, int id, CancellationToken cancellationToken)
         {
+            ResiliencePropertyKey<string> OperationKey = new("OperationKey");
+            var context = ResilienceContextPool.Shared.Get(cancellationToken);
+            context.Properties.Set(OperationKey, $"TTS_{id}");
             try
-            {
-                // Apply both policies to the action
-            return await _circuitBreakerPolicy
-                .WrapAsync(_retryPolicy)
-                    .ExecuteAsync(async () => 
-                    {
-                        var content = await action();
-                        if (content is string text)
-                        {
-                            if (ContainsBlockedContent(text, id))
-                            {
-                                _logger.LogWarning("Content blocked due to policy violation for ID {Id}", id);
-                                throw new InvalidOperationException($"Content violates service policy for ID {id}");
-                            }
-                        }
-                        return content;
-                    });
+            {             
+                var pipeline = new ResiliencePipelineBuilder<T>()
+                    .AddPipeline(_sharedPolicyFactory.GetTtsRetryPolicy<T>(
+                        retryCount: 3,
+                        baseDelaySeconds: 2))
+                    .AddPipeline(_sharedPolicyFactory.GetTtsCircuitBreakerPolicy<T>(
+                        failureThreshold: 0.5,
+                        minimumThroughput: 10))
+                    .Build();
+
+                return await pipeline.ExecuteAsync(async token => await action(), context);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error executing TTS request for ID {Id}", id);
                 throw;
             }
-        }
-
-        private bool ContainsBlockedContent(string text, int id)
-        {
-            // Define blocked content categories
-            var blockedCategories = new Dictionary<string, string[]>
+            finally
             {
-                ["violence"] = new[] {
-                    // English
-                    "kill", "murder", "attack", "weapon", "gun", "bomb", "terrorist",
-                    "suicide", "abuse", "torture", "blood", "gore",
-                    // Turkish
-                    "öldür", "katliam", "saldırı", "silah", "bomba", "terörist",
-                    "intihar", "istismar", "işkence", "kan", "şiddet"
-                },
-                ["hate"] = new[] {
-                    // English
-                    "racist", "nazi", "supremacist", "bigot", "hate speech",
-                    "discriminate", "prejudice", "intolerant",
-                    // Turkish
-                    "ırkçı", "nazi", "üstün", "bağnaz", "nefret söylemi",
-                    "ayrımcı", "önyargı", "hoşgörüsüz"
-                },
-                ["explicit"] = new[] {
-                    // English
-                    "porn", "sex", "nude", "explicit", "adult content",
-                    "obscene", "lewd", "vulgar",
-                    // Turkish
-                    "porno", "seks", "çıplak", "müstehcen", "yetişkin içerik",
-                    "edepsiz", "ahlaksız", "kaba"
-                },
-                ["illegal"] = new[] {
-                    // English
-                    "drug", "cocaine", "heroin", "meth", "illegal",
-                    "hack", "crack", "pirate", "steal",
-                    // Turkish
-                    "uyuşturucu", "eroin", "metamfetamin", "yasadışı",
-                    "hack", "korsan", "çal", "hırsızlık"
-                },
-                ["harmful"] = new[] {
-                    // English
-                    "suicide", "self-harm", "abuse", "exploit",
-                    "scam", "fraud", "phishing",
-                    // Turkish
-                    "intihar", "kendine zarar", "istismar", "sömürü",
-                    "dolandırıcılık", "sahte", "dolandırma"
-                }
-            };
-
-            // Check for blocked content in parallel
-            var blockedCategory = blockedCategories.AsParallel()
-                .FirstOrDefault(category => category.Value.Any(term => 
-                    text.Contains(term, StringComparison.OrdinalIgnoreCase)));
-
-            if (blockedCategory.Key != null)
-            {
-                _logger.LogWarning("Content blocked for ID {Id} due to {Category} policy violation", id, blockedCategory.Key);
-                // Fire and forget notification
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        await _notificationService.SendNotificationAsync(
-                            "Content Policy Violation",
-                            $"Content blocked for ID {id} due to {blockedCategory.Key} policy violation",
-                            NotificationType.Warning);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Failed to send notification for content policy violation for ID {Id}", id);
-                    }
-                });
-                return true;
+                ResilienceContextPool.Shared.Return(context);
             }
-
-            // Check for excessive punctuation or special characters using Span<char> for better performance
-            var specialCharCount = 0;
-            foreach (var c in text.AsSpan())
-            {
-                if (!char.IsLetterOrDigit(c) && !char.IsWhiteSpace(c))
-                {
-                    specialCharCount++;
-                }
-            }
-
-            if (specialCharCount > text.Length * 0.3)
-            {
-                _logger.LogWarning("Content blocked for ID {Id} due to excessive special characters", id);
-                return true;
-            }
-
-            // Check for repeated characters using a more efficient approach
-            var charCounts = new Dictionary<char, int>();
-            foreach (var c in text.AsSpan())
-            {
-                if (charCounts.TryGetValue(c, out var count))
-                {
-                    if (count >= 10)
-                    {
-                        _logger.LogWarning("Content blocked for ID {Id} due to character repetition", id);
-                        return true;
-                    }
-                    charCounts[c] = count + 1;
-                }
-                else
-                {
-                    charCounts[c] = 1;
-                }
-            }
-
-            return false;
         }
 
         public async Task<string> ProcessContentsAsync(
@@ -316,7 +162,7 @@ namespace MyTts.Services.Clients
                 //    IlgiId = TurkishDateTimeText.GetCompactTimeId(simdi),
                 //    Ozet = anchorText
                 //};
-
+                 
 
                 // Process needed and saved news in parallel
                 var processingTasks = new List<Task<(int id, AudioProcessor Processor)>>(
@@ -346,13 +192,13 @@ namespace MyTts.Services.Clients
                 var results = await Task.WhenAll(processingTasks);
                 // Create processors dictionary for efficient lookup
                 var processedFiles = results.ToDictionary(r => r.id, r => r.Processor);
-               // var AnchorProcessor = processedFiles[anchor.IlgiId];
+                // var AnchorProcessor = processedFiles[anchor.IlgiId];
                 // Build final list in original order
                 var processors = allNewsList
                     .Where(news => processedFiles.ContainsKey(news.IlgiId))
                     .Select(news => processedFiles[news.IlgiId])
                     .ToList();
-              //  processors.Insert(0, AnchorProcessor);
+                //  processors.Insert(0, AnchorProcessor);
 
                 if (processors.Count > 0)
                 {
@@ -369,7 +215,7 @@ namespace MyTts.Services.Clients
                     string startAudioPath = StoragePathHelper.GetFullPath("merged_haber_basi", fileType);
                     string endAudioPath = StoragePathHelper.GetFullPath("merged_haber_sonu", fileType);
 
-                    breakAudioPath= await checkFilePaths(breakAudioPath, cancellationToken);
+                    breakAudioPath = await checkFilePaths(breakAudioPath, cancellationToken);
                     startAudioPath = await checkFilePaths(startAudioPath, cancellationToken);
                     endAudioPath = await checkFilePaths(endAudioPath, cancellationToken);
                     // Start merge operation in background
@@ -378,27 +224,13 @@ namespace MyTts.Services.Clients
                         try
                         {
                             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-                            var retryCount = 0;
-                            var merged = await _retryPolicy.ExecuteAsync(async () =>
-                            {
-                                try
-                                {
-                                    return await _mp3StreamMerger.MergeMp3ByteArraysAsync(
-                                        processors,
-                                        _storageConfig.BasePath,
-                                        fileType,
-                                        breakAudioPath,
-                                        startAudioPath,
-                                        endAudioPath,
-                                        cancellationToken);
-                                }
-                                catch (Exception ex)
-                                {
-                                    retryCount++;
-                                    _logger.LogWarning(ex, "Failed to merge MP3 files, attempt {RetryCount}", retryCount);
-                                    throw;
-                                }
-                            });
+                            await ExecuteMergeOperationAsync(
+                                processors,
+                                breakAudioPath,
+                                startAudioPath,
+                                endAudioPath,
+                                fileType,
+                                cancellationToken);
                             stopwatch.Stop();
 
                             _logger.LogInformation(
@@ -442,6 +274,55 @@ namespace MyTts.Services.Clients
                 throw;
             }
         }
+        private async Task ExecuteMergeOperationAsync(
+        List<AudioProcessor> processors,
+        string breakAudioPath,
+        string startAudioPath,
+        string endAudioPath,
+        AudioType fileType,
+        CancellationToken cancellationToken)
+    {
+        ResiliencePropertyKey<string> OperationKey = new("OperationKey");
+        var context = ResilienceContextPool.Shared.Get(cancellationToken);
+        context.Properties.Set(OperationKey, "MergeOperation");
+
+        try
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+            var mergePipeline = _sharedPolicyFactory.GetStorageRetryPolicy<string>(3, 10);
+            
+            await mergePipeline.ExecuteAsync(
+                async token => await _mp3StreamMerger.MergeMp3ByteArraysAsync(
+                    processors,
+                    _storageConfig.BasePath,
+                    fileType,
+                    breakAudioPath,
+                    startAudioPath,
+                    endAudioPath,
+                    token, cancellationToken),
+                context);
+
+            stopwatch.Stop();
+            _logger.LogInformation(
+                "Merged {Count} MP3 files in {ElapsedMilliseconds}ms",
+                processors.Count,
+                stopwatch.ElapsedMilliseconds);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to merge MP3 files");
+            await _notificationService.SendErrorNotificationAsync(
+                "MP3 Merge Failed",
+                $"Failed to merge {processors.Count} files",
+                ex);
+            throw;
+        }
+        finally
+        {
+            ResilienceContextPool.Shared.Return(context);
+        }
+    }
         private async Task<string> checkFilePaths(string path, CancellationToken cancellationToken)
         {
             var existsResult = await _localStorageClient.FileExistsAsync(path, cancellationToken);
@@ -471,7 +352,7 @@ namespace MyTts.Services.Clients
                         "tr-TR", // Assuming Turkish for this example, adjust as needed
                         "tr-TR-Standard-A", // Or a specific voice/model name if available and configurable
                         cancellationToken);
-                    AudioProcessor audioProcessor= new AudioProcessor(new VoiceClip(audioBytes));
+                    AudioProcessor audioProcessor = new AudioProcessor(new VoiceClip(audioBytes));
                     return (id, audioProcessor);
                 }
                 finally
@@ -489,7 +370,7 @@ namespace MyTts.Services.Clients
             string text, int id, string language, AudioType fileType, CancellationToken cancellationToken)
         {
             var localPath = StoragePathHelper.GetFullPathById(id, fileType);
-             
+
             try
             {
                 await _semaphore.WaitAsync(cancellationToken);
@@ -511,9 +392,9 @@ namespace MyTts.Services.Clients
                     var randomVoice = voices[_random.Value!.Next(voices.Count)];
                     var voiceId = randomVoice.Value;
                     // "Gulsu": "jbJMQWv1eS4YjQ6PCcn6",
-                    _logger.LogInformation("Selected voice {VoiceName} ({VoiceId}) for language {Language}", 
+                    _logger.LogInformation("Selected voice {VoiceName} ({VoiceId}) for language {Language}",
                         randomVoice.Key, voiceId, language);
-                    
+
                     // Try to get voice from cache first
                     var voice = await GetOrFetchVoiceAsync(voiceId, id, cancellationToken);
                     var request = await CreateTtsRequestAsync(voice, text);
@@ -577,7 +458,7 @@ namespace MyTts.Services.Clients
                 () => _elevenLabsClient.VoicesEndpoint.GetVoiceAsync(voiceId, withSettings: false, cancellationToken),
                 id,
                 cancellationToken);
-            
+
             _voiceCache.TryAdd(voiceId, voice);
             return voice;
         }
@@ -637,7 +518,7 @@ namespace MyTts.Services.Clients
                 _logger.LogWarning("Skipping cloud upload because GCS is not configured.");
                 return;
             }
-            
+
             await using var uploadStream = await processor.GetStreamForCloudUploadAsync(cancellationToken).ConfigureAwait(false);
 
             var uploadOptions = new UploadObjectOptions
@@ -696,24 +577,24 @@ namespace MyTts.Services.Clients
                 throw;
             }
         }
-public async Task<AudioProcessor> ConvertStreamToAudioProcessorAsync(
-    Stream audioStream, 
-    CancellationToken cancellationToken = default)
-{
-    ArgumentNullException.ThrowIfNull(audioStream);
-    
-    // Use MemoryStream with initial capacity if you know approximate size
-    using var memoryStream = audioStream.CanSeek 
-        ? new MemoryStream((int)audioStream.Length) 
-        : new MemoryStream();
-        
-    await audioStream.CopyToAsync(memoryStream, 81920, cancellationToken); // Use 80KB buffer
-    
-    // Create VoiceClip directly from MemoryStream's buffer to avoid extra copy
-    var audioData = memoryStream.ToArray();
-    var voiceClip = new VoiceClip(audioData);
-    return new AudioProcessor(voiceClip);
-}
+        public async Task<AudioProcessor> ConvertStreamToAudioProcessorAsync(
+            Stream audioStream,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(audioStream);
+
+            // Use MemoryStream with initial capacity if you know approximate size
+            using var memoryStream = audioStream.CanSeek
+                ? new MemoryStream((int)audioStream.Length)
+                : new MemoryStream();
+
+            await audioStream.CopyToAsync(memoryStream, 81920, cancellationToken); // Use 80KB buffer
+
+            // Create VoiceClip directly from MemoryStream's buffer to avoid extra copy
+            var audioData = memoryStream.ToArray();
+            var voiceClip = new VoiceClip(audioData);
+            return new AudioProcessor(voiceClip);
+        }
         public async ValueTask DisposeAsync()
         {
             if (_disposed) return;
@@ -734,4 +615,4 @@ public async Task<AudioProcessor> ConvertStreamToAudioProcessorAsync(
             public required DateTime Timestamp { get; init; }
         }
     }
-} 
+}
