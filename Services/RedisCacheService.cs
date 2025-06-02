@@ -4,6 +4,8 @@ using MyTts.Services.Interfaces;
 using Polly;
 using StackExchange.Redis;
 using System.Text.Json;
+using Microsoft.Extensions.Logging; // Added for ILoggerFactory
+using MyTts.Config.ServiceConfigurations; // Added for SharedPolicyFactory
 
 namespace MyTts.Services
 {
@@ -20,14 +22,16 @@ namespace MyTts.Services
             IConnectionMultiplexer redis,
             IOptions<RedisConfig> config,
             ILogger<RedisCacheService> logger,
-            ILogger<RedisCircuitBreaker> circuitBreakerLogger,
+            ILoggerFactory loggerFactory, // Added
+            SharedPolicyFactory policyFactory, // Added
             ResiliencePipeline<RedisValue> retryPolicy)
         {
             _redis = redis;
             _config = config.Value;
             _logger = logger;
             _retryPolicy = retryPolicy;
-            _circuitBreaker = new RedisCircuitBreaker(circuitBreakerLogger);
+            // Updated RedisCircuitBreaker instantiation
+            _circuitBreaker = new RedisCircuitBreaker(loggerFactory.CreateLogger<RedisCircuitBreaker>(), policyFactory);
 
             if (redis == null || !redis.IsConnected)
             {

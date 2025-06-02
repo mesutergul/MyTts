@@ -63,6 +63,10 @@ builder.Services
     .AddHttpClientsServices()
     .AddRedisServices(builder.Configuration)
     .AddApiServices();
+
+// Register SharedPolicyFactory as a singleton
+builder.Services.AddSingleton<SharedPolicyFactory>();
+
 // Inside Program.cs, after all AddServices calls:
 // Debug step by step - Inside Program.cs, after all AddServices calls:
 var tempServiceProvider = builder.Services.BuildServiceProvider();

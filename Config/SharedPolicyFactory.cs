@@ -289,6 +289,53 @@ namespace MyTts.Config.ServiceConfigurations
                 })
                 .Build();
         }
+
+        public ResiliencePipeline<T> GetRedisCircuitBreakerPolicy<T>(
+            double failureThreshold = 0.5,
+            int minimumThroughput = 5,
+            int samplingDurationSeconds = 60,
+            int breakDurationSeconds = 30)
+        {
+            return new ResiliencePipelineBuilder<T>()
+                .AddCircuitBreaker(new CircuitBreakerStrategyOptions<T>
+                {
+                    ShouldHandle = args => new ValueTask<bool>(
+                        args.Outcome.Exception is RedisConnectionException ||
+                        args.Outcome.Exception is TimeoutException
+                    ),
+                    FailureRatio = failureThreshold,
+                    MinimumThroughput = minimumThroughput,
+                    SamplingDuration = TimeSpan.FromSeconds(samplingDurationSeconds),
+                    BreakDuration = TimeSpan.FromSeconds(breakDurationSeconds),
+                    OnOpened = async args =>
+                    {
+                        _logger.LogWarning(args.Outcome.Exception,
+                            "Redis circuit breaker opened for {Duration}s",
+                            breakDurationSeconds);
+                        await TrySendNotificationAsync(
+                            "Redis Circuit Breaker Opened",
+                            $"Service unavailable for {breakDurationSeconds}s",
+                            NotificationType.Warning);
+                    },
+                    OnClosed = async args =>
+                    {
+                        _logger.LogInformation("Redis circuit breaker reset");
+                        await TrySendNotificationAsync(
+                            "Redis Circuit Breaker Reset",
+                            "Service is healthy again",
+                            NotificationType.Success);
+                    },
+                    OnHalfOpened = async args =>
+                    {
+                        _logger.LogInformation("Redis circuit breaker half-open - testing service health");
+                        await TrySendNotificationAsync(
+                            "Redis Circuit Breaker Half-Open",
+                            "Testing service health",
+                            NotificationType.Information);
+                    }
+                })
+            .Build();
+        }
         
         #endregion
     }
