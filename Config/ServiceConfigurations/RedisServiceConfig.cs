@@ -24,21 +24,14 @@ public static class RedisServiceConfig
         }
 
         // Configure retry policy for Redis operations
-        services.AddSingleton<AsyncRetryPolicy>(sp =>
+        services.AddSingleton<ResiliencePipeline<RedisValue>>(sp =>
         {
             var logger = sp.GetRequiredService<ILogger<RedisCacheService>>();
-            return Policy
-                .Handle<RedisConnectionException>()
-                .Or<RedisTimeoutException>()
-                .WaitAndRetryAsync(
-                    redisConfig.MaxRetryAttempts,
-                    retryAttempt => TimeSpan.FromMilliseconds(redisConfig.RetryDelayMilliseconds * Math.Pow(2, retryAttempt - 1)),
-                    onRetry: (exception, timeSpan, retryCount, context) =>
-                    {
-                        logger.LogWarning(exception,
-                            "Retry {RetryCount} after {Delay}ms for Redis operation {OperationKey}",
-                            retryCount, timeSpan.TotalMilliseconds, context.OperationKey);
-                    });
+            var policyFactory = sp.GetRequiredService<SharedPolicyFactory>();
+
+            return policyFactory.GetRedisRetryPolicy(
+                maxRetries: redisConfig.MaxRetryAttempts,
+                retryDelayMilliseconds: redisConfig.RetryDelayMilliseconds);
         });
 
         try
@@ -57,7 +50,6 @@ public static class RedisServiceConfig
             services.AddSingleton<IConnectionMultiplexer>(sp =>
             {
                 var logger = sp.GetRequiredService<ILogger<RedisCacheService>>();
-                var retryPolicy = sp.GetRequiredService<AsyncRetryPolicy>();
 
                 try
                 {
@@ -100,7 +92,7 @@ public static class RedisServiceConfig
                 var logger = sp.GetRequiredService<ILogger<RedisCacheService>>();
                 var nullLogger = sp.GetRequiredService<ILogger<NullRedisCacheService>>();
                 var config = sp.GetRequiredService<IOptions<MyTts.Config.RedisConfig>>();
-                var retryPolicy = sp.GetRequiredService<AsyncRetryPolicy>();
+                var retryPolicy = sp.GetRequiredService<ResiliencePipeline<RedisValue>>();
 
                 if (connection == null || !connection.IsConnected)
                 {
@@ -111,7 +103,7 @@ public static class RedisServiceConfig
                 try
                 {
                     var circuitBreakerLogger = sp.GetRequiredService<ILogger<RedisCircuitBreaker>>();
-                    return new RedisCacheService(connection, config, logger, circuitBreakerLogger);
+                    return new RedisCacheService(connection, config, logger, circuitBreakerLogger, retryPolicy);
                 }
                 catch (Exception ex)
                 {

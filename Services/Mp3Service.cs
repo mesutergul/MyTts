@@ -25,14 +25,14 @@ namespace MyTts.Services
             ILogger<Mp3Service> logger,
             IMp3Repository mp3FileRepository,
             ITtsClient ttsClient,
-            IRedisCacheService cache,
+            IRedisCacheService? cache,
             ICache<int, string> ozetCache,
             IServiceScopeFactory serviceScopeFactory)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _mp3FileRepository = mp3FileRepository ?? throw new ArgumentNullException(nameof(mp3FileRepository));
             _ttsClient = ttsClient ?? throw new ArgumentNullException(nameof(ttsClient));
-            _cache = cache ?? throw new ArgumentNullException(nameof(cache));
+            _cache = cache;
             _processingSemaphore = new SemaphoreSlim(MaxConcurrentProcessing);
             _ozetCache = ozetCache;
             _serviceScopeFactory = serviceScopeFactory ?? throw new ArgumentNullException(nameof(serviceScopeFactory));

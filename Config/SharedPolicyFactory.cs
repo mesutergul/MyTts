@@ -4,6 +4,7 @@ using Polly;
 using Polly.Retry;
 using Polly.Extensions.Http;
 using Polly.CircuitBreaker;
+using StackExchange.Redis;
 
 namespace MyTts.Config.ServiceConfigurations
 {
@@ -11,15 +12,29 @@ namespace MyTts.Config.ServiceConfigurations
     public class SharedPolicyFactory
     {
         private readonly ILogger<SharedPolicyFactory> _logger;
-        private readonly INotificationService _notificationService;
+        private readonly Func<INotificationService> _notificationServiceFactory; 
 
-        public SharedPolicyFactory(ILogger<SharedPolicyFactory> logger, INotificationService notificationService)
+        public SharedPolicyFactory(ILogger<SharedPolicyFactory> logger, IServiceProvider serviceProvider)
         {
             _logger = logger;
-            _notificationService = notificationService;
+            _notificationServiceFactory = () => serviceProvider.GetRequiredService<INotificationService>();
         }
        
-
+        private async Task TrySendNotificationAsync(string title, string message, NotificationType type)
+        {
+            try
+            {
+                var notificationService = _notificationServiceFactory();
+                if (notificationService != null)
+                {
+                    await notificationService.SendNotificationAsync(title, message, type);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to send notification: {Title}", title);
+            }
+        }
         #region HTTP Policies
         public ResiliencePipeline<HttpResponseMessage> GetRetryPolicy(
             int retryCount = 3,
@@ -168,8 +183,7 @@ namespace MyTts.Config.ServiceConfigurations
                             args.AttemptNumber,
                             args.RetryDelay.TotalMilliseconds,
                             args.Context?.OperationKey ?? "unknown");
-
-                        await _notificationService.SendNotificationAsync(
+                        await TrySendNotificationAsync(
                             "Storage Retry",
                             $"Retrying operation after {args.RetryDelay.TotalMilliseconds}ms (attempt {args.AttemptNumber})",
                             NotificationType.Warning);
@@ -201,8 +215,7 @@ namespace MyTts.Config.ServiceConfigurations
                     _logger.LogWarning(args.Outcome.Exception,
                         "TTS retry {RetryCount} after {Delay}ms for {OperationKey}",
                         args.AttemptNumber, baseDelaySeconds * Math.Pow(2, args.AttemptNumber), args.Context?.OperationKey ?? "unknown");
-
-                    await _notificationService.SendNotificationAsync(
+                    await TrySendNotificationAsync(
                         "TTS Retry",
                         $"Retrying operation after {baseDelaySeconds * Math.Pow(2, args.AttemptNumber)}s (attempt {args.AttemptNumber})",
                         NotificationType.Warning);
@@ -233,8 +246,7 @@ namespace MyTts.Config.ServiceConfigurations
                         _logger.LogError(args.Outcome.Exception,
                             "TTS circuit breaker opened for {Duration}s",
                             breakDurationSeconds);
-
-                        await _notificationService.SendNotificationAsync(
+                        await TrySendNotificationAsync(
                             "TTS Circuit Breaker Opened",
                             $"Service unavailable for {breakDurationSeconds}s",
                             NotificationType.Warning);
@@ -242,7 +254,7 @@ namespace MyTts.Config.ServiceConfigurations
                     OnClosed = async args =>
                     {
                         _logger.LogInformation("TTS circuit breaker reset");
-                        await _notificationService.SendNotificationAsync(
+                        await TrySendNotificationAsync(
                             "TTS Circuit Breaker Reset",
                             "Service is healthy again",
                             NotificationType.Success);
@@ -250,6 +262,34 @@ namespace MyTts.Config.ServiceConfigurations
                 })
             .Build();
         }
+
+        public  ResiliencePipeline<RedisValue> GetRedisRetryPolicy(int maxRetries, int retryDelayMilliseconds)
+        {
+            return new ResiliencePipelineBuilder<RedisValue>()
+                .AddRetry(new RetryStrategyOptions<RedisValue>
+                {
+                    ShouldHandle = args => new ValueTask<bool>(
+                        args.Outcome.Exception is RedisConnectionException ||
+                        args.Outcome.Exception is TimeoutException),
+                    MaxRetryAttempts = maxRetries,
+                    BackoffType = DelayBackoffType.Exponential,
+                    Delay = TimeSpan.FromMilliseconds(retryDelayMilliseconds),
+                    OnRetry = async args =>
+                    {
+                        _logger.LogWarning(args.Outcome.Exception,
+                            "Redis retry {RetryCount} after {Delay}ms for {OperationKey}",
+                            args.AttemptNumber,
+                            args.RetryDelay.TotalMilliseconds,
+                            args.Context?.OperationKey ?? "unknown");
+                        await TrySendNotificationAsync(
+                            "Redis Retry",
+                            $"Retrying operation after {args.RetryDelay.TotalMilliseconds}ms (attempt {args.AttemptNumber})",
+                            NotificationType.Warning);
+                    }
+                })
+                .Build();
+        }
+        
         #endregion
     }
 

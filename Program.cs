@@ -3,6 +3,15 @@ using MyTts.Routes;
 using Microsoft.AspNetCore.HttpOverrides;
 using MyTts.Models.Auth;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Builder;
+using System;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.DependencyInjection;
+using MyTts.Services;
+using Microsoft.Extensions.Options;
+using Polly;
+using StackExchange.Redis;
+using MyTts.Services.Interfaces;
 
 /*
 ffmpeg -i input.mp3 -filter:a loudnorm output_normalized.mp3
@@ -50,11 +59,64 @@ builder.Services
     .AddStorageServices(builder.Configuration)
     .AddElevenLabsServices(builder.Configuration)
     .AddCloudTtsConfiguration(builder.Configuration)
-    .AddRedisServices(builder.Configuration)
     .AddEmailServices(builder.Configuration)
     .AddHttpClientsServices()
+    .AddRedisServices(builder.Configuration)
     .AddApiServices();
+// Inside Program.cs, after all AddServices calls:
+// Debug step by step - Inside Program.cs, after all AddServices calls:
+var tempServiceProvider = builder.Services.BuildServiceProvider();
+try
+{
+    Console.WriteLine("Testing service resolution step by step...");
+    
+    // Test 1: Basic logger
+    var logger = tempServiceProvider.GetRequiredService<ILogger<SharedPolicyFactory>>();
+    Console.WriteLine("✓ ILogger<SharedPolicyFactory> resolved");
+    
+    // Test 2: INotificationService
+    // try
+    // {
+    //     var notificationService = tempServiceProvider.GetRequiredService<INotificationService>();
+    //     Console.WriteLine("✓ INotificationService resolved");
+    // }
+    // catch (Exception ex)
+    // {
+    //     Console.WriteLine($"✗ INotificationService failed: {ex.Message}");
+    //     throw; // This is likely the root cause
+    // }
+    
+    // Test 3: SharedPolicyFactory
+    var policyFactory = tempServiceProvider.GetRequiredService<SharedPolicyFactory>();
+    Console.WriteLine("✓ SharedPolicyFactory resolved");
+    
+    // Test 4: Redis config
+    var redisConfig = tempServiceProvider.GetRequiredService<IOptions<MyTts.Config.RedisConfig>>();
+    Console.WriteLine("✓ RedisConfig resolved");
 
+    // Test 5: Finally test RedisCacheService
+    var redisCacheService = tempServiceProvider.GetRequiredService<IRedisCacheService>();
+    Console.WriteLine("✓ IRedisCacheService resolved successfully!");
+    
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"✗ Service resolution failed: {ex.Message}");
+    
+    // Print inner exception details
+    var innerEx = ex.InnerException;
+    while (innerEx != null)
+    {
+        Console.WriteLine($"Inner exception: {innerEx.Message}");
+        innerEx = innerEx.InnerException;
+    }
+    
+    Console.WriteLine($"Stack trace: {ex.StackTrace}");
+}
+finally
+{
+    tempServiceProvider.Dispose();
+}
 var app = builder.Build();
 
 // ✅ SEED ADMIN ROLE & USER HERE

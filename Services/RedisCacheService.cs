@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Options;
 using MyTts.Config;
 using MyTts.Services.Interfaces;
+using Polly;
 using StackExchange.Redis;
 using System.Text.Json;
 
@@ -13,16 +14,19 @@ namespace MyTts.Services
         private readonly RedisConfig _config;
         private readonly ILogger<RedisCacheService> _logger;
         private readonly RedisCircuitBreaker _circuitBreaker;
+        private readonly ResiliencePipeline<RedisValue> _retryPolicy;
 
         public RedisCacheService(
             IConnectionMultiplexer redis,
             IOptions<RedisConfig> config,
             ILogger<RedisCacheService> logger,
-            ILogger<RedisCircuitBreaker> circuitBreakerLogger)
+            ILogger<RedisCircuitBreaker> circuitBreakerLogger,
+            ResiliencePipeline<RedisValue> retryPolicy)
         {
             _redis = redis;
             _config = config.Value;
             _logger = logger;
+            _retryPolicy = retryPolicy;
             _circuitBreaker = new RedisCircuitBreaker(circuitBreakerLogger);
 
             if (redis == null || !redis.IsConnected)
@@ -41,21 +45,36 @@ namespace MyTts.Services
                 return default;
             }
 
-            return await _circuitBreaker.ExecuteAsync(async () =>
+           return await _circuitBreaker.ExecuteAsync(async () =>
             {
-                var value = await _db.StringGetAsync(GetKey(key));
-                if (value.IsNull)
-                    return default;
-
+                ResiliencePropertyKey<string> OperationKey = new("OperationKey");
+                var context = ResilienceContextPool.Shared.Get(cancellationToken);
+                context.Properties.Set(OperationKey, $"TTS_{key}");
+                
                 try
                 {
-                    string jsonString = value.ToString();
-                    return JsonSerializer.Deserialize<T>(jsonString);
+                    var result = await _retryPolicy.ExecuteAsync(async (ctx) =>
+                    {
+                        return await _db.StringGetAsync(GetKey(key));
+                    }, context);
+
+                    if (result.IsNull)
+                        return default;
+
+                    try
+                    {
+                        string jsonString = result.ToString();
+                        return JsonSerializer.Deserialize<T>(jsonString);
+                    }
+                    catch (JsonException)
+                    {
+                        _logger.LogError("Failed to deserialize value for key {Key}", key);
+                        return default;
+                    }
                 }
-                catch (JsonException)
+                finally
                 {
-                    _logger.LogError("Failed to deserialize value for key {Key}", key);
-                    return default;
+                    ResilienceContextPool.Shared.Return(context);
                 }
             }, $"GET_{key}");
         }
