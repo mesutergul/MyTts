@@ -1,104 +1,107 @@
 using Polly;
 using Polly.CircuitBreaker;
 using Microsoft.Extensions.Logging;
+using MyTts.Config.ServiceConfigurations;
+using StackExchange.Redis;
 
 namespace MyTts.Services
 {
     public class RedisCircuitBreaker
     {
         private readonly ILogger<RedisCircuitBreaker> _logger;
-        private readonly AsyncCircuitBreakerPolicy _circuitBreakerPolicy;
-        private readonly int _failureThreshold;
-        private readonly TimeSpan _durationOfBreak;
-        private readonly int _samplingDuration;
+        private readonly SharedPolicyFactory _policyFactory;
 
         public RedisCircuitBreaker(
             ILogger<RedisCircuitBreaker> logger,
-            int failureThreshold = 5,
-            int durationOfBreakSeconds = 30,
-            int samplingDurationSeconds = 60)
+            SharedPolicyFactory policyFactory)
         {
             _logger = logger;
-            _failureThreshold = failureThreshold;
-            _durationOfBreak = TimeSpan.FromSeconds(durationOfBreakSeconds);
-            _samplingDuration = samplingDurationSeconds;
-
-            _circuitBreakerPolicy = Policy
-                .Handle<Exception>()
-                .AdvancedCircuitBreakerAsync(
-                    failureThreshold: _failureThreshold / 100.0, // Convert to percentage
-                    samplingDuration: TimeSpan.FromSeconds(_samplingDuration),
-                    minimumThroughput: _failureThreshold,
-                    durationOfBreak: _durationOfBreak,
-                    onBreak: (ex, duration) =>
-                    {
-                        _logger.LogWarning(ex, "Circuit breaker opened for {Duration} seconds after {FailureThreshold} failures in {SamplingDuration} seconds",
-                            duration.TotalSeconds, _failureThreshold, _samplingDuration);
-                    },
-                    onReset: () =>
-                    {
-                        _logger.LogInformation("Circuit breaker reset - Redis operations will be attempted again");
-                    },
-                    onHalfOpen: () =>
-                    {
-                        _logger.LogInformation("Circuit breaker is half-open - Testing Redis connection");
-                    }
-                );
+            _policyFactory = policyFactory;
         }
 
-        public async Task<T?> ExecuteAsync<T>(Func<Task<T>> action, string operationName)
+        public async Task<T?> ExecuteAsync<T>(Func<CancellationToken, Task<T>> action, string operationName, CancellationToken cancellationToken = default)
         {
             try
             {
-                return await _circuitBreakerPolicy.ExecuteAsync(async () =>
+                var policy = _policyFactory.GetRedisCircuitBreakerPolicy<T>();
+                var context = ResilienceContextPool.Shared.Get(cancellationToken);
+                try
                 {
-                    try
+                    return await policy.ExecuteAsync(async (ctx) =>
                     {
-                        return await action();
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Redis operation {OperationName} failed", operationName);
-                        throw;
-                    }
-                });
+                        try
+                        {
+                            return await action(ctx.CancellationToken);
+                        }
+                        catch (RedisConnectionException ex)
+                        {
+                            _logger.LogError(ex, "Redis connection failed during operation {OperationName}", operationName);
+                            throw;
+                        }
+                        catch (TimeoutException ex)
+                        {
+                            _logger.LogError(ex, "Redis operation {OperationName} timed out", operationName);
+                            throw;
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Redis operation {OperationName} failed with an unexpected exception", operationName);
+                            throw;
+                        }
+                    }, context);
+                }
+                finally
+                {
+                    ResilienceContextPool.Shared.Return(context);
+                }
             }
             catch (BrokenCircuitException)
             {
                 _logger.LogWarning("Circuit breaker is open - Redis operation {OperationName} was not attempted", operationName);
                 return default;
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Unexpected error during Redis operation {OperationName}", operationName);
-                return default;
-            }
         }
 
-        public async Task ExecuteAsync(Func<Task> action, string operationName)
+        public async Task ExecuteAsync(Func<CancellationToken, Task> action, string operationName, CancellationToken cancellationToken = default)
         {
             try
             {
-                await _circuitBreakerPolicy.ExecuteAsync(async () =>
+                var policy = _policyFactory.GetRedisCircuitBreakerPolicy<object>();
+                var context = ResilienceContextPool.Shared.Get(cancellationToken);
+                try
                 {
-                    try
+                    await policy.ExecuteAsync<object>(async (ctx) =>
                     {
-                        await action();
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Redis operation {OperationName} failed", operationName);
-                        throw;
-                    }
-                });
+                        try
+                        {
+                            await action(cancellationToken);
+                            return null;
+                        }
+                        catch (RedisConnectionException ex)
+                        {
+                            _logger.LogError(ex, "Redis connection failed during operation {OperationName}", operationName);
+                            throw;
+                        }
+                        catch (TimeoutException ex)
+                        {
+                            _logger.LogError(ex, "Redis operation {OperationName} timed out", operationName);
+                            throw;
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Redis operation {OperationName} failed with an unexpected exception", operationName);
+                            throw;
+                        }
+                    }, context);
+                }
+                finally
+                {
+                    ResilienceContextPool.Shared.Return(context);
+                }
             }
             catch (BrokenCircuitException)
             {
                 _logger.LogWarning("Circuit breaker is open - Redis operation {OperationName} was not attempted", operationName);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Unexpected error during Redis operation {OperationName}", operationName);
             }
         }
     }

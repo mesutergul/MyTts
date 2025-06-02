@@ -23,30 +23,30 @@ curl -X GET http://localhost:5209/api/auth/me \
           -H "Authorization: Bearer $TOKEN"
 */
 
-// Configure FFmpeg with absolute path
-// string baseDir = AppContext.BaseDirectory;
-// string ffmpegDir = Path.Combine(baseDir, "ffmpeg-bin");
+//Configure FFmpeg with absolute path
+ string baseDir = AppContext.BaseDirectory;
+string ffmpegDir = Path.Combine(baseDir, "ffmpeg-bin");
 
-// // Ensure FFmpeg directory exists
-// if (!Directory.Exists(ffmpegDir))
-// {
-//     throw new DirectoryNotFoundException($"FFmpeg directory not found at: {ffmpegDir}");
-// }
+// Ensure FFmpeg directory exists
+if (!Directory.Exists(ffmpegDir))
+{
+    throw new DirectoryNotFoundException($"FFmpeg directory not found at: {ffmpegDir}");
+}
 
-// // Ensure FFmpeg executables exist
-// string ffmpegExe = Path.Combine(ffmpegDir, "ffmpeg.exe");
-// string ffprobeExe = Path.Combine(ffmpegDir, "ffprobe.exe");
+// Ensure FFmpeg executables exist
+string ffmpegExe = Path.Combine(ffmpegDir, "ffmpeg.exe");
+string ffprobeExe = Path.Combine(ffmpegDir, "ffprobe.exe");
 
-// if (!File.Exists(ffmpegExe) || !File.Exists(ffprobeExe))
-// {
-//     throw new FileNotFoundException($"FFmpeg executables not found in: {ffmpegDir}");
-// }
+if (!File.Exists(ffmpegExe) || !File.Exists(ffprobeExe))
+{
+    throw new FileNotFoundException($"FFmpeg executables not found in: {ffmpegDir}");
+}
 
-// FFMpegCore.GlobalFFOptions.Configure(new FFMpegCore.FFOptions
-// {
-//     BinaryFolder = ffmpegDir,
-//     TemporaryFilesFolder = Path.GetTempPath()
-// });
+FFMpegCore.GlobalFFOptions.Configure(new FFMpegCore.FFOptions
+{
+    BinaryFolder = ffmpegDir,
+    TemporaryFilesFolder = Path.GetTempPath()
+});
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -64,59 +64,61 @@ builder.Services
     .AddRedisServices(builder.Configuration)
     .AddApiServices();
 // Inside Program.cs, after all AddServices calls:
-// Debug step by step - Inside Program.cs, after all AddServices calls:
-var tempServiceProvider = builder.Services.BuildServiceProvider();
-try
-{
-    Console.WriteLine("Testing service resolution step by step...");
-    
-    // Test 1: Basic logger
-    var logger = tempServiceProvider.GetRequiredService<ILogger<SharedPolicyFactory>>();
-    Console.WriteLine("✓ ILogger<SharedPolicyFactory> resolved");
-    
-    // Test 2: INotificationService
-    // try
-    // {
-    //     var notificationService = tempServiceProvider.GetRequiredService<INotificationService>();
-    //     Console.WriteLine("✓ INotificationService resolved");
-    // }
-    // catch (Exception ex)
-    // {
-    //     Console.WriteLine($"✗ INotificationService failed: {ex.Message}");
-    //     throw; // This is likely the root cause
-    // }
-    
-    // Test 3: SharedPolicyFactory
-    var policyFactory = tempServiceProvider.GetRequiredService<SharedPolicyFactory>();
-    Console.WriteLine("✓ SharedPolicyFactory resolved");
-    
-    // Test 4: Redis config
-    var redisConfig = tempServiceProvider.GetRequiredService<IOptions<MyTts.Config.RedisConfig>>();
-    Console.WriteLine("✓ RedisConfig resolved");
+//builder.Services.AddSingleton<SharedPolicyFactory>();
 
-    // Test 5: Finally test RedisCacheService
-    var redisCacheService = tempServiceProvider.GetRequiredService<IRedisCacheService>();
-    Console.WriteLine("✓ IRedisCacheService resolved successfully!");
+// Debug step by step - Inside Program.cs, after all AddServices calls:
+//var tempServiceProvider = builder.Services.BuildServiceProvider();
+//try
+//{
+//    Console.WriteLine("Testing service resolution step by step...");
     
-}
-catch (Exception ex)
-{
-    Console.WriteLine($"✗ Service resolution failed: {ex.Message}");
+//    // Test 1: Basic logger
+//    var logger = tempServiceProvider.GetRequiredService<ILogger<SharedPolicyFactory>>();
+//    Console.WriteLine("✓ ILogger<SharedPolicyFactory> resolved");
     
-    // Print inner exception details
-    var innerEx = ex.InnerException;
-    while (innerEx != null)
-    {
-        Console.WriteLine($"Inner exception: {innerEx.Message}");
-        innerEx = innerEx.InnerException;
-    }
+//    // Test 2: INotificationService
+//    // try
+//    // {
+//    //     var notificationService = tempServiceProvider.GetRequiredService<INotificationService>();
+//    //     Console.WriteLine("✓ INotificationService resolved");
+//    // }
+//    // catch (Exception ex)
+//    // {
+//    //     Console.WriteLine($"✗ INotificationService failed: {ex.Message}");
+//    //     throw; // This is likely the root cause
+//    // }
     
-    Console.WriteLine($"Stack trace: {ex.StackTrace}");
-}
-finally
-{
-    tempServiceProvider.Dispose();
-}
+//    // Test 3: SharedPolicyFactory
+//    var policyFactory = tempServiceProvider.GetRequiredService<SharedPolicyFactory>();
+//    Console.WriteLine("✓ SharedPolicyFactory resolved");
+    
+//    // Test 4: Redis config
+//    var redisConfig = tempServiceProvider.GetRequiredService<IOptions<MyTts.Config.RedisConfig>>();
+//    Console.WriteLine("✓ RedisConfig resolved");
+
+//    // Test 5: Finally test RedisCacheService
+//    var redisCacheService = tempServiceProvider.GetRequiredService<IRedisCacheService>();
+//    Console.WriteLine("✓ IRedisCacheService resolved successfully!");
+    
+//}
+//catch (Exception ex)
+//{
+//    Console.WriteLine($"✗ Service resolution failed: {ex.Message}");
+    
+//    // Print inner exception details
+//    var innerEx = ex.InnerException;
+//    while (innerEx != null)
+//    {
+//        Console.WriteLine($"Inner exception: {innerEx.Message}");
+//        innerEx = innerEx.InnerException;
+//    }
+    
+//    Console.WriteLine($"Stack trace: {ex.StackTrace}");
+//}
+//finally
+//{
+//    tempServiceProvider.Dispose();
+//}
 var app = builder.Build();
 
 // ✅ SEED ADMIN ROLE & USER HERE

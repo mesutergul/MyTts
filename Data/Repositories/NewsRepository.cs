@@ -25,7 +25,8 @@ namespace MyTts.Data.Repositories
                     (k, h) => new { Konum = k, Haber = h }
                 )
                 .Take(20)
-                .Where(k => k.Haber != null && !ContainsBlockedContent(k.Haber.Summary ?? string.Empty, k.Haber.Id))
+               // .AsEnumerable()
+               // .Where(k => k.Haber != null && !ContainsBlockedContent(k.Haber.Summary ?? string.Empty, k.Haber.Id))
                 .Select(k => new HaberSummaryDto
                 {
                     IlgiId = k.Haber.Id,
@@ -91,21 +92,6 @@ namespace MyTts.Data.Repositories
             if (blockedCategory.Key != null)
             {
                 _logger.LogWarning("Content blocked for ID {Id} due to {Category} policy violation", id, blockedCategory.Key);
-                // Fire and forget notification
-                // _ = Task.Run(async () =>
-                // {
-                //     try
-                //     {
-                //         await _notificationService.SendNotificationAsync(
-                //             "Content Policy Violation",
-                //             $"Content blocked for ID {id} due to {blockedCategory.Key} policy violation",
-                //             NotificationType.Warning);
-                //     }
-                //     catch (Exception ex)
-                //     {
-                //         _logger.LogError(ex, "Failed to send notification for content policy violation for ID {Id}", id);
-                //     }
-                // });
                 return true;
             }
             return false;

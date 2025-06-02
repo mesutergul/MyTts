@@ -1,5 +1,7 @@
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MyTts.Config;
+using MyTts.Config.ServiceConfigurations;
 using MyTts.Services.Interfaces;
 using Polly;
 using StackExchange.Redis;
@@ -20,14 +22,16 @@ namespace MyTts.Services
             IConnectionMultiplexer redis,
             IOptions<RedisConfig> config,
             ILogger<RedisCacheService> logger,
-            ILogger<RedisCircuitBreaker> circuitBreakerLogger,
+            ILogger<RedisCircuitBreaker> loggerCircuit, // Added
+            SharedPolicyFactory policyFactory, // Added
             ResiliencePipeline<RedisValue> retryPolicy)
         {
             _redis = redis;
             _config = config.Value;
             _logger = logger;
             _retryPolicy = retryPolicy;
-            _circuitBreaker = new RedisCircuitBreaker(circuitBreakerLogger);
+            // Updated RedisCircuitBreaker instantiation
+            _circuitBreaker = new RedisCircuitBreaker(loggerCircuit, policyFactory);
 
             if (redis == null || !redis.IsConnected)
             {
@@ -37,7 +41,7 @@ namespace MyTts.Services
             _db = redis.GetDatabase(_config.DatabaseId);
         }
 
-        public async Task<T?> GetAsync<T>(string key, CancellationToken cancellationToken = default)
+public async Task<T?> GetAsync<T>(string key, CancellationToken cancellationToken = default)
         {
             if (_db == null || !_redis.IsConnected)
             {
@@ -45,7 +49,7 @@ namespace MyTts.Services
                 return default;
             }
 
-           return await _circuitBreaker.ExecuteAsync(async () =>
+           return await _circuitBreaker.ExecuteAsync(async (cancellationToken) =>
             {
                 ResiliencePropertyKey<string> OperationKey = new("OperationKey");
                 var context = ResilienceContextPool.Shared.Get(cancellationToken);
@@ -87,7 +91,7 @@ namespace MyTts.Services
                 return;
             }
 
-            await _circuitBreaker.ExecuteAsync(async () =>
+            await _circuitBreaker.ExecuteAsync(async (CancellationToken) =>
             {
                 var serializedValue = JsonSerializer.Serialize(value);
                 await _db.StringSetAsync(
@@ -106,7 +110,7 @@ namespace MyTts.Services
                 return false;
             }
 
-            return await _circuitBreaker.ExecuteAsync(async () =>
+            return await _circuitBreaker.ExecuteAsync(async (cancellationToken) =>
             {
                 return await _db.KeyDeleteAsync(GetKey(key));
             }, $"REMOVE_{key}");
@@ -120,7 +124,7 @@ namespace MyTts.Services
                 return false;
             }
 
-            return await _circuitBreaker.ExecuteAsync(async () =>
+            return await _circuitBreaker.ExecuteAsync(async (cancellationToken) =>
             {
                 return await _db.KeyExistsAsync(GetKey(key));
             }, $"EXISTS_{key}");

@@ -95,7 +95,62 @@ namespace MyTts.Config.ServiceConfigurations
         #endregion
 
         #region Email Policies
-        public  ResiliencePipeline<T> GetEmailRetryPolicy<T>(
+        public ResiliencePipeline<T> GetEmailPolicy<T>()
+        {
+            return new ResiliencePipelineBuilder<T>()
+                .AddRetry(new RetryStrategyOptions<T>
+                {
+                    ShouldHandle = args => new ValueTask<bool>(
+                        args.Outcome.Exception is SmtpException ||
+                        args.Outcome.Exception is InvalidOperationException),
+                    MaxRetryAttempts = 3,
+                    BackoffType = DelayBackoffType.Exponential,
+                    Delay = TimeSpan.FromSeconds(2),
+                    UseJitter = true,
+                    OnRetry = args =>
+                    {
+                        var recipient = args.Context?.Properties.TryGetValue(
+                            new ResiliencePropertyKey<string>("recipient"),
+                            out var value) == true ? value : "unknown";
+                        _logger.LogWarning(args.Outcome.Exception,
+                            "Email retry {RetryCount} after {Delay}ms for recipient {Recipient}",
+                            args.AttemptNumber,
+                            args.RetryDelay.TotalMilliseconds,
+                            recipient);
+                        return ValueTask.CompletedTask;
+                    }
+                })
+                .AddCircuitBreaker(new CircuitBreakerStrategyOptions<T>
+                {
+                    ShouldHandle = args => new ValueTask<bool>(
+                        args.Outcome.Exception is SmtpException ||
+                        args.Outcome.Exception is InvalidOperationException),
+                    FailureRatio = 0.5,
+                    MinimumThroughput = 2,
+                    SamplingDuration = TimeSpan.FromMinutes(5),
+                    BreakDuration = TimeSpan.FromMinutes(5),
+                    OnOpened = args =>
+                    {
+                        _logger.LogWarning(args.Outcome.Exception,
+                            "Email circuit breaker opened for {Duration}m",
+                            5);
+                        return ValueTask.CompletedTask;
+                    },
+                    OnClosed = _ =>
+                    {
+                        _logger.LogInformation("Email circuit breaker reset");
+                        return ValueTask.CompletedTask;
+                    },
+                    OnHalfOpened = _ =>
+                    {
+                        _logger.LogInformation("Email circuit breaker half-open - testing service health");
+                        return ValueTask.CompletedTask;
+                    }
+                })
+                .Build();
+        }
+
+        public ResiliencePipeline<T> GetEmailRetryPolicy<T>(
             int maxRetries = 3,
             int retryDelaySeconds = 2)
         {
@@ -262,8 +317,9 @@ namespace MyTts.Config.ServiceConfigurations
                 })
             .Build();
         }
-
-        public  ResiliencePipeline<RedisValue> GetRedisRetryPolicy(int maxRetries, int retryDelayMilliseconds)
+        #endregion
+        #region Redis Policies
+        public ResiliencePipeline<RedisValue> GetRedisRetryPolicy(int maxRetries, int retryDelayMilliseconds)
         {
             return new ResiliencePipelineBuilder<RedisValue>()
                 .AddRetry(new RetryStrategyOptions<RedisValue>
@@ -289,7 +345,53 @@ namespace MyTts.Config.ServiceConfigurations
                 })
                 .Build();
         }
-        
+        public ResiliencePipeline<T> GetRedisCircuitBreakerPolicy<T>(
+            double failureThreshold = 0.5,
+            int minimumThroughput = 5,
+            int samplingDurationSeconds = 60,
+            int breakDurationSeconds = 30)
+        {
+            return new ResiliencePipelineBuilder<T>()
+                .AddCircuitBreaker(new CircuitBreakerStrategyOptions<T>
+                {
+                    ShouldHandle = args => new ValueTask<bool>(
+                        args.Outcome.Exception is RedisConnectionException ||
+                        args.Outcome.Exception is TimeoutException
+                    ),
+                    FailureRatio = failureThreshold,
+                    MinimumThroughput = minimumThroughput,
+                    SamplingDuration = TimeSpan.FromSeconds(samplingDurationSeconds),
+                    BreakDuration = TimeSpan.FromSeconds(breakDurationSeconds),
+                    OnOpened = async args =>
+                    {
+                        _logger.LogWarning(args.Outcome.Exception,
+                            "Redis circuit breaker opened for {Duration}s",
+                            breakDurationSeconds);
+                        await TrySendNotificationAsync(
+                            "Redis Circuit Breaker Opened",
+                            $"Service unavailable for {breakDurationSeconds}s",
+                            NotificationType.Warning);
+                    },
+                    OnClosed = async args =>
+                    {
+                        _logger.LogInformation("Redis circuit breaker reset");
+                        await TrySendNotificationAsync(
+                            "Redis Circuit Breaker Reset",
+                            "Service is healthy again",
+                            NotificationType.Success);
+                    },
+                    OnHalfOpened = async args =>
+                    {
+                        _logger.LogInformation("Redis circuit breaker half-open - testing service health");
+                        await TrySendNotificationAsync(
+                            "Redis Circuit Breaker Half-Open",
+                            "Testing service health",
+                            NotificationType.Info);
+                    }
+                })
+            .Build();
+        }
+
         #endregion
     }
 

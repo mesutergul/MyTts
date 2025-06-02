@@ -3,9 +3,6 @@ using MyTts.Services.Clients;
 using MyTts.Services.Interfaces;
 using MyTts.Services;
 using ElevenLabs;
-using Polly;
-using Polly.CircuitBreaker;
-using Polly.Retry;
 
 namespace MyTts.Config.ServiceConfigurations;
 

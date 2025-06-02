@@ -92,6 +92,7 @@ public static class RedisServiceConfig
                 var logger = sp.GetRequiredService<ILogger<RedisCacheService>>();
                 var nullLogger = sp.GetRequiredService<ILogger<NullRedisCacheService>>();
                 var config = sp.GetRequiredService<IOptions<MyTts.Config.RedisConfig>>();
+                var policyFactory = sp.GetRequiredService<SharedPolicyFactory>();
                 var retryPolicy = sp.GetRequiredService<ResiliencePipeline<RedisValue>>();
 
                 if (connection == null || !connection.IsConnected)
@@ -103,7 +104,7 @@ public static class RedisServiceConfig
                 try
                 {
                     var circuitBreakerLogger = sp.GetRequiredService<ILogger<RedisCircuitBreaker>>();
-                    return new RedisCacheService(connection, config, logger, circuitBreakerLogger, retryPolicy);
+                    return new RedisCacheService(connection, config, logger, circuitBreakerLogger, policyFactory, retryPolicy);
                 }
                 catch (Exception ex)
                 {
