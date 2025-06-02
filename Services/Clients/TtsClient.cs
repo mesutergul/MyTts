@@ -19,12 +19,14 @@ using Polly.Retry;
 using Polly.CircuitBreaker;
 using System.Threading;
 using MyTts.Config.ServiceConfigurations;
+using Microsoft.Extensions.Logging;
 
 namespace MyTts.Services.Clients
 {
     public class TtsClient : ITtsClient, IAsyncDisposable
     {
         private readonly ElevenLabsClient _elevenLabsClient;
+        private readonly ResilientElevenLabsClient _resilientElevenLabsClient;
         private readonly StorageClient? _googleStorageClient;
         private readonly ICloudTtsClient _geminiTtsClient;
         private readonly IRedisCacheService? _cache;
@@ -47,6 +49,7 @@ namespace MyTts.Services.Clients
         public TtsClient(
             ElevenLabsClient elevenLabsClient,
             ICloudTtsClient geminiTtsClient,
+            ResilientElevenLabsClient resilientElevenLabsClient,
             IOptions<ElevenLabsConfig> config,
             IOptions<StorageConfiguration> storageConfig,
             ILocalStorageClient storage,
@@ -57,6 +60,7 @@ namespace MyTts.Services.Clients
             ILogger<TtsClient> logger)
         {
             _elevenLabsClient = elevenLabsClient ?? throw new ArgumentNullException(nameof(elevenLabsClient));
+            _resilientElevenLabsClient = resilientElevenLabsClient ?? throw new ArgumentNullException(nameof(resilientElevenLabsClient));
             _config = config ?? throw new ArgumentNullException(nameof(config));
             _storageConfig = storageConfig?.Value ?? throw new ArgumentNullException(nameof(storageConfig));
             _localStorageClient = storage ?? throw new ArgumentNullException(nameof(storage));
@@ -154,27 +158,10 @@ namespace MyTts.Services.Clients
 
             try
             {
-                //var simdi = DateTime.Now;
-                //var anchorText = TurkishDateTimeText.GunlukSeslendirmeMetniOlustur(simdi);
-                //var anchor = new HaberSummaryDto()
-                //{
-                //    Baslik = "Seslendirme",
-                //    IlgiId = TurkishDateTimeText.GetCompactTimeId(simdi),
-                //    Ozet = anchorText
-                //};
-                 
-
                 // Process needed and saved news in parallel
                 var processingTasks = new List<Task<(int id, AudioProcessor Processor)>>(
                     contentsNeededList.Count + contentsSavedList.Count);
-                //{
-                //    ProcessContentAsync(
-                //    anchor.Ozet,
-                //    anchor.IlgiId,
-                //    language,
-                //    fileType,
-                //    cancellationToken)
-                //};
+
                 // Add tasks for needed news
                 processingTasks.AddRange(contentsNeededList.Select(content =>
                     ProcessContentAsync(
@@ -190,15 +177,15 @@ namespace MyTts.Services.Clients
 
                 // Wait for all tasks to complete
                 var results = await Task.WhenAll(processingTasks);
+               
                 // Create processors dictionary for efficient lookup
                 var processedFiles = results.ToDictionary(r => r.id, r => r.Processor);
-                // var AnchorProcessor = processedFiles[anchor.IlgiId];
+               
                 // Build final list in original order
                 var processors = allNewsList
                     .Where(news => processedFiles.ContainsKey(news.IlgiId))
                     .Select(news => processedFiles[news.IlgiId])
                     .ToList();
-                //  processors.Insert(0, AnchorProcessor);
 
                 if (processors.Count > 0)
                 {
