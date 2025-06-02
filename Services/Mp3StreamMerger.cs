@@ -3,25 +3,31 @@ using FFMpegCore.Pipes;
 using MyTts.Models;
 using MyTts.Services.Interfaces;
 using MyTts.Helpers;
-using System.Threading;
 using Polly;
+using MyTts.Config.ServiceConfigurations;
 
 namespace MyTts.Services
 {
     public sealed class Mp3StreamMerger : IMp3StreamMerger, IAsyncDisposable
     {
         private readonly ILogger<Mp3StreamMerger> _logger;
-        private static readonly SemaphoreSlim _mergeSemaphore = new(MaxConcurrentMerges);
+        private readonly CombinedRateLimiter _rateLimiter;
+        private readonly ResiliencePipeline<string> _mergePipeline;
         private bool _disposed;
         private const int BufferSize = 81920; // 80KB buffer
         private const int MaxRetries = 3;
-        private const int MaxConcurrentMerges = 2; // Limit concurrent merge operations
         private const int RetryDelayMs = 2000; // Base delay for retries
         private const int ProcessTimeoutMs = 30000; // 30 second timeout for FFmpeg process
 
-        public Mp3StreamMerger(ILogger<Mp3StreamMerger> logger, IConfiguration configuration)
+        public Mp3StreamMerger(
+            ILogger<Mp3StreamMerger> logger, 
+            IConfiguration configuration,
+            CombinedRateLimiter rateLimiter,
+            SharedPolicyFactory policyFactory)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _rateLimiter = rateLimiter ?? throw new ArgumentNullException(nameof(rateLimiter));
+            _mergePipeline = policyFactory.CreatePipeline<string>(MaxRetries, RetryDelayMs / 1000);
         }
 
         public async Task<string> MergeMp3ByteArraysAsync(
@@ -48,18 +54,19 @@ namespace MyTts.Services
                     return outputFilePath;
                 }
 
-                await _mergeSemaphore.WaitAsync(cancellationToken);
+                // Create a linked token with timeout for rate limiting
+                var linkedToken = _rateLimiter.CreateLinkedTokenWithTimeout(cancellationToken);
+
+                // Acquire rate limit before starting the merge operation
+                await _rateLimiter.AcquireAsync(linkedToken);
                 try
                 {
-                    using var outputStream = new MemoryStream();
-                    await MergeAudioProcessorsAsync(audioProcessors, outputStream, outputFilePath, fileType, breakAudioPath, startAudioPath, endAudioPath, cancellationToken).ConfigureAwait(false);
-
-                    outputStream.Position = 0;
-                    return outputFilePath;
+                    return await MergeAudioProcessorsAsync(audioProcessors, outputFilePath, fileType, breakAudioPath, startAudioPath, endAudioPath, linkedToken).ConfigureAwait(false);
                 }
                 finally
                 {
-                    _mergeSemaphore.Release();
+                    // Always release the rate limiter
+                    _rateLimiter.Release();
                 }
             }
             catch (OperationCanceledException)
@@ -74,9 +81,8 @@ namespace MyTts.Services
             }
         }
 
-        private async Task MergeAudioProcessorsAsync(
+        private async Task<string> MergeAudioProcessorsAsync(
             IReadOnlyList<AudioProcessor> processors,
-            MemoryStream outputStream,
             string filePath,
             AudioType fileType,
             string breakAudioPath,
@@ -87,37 +93,34 @@ namespace MyTts.Services
             var streamPipeSources = new List<StreamPipeSource>();
             var streamsToDispose = new List<Stream>();
             var codec = fileType.Equals(AudioType.Mp3) ? "libmp3lame" : "aac";
-            var retryCount = 0;
-            var lastException = default(Exception);
 
             try
             {
-                while (retryCount < MaxRetries)
+                var context = ResilienceContextPool.Shared.Get(cancellationToken);
+                try
                 {
-                    try
+                    context.Properties.Set(new ResiliencePropertyKey<string>("OperationKey"), "MergeAudioProcessors");
+                    
+                    return await _mergePipeline.ExecuteAsync(async (ctx) =>
                     {
-                        // Check cancellation before starting the operation
-                        cancellationToken.ThrowIfCancellationRequested();
-
-                        var ffmpegArgs = await CreateFfmpegArgumentsAsync(processors, streamPipeSources, streamsToDispose, breakAudioPath, startAudioPath, endAudioPath, cancellationToken).ConfigureAwait(false);
-
-                        int totalInputs = !string.IsNullOrEmpty(breakAudioPath) ? processors.Count * 2 - 2 : processors.Count;
-                        totalInputs = !string.IsNullOrEmpty(startAudioPath) ? totalInputs + 1 : totalInputs;
-                        totalInputs = !string.IsNullOrEmpty(endAudioPath) ? totalInputs + 1 : totalInputs;
-                        var filterComplex = CreateFilterComplexCommand(totalInputs);
-
-                        var ffmpegOptions = new FFOptions
-                        {
-                            BinaryFolder = Path.Combine(AppContext.BaseDirectory, "ffmpeg-bin"),
-                            TemporaryFilesFolder = Path.GetTempPath()
-                        };
-
-                        // Create a linked cancellation token with timeout
-                        using var timeoutCts = new CancellationTokenSource(ProcessTimeoutMs);
-                        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
-
                         try
                         {
+                            // Check cancellation before starting the operation
+                            cancellationToken.ThrowIfCancellationRequested();
+
+                            var ffmpegArgs = await CreateFfmpegArgumentsAsync(processors, streamPipeSources, streamsToDispose, breakAudioPath, startAudioPath, endAudioPath, cancellationToken).ConfigureAwait(false);
+
+                            int totalInputs = !string.IsNullOrEmpty(breakAudioPath) ? processors.Count * 2 - 2 : processors.Count;
+                            totalInputs = !string.IsNullOrEmpty(startAudioPath) ? totalInputs + 1 : totalInputs;
+                            totalInputs = !string.IsNullOrEmpty(endAudioPath) ? totalInputs + 1 : totalInputs;
+                            var filterComplex = CreateFilterComplexCommand(totalInputs);
+
+                            var ffmpegOptions = new FFOptions
+                            {
+                                TemporaryFilesFolder = Path.GetTempPath()
+                            };
+
+                            using var outputStream = new MemoryStream();
                             await ffmpegArgs
                                 .OutputToPipe(
                                     new StreamPipeSink(outputStream),
@@ -127,7 +130,7 @@ namespace MyTts.Services
                                         .WithCustomArgument($"-f {fileType}")
                                         .WithCustomArgument(filterComplex)
                                         .WithCustomArgument("-y"))
-                                .CancellableThrough(linkedCts.Token)
+                                .CancellableThrough(cancellationToken)
                                 .ProcessAsynchronously(true, ffmpegOptions);
 
                             if (outputStream.Length > 0)
@@ -144,67 +147,24 @@ namespace MyTts.Services
                                     bufferSize: BufferSize,
                                     FileOptions.Asynchronous | FileOptions.SequentialScan))
                                 {
-                                    try 
-                                    {
-                                        await outputStream.CopyToAsync(fileStream, BufferSize, linkedCts.Token).ConfigureAwait(false);
-                                        await fileStream.FlushAsync(linkedCts.Token);
-                                        return; // Success, exit the retry loop
-                                    }
-                                    catch (IOException ex)
-                                    {
-                                        _logger.LogError(ex, "Error writing to file {FilePath}", fullPath);
-                                        throw new IOException($"Failed to write merged file: {ex.Message}", ex);
-                                    }
+                                    await outputStream.CopyToAsync(fileStream, BufferSize, cancellationToken);
                                 }
+                                return fullPath;
                             }
-                            else
-                            {
-                                _logger.LogWarning("FFmpeg process completed but outputStream is empty");
-                                throw new IOException("FFmpeg process completed but output stream is empty");
-                            }
+                            throw new InvalidOperationException("FFmpeg process completed but output stream is empty");
                         }
-                        catch (OperationCanceledException) when (timeoutCts.Token.IsCancellationRequested)
+                        catch (Exception)
                         {
-                            _logger.LogWarning("FFmpeg process timed out after {Timeout}ms", ProcessTimeoutMs);
-                            throw new TimeoutException($"FFmpeg process timed out after {ProcessTimeoutMs}ms");
-                        }
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        _logger.LogInformation("Merge operation cancelled during attempt {RetryCount}", retryCount + 1);
-                        throw;
-                    }
-                    catch (Exception ex) when (retryCount < MaxRetries - 1)
-                    {
-                        lastException = ex;
-                        retryCount++;
-                        var delay = RetryDelayMs * (int)Math.Pow(2, retryCount - 1); // Exponential backoff
-                        _logger.LogWarning(ex, "Error during merge attempt {RetryCount}, retrying in {Delay}ms", retryCount, delay);
-                        
-                        try
-                        {
-                            await Task.Delay(delay, cancellationToken);
-                        }
-                        catch (OperationCanceledException)
-                        {
-                            _logger.LogInformation("Retry delay cancelled");
+                            // Clean up resources before retry
+                            await CleanupStreamsAsync(streamPipeSources, streamsToDispose);
                             throw;
                         }
-
-                        // Clean up resources before retry
-                        foreach (var stream in streamsToDispose)
-                        {
-                            try { await stream.DisposeAsync(); } catch { }
-                        }
-                        streamsToDispose.Clear();
-                        streamPipeSources.Clear();
-                        outputStream.Position = 0;
-                        outputStream.SetLength(0);
-                    }
+                    }, context);
                 }
-
-                // If we get here, all retries failed
-                throw new IOException($"Failed to merge audio files after {MaxRetries} attempts", lastException);
+                finally
+                {
+                    ResilienceContextPool.Shared.Return(context);
+                }
             }
             catch (OperationCanceledException)
             {
@@ -218,30 +178,37 @@ namespace MyTts.Services
             }
             finally
             {
-                // Ensure all resources are cleaned up
-                foreach (var source in streamPipeSources)
+                await CleanupStreamsAsync(streamPipeSources, streamsToDispose);
+            }
+        }
+
+        private async Task CleanupStreamsAsync(List<StreamPipeSource> streamPipeSources, List<Stream> streamsToDispose)
+        {
+            foreach (var source in streamPipeSources)
+            {
+                try
                 {
-                    try
-                    {
-                        ((IDisposable)source.Source).Dispose();
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Error disposing StreamPipeSource");
-                    }
+                    ((IDisposable)source.Source).Dispose();
                 }
-                foreach (var stream in streamsToDispose)
+                catch (Exception ex)
                 {
-                    try
-                    {
-                        await stream.DisposeAsync();
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Error disposing Stream");
-                    }
+                    _logger.LogWarning(ex, "Error disposing StreamPipeSource");
                 }
             }
+            streamPipeSources.Clear();
+
+            foreach (var stream in streamsToDispose)
+            {
+                try
+                {
+                    await stream.DisposeAsync();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Error disposing Stream");
+                }
+            }
+            streamsToDispose.Clear();
         }
 
         private string CreateFilterComplexCommand(int totalInputs)
@@ -298,12 +265,18 @@ namespace MyTts.Services
             return args;
         }
 
+        // Custom exception for FFmpeg errors
+        public class FFmpegException : Exception
+        {
+            public FFmpegException(string message) : base(message) { }
+            public FFmpegException(string message, Exception innerException) : base(message, innerException) { }
+        }
+
         public async ValueTask DisposeAsync()
         {
             if (!_disposed)
             {
                 _disposed = true;
-                // Don't dispose the static semaphore
             }
             await ValueTask.CompletedTask;
         }

@@ -249,6 +249,16 @@ namespace MyTts.Config.ServiceConfigurations
         #endregion
 
         #region TTS Policies
+        public ResiliencePipeline<T> CreatePipeline<T>(int retryCount = 3, int baseDelaySeconds = 2)
+        {
+            var retryPolicy = GetTtsRetryPolicy<T>(retryCount, baseDelaySeconds);
+            var circuitBreakerPolicy = GetTtsCircuitBreakerPolicy<T>();
+            return new ResiliencePipelineBuilder<T>()
+                .AddPipeline(retryPolicy)
+                .AddPipeline(circuitBreakerPolicy)
+                .Build();
+        }
+
         public  ResiliencePipeline<T> GetTtsRetryPolicy<T>(
             int retryCount = 3,
             int baseDelaySeconds = 2)

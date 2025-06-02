@@ -5,11 +5,14 @@ using MyTts.Services;
 using ElevenLabs;
 using Polly;
 using MyTts.Helpers;
+using ElevenLabs.Voices;
 
 namespace MyTts.Config.ServiceConfigurations;
 
 public static class ElevenLabsServiceConfig
 {
+    private const string Mp3StreamMergerRateLimiterKey = "Mp3StreamMergerRateLimiter";
+
     public static IServiceCollection AddElevenLabsServices(this IServiceCollection services, IConfiguration configuration)
     {
         // Configure ElevenLabs options with validation
@@ -18,10 +21,16 @@ public static class ElevenLabsServiceConfig
             .ValidateDataAnnotations()
             .ValidateOnStart();
 
-        // Register rate limiter
-        services.AddSingleton(new CombinedRateLimiter(
+        // Register shared rate limiter for ElevenLabs API
+        services.AddSingleton<CombinedRateLimiter>(sp => new CombinedRateLimiter(
             maxConcurrentRequests: 15,
             requestsPerSecond: 15.0
+        ));
+
+        // Register rate limiter factory for Mp3StreamMerger
+        services.AddKeyedSingleton<Func<CombinedRateLimiter>>(Mp3StreamMergerRateLimiterKey, (sp, key) => () => new CombinedRateLimiter(
+            maxConcurrentRequests: 2,  // Match MaxConcurrentMerges
+            requestsPerSecond: 5.0     // Lower rate for file operations
         ));
 
         // Register ElevenLabs client with proper initialization
@@ -47,21 +56,26 @@ public static class ElevenLabsServiceConfig
             var auth = new ElevenLabsAuthentication(config.ApiKey);
             var client = new ElevenLabsClient(auth, settings);
 
-            // Apply retry and circuit breaker policies
-            var retryPolicy = policyFactory.GetTtsRetryPolicy<Services.VoiceClip>();
-            var circuitBreakerPolicy = policyFactory.GetTtsCircuitBreakerPolicy<Services.VoiceClip>();
-            var pipeline = new ResiliencePipelineBuilder<Services.VoiceClip>()
-                .AddPipeline(retryPolicy)
-                .AddPipeline(circuitBreakerPolicy)
-                .Build();
+            // Create separate pipelines for Voice and VoiceClip
+            var voicePipeline = policyFactory.CreatePipeline<Voice>();
+            var voiceClipPipeline = policyFactory.CreatePipeline<MyTts.Services.VoiceClip>();
 
             return new ResilientElevenLabsClient(
                 client, 
-                pipeline, 
+                voiceClipPipeline,
+                voicePipeline,
                 sp.GetRequiredService<ILogger<ResilientElevenLabsClient>>(),
                 rateLimiter);
         });
-        
+
+        // Register Mp3StreamMerger with its specific rate limiter
+        services.AddScoped<IMp3StreamMerger>(sp => new Mp3StreamMerger(
+            sp.GetRequiredService<ILogger<Mp3StreamMerger>>(),
+            sp.GetRequiredService<IConfiguration>(),
+            sp.GetRequiredKeyedService<Func<CombinedRateLimiter>>(Mp3StreamMergerRateLimiterKey)(),
+            sp.GetRequiredService<SharedPolicyFactory>()
+        ));
+
         return services;
     }
 } 

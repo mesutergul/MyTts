@@ -15,17 +15,13 @@ using MyTts.Helpers;
 using MyTts.Storage.Interfaces;
 using MyTts.Services.Interfaces;
 using Polly;
-using Polly.Retry;
-using Polly.CircuitBreaker;
-using System.Threading;
 using MyTts.Config.ServiceConfigurations;
-using Microsoft.Extensions.Logging;
 
 namespace MyTts.Services.Clients
 {
     public class TtsClient : ITtsClient, IAsyncDisposable
     {
-        private readonly ElevenLabsClient _elevenLabsClient;
+        // private readonly ElevenLabsClient _elevenLabsClient;
         private readonly ResilientElevenLabsClient _resilientElevenLabsClient;
         private readonly StorageClient? _googleStorageClient;
         private readonly ICloudTtsClient _geminiTtsClient;
@@ -34,7 +30,6 @@ namespace MyTts.Services.Clients
         private readonly ILogger<TtsClient> _logger;
         private readonly IMp3StreamMerger _mp3StreamMerger;
         private readonly ILocalStorageClient _localStorageClient;
-        private readonly SemaphoreSlim _semaphore;
         private readonly string? _bucketName;
         private readonly JsonSerializerOptions _jsonOptions;
         private readonly StorageConfiguration _storageConfig;
@@ -47,7 +42,6 @@ namespace MyTts.Services.Clients
         private readonly SharedPolicyFactory _sharedPolicyFactory;
 
         public TtsClient(
-            ElevenLabsClient elevenLabsClient,
             ICloudTtsClient geminiTtsClient,
             ResilientElevenLabsClient resilientElevenLabsClient,
             IOptions<ElevenLabsConfig> config,
@@ -59,7 +53,6 @@ namespace MyTts.Services.Clients
             SharedPolicyFactory sharedPolicyFactory,
             ILogger<TtsClient> logger)
         {
-            _elevenLabsClient = elevenLabsClient ?? throw new ArgumentNullException(nameof(elevenLabsClient));
             _resilientElevenLabsClient = resilientElevenLabsClient ?? throw new ArgumentNullException(nameof(resilientElevenLabsClient));
             _config = config ?? throw new ArgumentNullException(nameof(config));
             _storageConfig = storageConfig?.Value ?? throw new ArgumentNullException(nameof(storageConfig));
@@ -70,7 +63,6 @@ namespace MyTts.Services.Clients
             _notificationService = notificationService ?? throw new ArgumentNullException(nameof(notificationService));
             _sharedPolicyFactory = sharedPolicyFactory ?? throw new ArgumentNullException(nameof(sharedPolicyFactory));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _semaphore = new SemaphoreSlim(MaxConcurrentOperations);
             _voiceCache = new ConcurrentDictionary<string, Voice>();
             _jsonOptions = new JsonSerializerOptions
             {
@@ -272,7 +264,6 @@ namespace MyTts.Services.Clients
         ResiliencePropertyKey<string> OperationKey = new("OperationKey");
         var context = ResilienceContextPool.Shared.Get(cancellationToken);
         context.Properties.Set(OperationKey, "MergeOperation");
-
         try
         {
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -328,24 +319,16 @@ namespace MyTts.Services.Clients
 
             try
             {
-                await _semaphore.WaitAsync(cancellationToken);
-                try
-                {
-                    _logger.LogInformation("Processing news ID {NewsId} with Gemini: {Title}", id, text);
-                    // Assuming 'language' parameter is compatible with Gemini (e.g., "en-US")
-                    // VoiceName can be null to use default from config, or specify one if API supports
-                    var audioBytes = await _geminiTtsClient.SynthesizeSpeechAsync(
-                        text,
-                        "tr-TR", // Assuming Turkish for this example, adjust as needed
-                        "tr-TR-Standard-A", // Or a specific voice/model name if available and configurable
-                        cancellationToken);
-                    AudioProcessor audioProcessor = new AudioProcessor(new VoiceClip(audioBytes));
-                    return (id, audioProcessor);
-                }
-                finally
-                {
-                    _semaphore.Release();
-                }
+                _logger.LogInformation("Processing news ID {NewsId} with Gemini: {Title}", id, text);
+                // Assuming 'language' parameter is compatible with Gemini (e.g., "en-US")
+                // VoiceName can be null to use default from config, or specify one if API supports
+                var audioBytes = await _geminiTtsClient.SynthesizeSpeechAsync(
+                    text,
+                    "tr-TR", // Assuming Turkish for this example, adjust as needed
+                    "tr-TR-Standard-A", // Or a specific voice/model name if available and configurable
+                    cancellationToken);
+                AudioProcessor audioProcessor = new AudioProcessor(new VoiceClip(audioBytes));
+                return (id, audioProcessor);
             }
             catch (Exception ex)
             {
@@ -360,66 +343,56 @@ namespace MyTts.Services.Clients
 
             try
             {
-                await _semaphore.WaitAsync(cancellationToken);
-                try
-                {
                     // Get the voice configuration for the specified language
-                    if (_config.Value.Feed == null || !_config.Value.Feed.TryGetValue(language, out var languageConfig))
-                    {
-                        throw new InvalidOperationException($"No voice configuration found for language: {language}");
-                    }
-
-                    if (languageConfig.Voices == null || !languageConfig.Voices.Any())
-                    {
-                        throw new InvalidOperationException($"No voices configured for language: {language}");
-                    }
-
-                    // Get a random voice for the language
-                    var voices = languageConfig.Voices.ToList();
-                    var randomVoice = voices[_random.Value!.Next(voices.Count)];
-                    var voiceId = randomVoice.Value;
-                    // "Gulsu": "jbJMQWv1eS4YjQ6PCcn6",
-                    _logger.LogInformation("Selected voice {VoiceName} ({VoiceId}) for language {Language}",
-                        randomVoice.Key, voiceId, language);
-
-                    // Try to get voice from cache first
-                    var voice = await GetOrFetchVoiceAsync(voiceId, id, cancellationToken);
-                    var request = await CreateTtsRequestAsync(voice, text);
-
-                    // Generate audio clip from ElevenLabs with retry and circuit breaker policies
-                    var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-                    var voiceClip = await ExecuteWithPoliciesAsync(
-                        () => _elevenLabsClient.TextToSpeechEndpoint.TextToSpeechAsync(request, null, cancellationToken),
-                        id, cancellationToken);
-                    stopwatch.Stop();
-
-                    _logger.LogInformation(
-                        "Generated audio clip in {ElapsedMilliseconds}ms for text length {TextLength}",
-                        stopwatch.ElapsedMilliseconds,
-                        text.Length);
-
-                    var audioProcessor = new AudioProcessor(voiceClip);
-
-                    // Launch all I/O-bound tasks in parallel
-                    await Task.WhenAll(
-                        SaveLocallyAsync(audioProcessor, localPath, cancellationToken),
-                        UploadToCloudAsync(audioProcessor, StoragePathHelper.GetStorageKey(id), cancellationToken),
-                        StoreMetadataRedisAsync(id, text, localPath, StoragePathHelper.GetStorageKey(id), cancellationToken)
-                    );
-
-                    _logger.LogInformation("Processed content {Id}: {LocalPath}", id, localPath);
-
-                    await _notificationService.SendNotificationAsync(
-                        "Content Processed Successfully",
-                        $"Successfully processed content {id} for language {language}",
-                        NotificationType.Success);
-
-                    return (id, audioProcessor);
-                }
-                finally
+                if (_config.Value.Feed == null || !_config.Value.Feed.TryGetValue(language, out var languageConfig))
                 {
-                    _semaphore.Release();
+                    throw new InvalidOperationException($"No voice configuration found for language: {language}");
                 }
+
+                if (languageConfig.Voices == null || !languageConfig.Voices.Any())
+                {
+                    throw new InvalidOperationException($"No voices configured for language: {language}");
+                }
+
+                // Get a random voice for the language
+                var voices = languageConfig.Voices.ToList();
+                var randomVoice = voices[_random.Value!.Next(voices.Count)];
+                var voiceId = randomVoice.Value;
+                // "Gulsu": "jbJMQWv1eS4YjQ6PCcn6",
+                _logger.LogInformation("Selected voice {VoiceName} ({VoiceId}) for language {Language}",
+                    randomVoice.Key, voiceId, language);
+
+                // Try to get voice from cache first
+                var voice = await GetOrFetchVoiceAsync(voiceId, id, cancellationToken);
+                var request = await CreateTtsRequestAsync(voice, text);
+
+                // Generate audio clip from ElevenLabs with retry and circuit breaker policies
+                var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+                var voiceClip = await _resilientElevenLabsClient.TextToSpeechAsync(request, voiceId, cancellationToken);
+                stopwatch.Stop();
+
+                _logger.LogInformation(
+                    "Generated audio clip in {ElapsedMilliseconds}ms for text length {TextLength}",
+                    stopwatch.ElapsedMilliseconds,
+                    text.Length);
+
+                var audioProcessor = new AudioProcessor(voiceClip);
+
+                // Launch all I/O-bound tasks in parallel
+                await Task.WhenAll(
+                    SaveLocallyAsync(audioProcessor, localPath, cancellationToken),
+                    UploadToCloudAsync(audioProcessor, StoragePathHelper.GetStorageKey(id), cancellationToken),
+                    StoreMetadataRedisAsync(id, text, localPath, StoragePathHelper.GetStorageKey(id), cancellationToken)
+                );
+
+                _logger.LogInformation("Processed content {Id}: {LocalPath}", id, localPath);
+
+                await _notificationService.SendNotificationAsync(
+                    "Content Processed Successfully",
+                    $"Successfully processed content {id} for language {language}",
+                    NotificationType.Success);
+
+                return (id, audioProcessor);
             }
             catch (Exception ex)
             {
@@ -441,10 +414,7 @@ namespace MyTts.Services.Clients
             }
 
             // If not in cache, fetch and cache it with retry and circuit breaker policies
-            var voice = await ExecuteWithPoliciesAsync(
-                () => _elevenLabsClient.VoicesEndpoint.GetVoiceAsync(voiceId, withSettings: false, cancellationToken),
-                id,
-                cancellationToken);
+            var voice = await _resilientElevenLabsClient.GetVoiceAsync(voiceId, withSettings: false, cancellationToken);
 
             _voiceCache.TryAdd(voiceId, voice);
             return voice;
@@ -586,7 +556,8 @@ namespace MyTts.Services.Clients
         {
             if (_disposed) return;
             _disposed = true;
-            _semaphore.Dispose();
+            await _resilientElevenLabsClient.DisposeAsync();
+            await _mp3StreamMerger.DisposeAsync();
             if (_cache is IAsyncDisposable disposableCache)
             {
                 await disposableCache.DisposeAsync();
