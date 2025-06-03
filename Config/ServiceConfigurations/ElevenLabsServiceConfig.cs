@@ -24,13 +24,17 @@ public static class ElevenLabsServiceConfig
         // Register shared rate limiter for ElevenLabs API
         services.AddSingleton<CombinedRateLimiter>(sp => new CombinedRateLimiter(
             maxConcurrentRequests: 15,
-            requestsPerSecond: 15.0
+            requestsPerSecond: 15.0,
+            queueSize: 20,  // Allow up to 20 requests to be queued
+            logger: sp.GetRequiredService<ILogger<CombinedRateLimiter>>()
         ));
 
         // Register rate limiter factory for Mp3StreamMerger
         services.AddKeyedSingleton<Func<CombinedRateLimiter>>(Mp3StreamMergerRateLimiterKey, (sp, key) => () => new CombinedRateLimiter(
             maxConcurrentRequests: 2,  // Match MaxConcurrentMerges
-            requestsPerSecond: 5.0     // Lower rate for file operations
+            requestsPerSecond: 5.0,    // Lower rate for file operations
+            queueSize: 5,              // Smaller queue for file operations
+            logger: sp.GetRequiredService<ILogger<CombinedRateLimiter>>()
         ));
 
         // Register ElevenLabs client with proper initialization

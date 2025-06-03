@@ -60,39 +60,36 @@ namespace MyTts.Services
             // Log the notification
             _logger.LogInformation("Notification: {Title} - {Message} ({Type})", title, message, type);
 
-            // Fire and forget email notification
-            if (_options.EnableEmailNotifications)
+            // Fire and forget all notifications in a single task
+            _ = Task.Run(async () =>
             {
-                _ = Task.Run(async () =>
+                try
                 {
-                    try
-                    {
-                        await SendEmailNotificationAsync(title, message, type, cancellationToken);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Failed to send email notification");
-                    }
-                }, cancellationToken);
-            }
+                    var tasks = new List<Task>();
 
-            // Fire and forget Slack notification only if properly configured
-            if (_slackEnabled && !string.IsNullOrEmpty(_slackWebhookUrl))
-            {
-                _ = Task.Run(async () =>
+                    // Add email notification task if enabled
+                    if (_options.EnableEmailNotifications)
+                    {
+                        tasks.Add(SendEmailNotificationAsync(title, message, type, cancellationToken));
+                    }
+
+                    // Add Slack notification task if enabled
+                    if (_slackEnabled && !string.IsNullOrEmpty(_slackWebhookUrl))
+                    {
+                        tasks.Add(SendSlackNotificationAsync(title, message, type, cancellationToken));
+                    }
+
+                    // Wait for all notifications to complete
+                    if (tasks.Any())
+                    {
+                        await Task.WhenAll(tasks);
+                    }
+                }
+                catch (Exception ex)
                 {
-                    try
-                    {
-                        await SendSlackNotificationAsync(title, message, type, cancellationToken);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogInformation("Failed to send Slack notification: {Error}", ex.Message);
-                        // Disable Slack notifications for future calls
-                        _slackEnabled = false;
-                    }
-                }, cancellationToken);
-            }
+                    _logger.LogError(ex, "Failed to send notifications");
+                }
+            }, cancellationToken);
 
             return Task.CompletedTask;
         }

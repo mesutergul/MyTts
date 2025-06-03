@@ -151,8 +151,8 @@ namespace MyTts.Config.ServiceConfigurations
         }
 
         public ResiliencePipeline<T> GetEmailRetryPolicy<T>(
-            int maxRetries = 3,
-            int retryDelaySeconds = 2)
+            int maxRetries = 5,
+            int retryDelaySeconds = 5)
         {
             ResiliencePropertyKey<string> RecipientKey = new("recipient");
 
@@ -160,7 +160,13 @@ namespace MyTts.Config.ServiceConfigurations
                 .AddRetry(new RetryStrategyOptions<T>
                 {
                     ShouldHandle = args => new ValueTask<bool>(
-                        args.Outcome.Exception is SmtpException ||
+                        args.Outcome.Exception is SmtpException smtpEx && 
+                        (smtpEx.StatusCode == SmtpStatusCode.ServiceNotAvailable || 
+                         smtpEx.StatusCode == SmtpStatusCode.ServiceClosingTransmissionChannel ||
+                         smtpEx.StatusCode == SmtpStatusCode.ExceededStorageAllocation ||
+                         smtpEx.StatusCode == SmtpStatusCode.MailboxBusy ||
+                         smtpEx.StatusCode == SmtpStatusCode.MailboxUnavailable ||
+                         smtpEx.StatusCode == SmtpStatusCode.TransactionFailed) ||
                         args.Outcome.Exception is InvalidOperationException),
                     MaxRetryAttempts = maxRetries,
                     BackoffType = DelayBackoffType.Exponential,
@@ -171,11 +177,16 @@ namespace MyTts.Config.ServiceConfigurations
                         var recipient = args.Context?.Properties.TryGetValue(
                             RecipientKey,
                             out var value) == true ? value : "unknown";
+                        
+                        var smtpEx = args.Outcome.Exception as SmtpException;
+                        var statusCode = smtpEx?.StatusCode.ToString() ?? "Unknown";
+                        
                         _logger.LogWarning(args.Outcome.Exception,
-                            "Email retry {RetryCount} after {Delay}ms for recipient {Recipient}",
+                            "Email retry {RetryCount} after {Delay}ms for recipient {Recipient} (Status: {StatusCode})",
                             args.AttemptNumber,
                             args.RetryDelay.TotalMilliseconds,
-                            recipient);
+                            recipient,
+                            statusCode);
                         return ValueTask.CompletedTask;
                     }
                 })

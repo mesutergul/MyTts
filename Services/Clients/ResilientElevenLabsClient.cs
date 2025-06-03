@@ -155,7 +155,7 @@ namespace MyTts.Services.Clients
 
         public async ValueTask DisposeAsync()
         {
-            await _rateLimiter.DisposeAsync();
+            // Rate limiter is a singleton, don't dispose it here
         }
     }
 } 
