@@ -101,4 +101,31 @@ Refer to `Routes/ApiRoutes.cs` and `Routes/AuthApiRoutes.cs` for detailed route 
 *   **Security Hardening:** Conduct a thorough security review.
 *   **Cloud Storage Implementation:** Flesh out cloud storage options if required.
 *   **Detailed API Documentation:** Consider using Swagger/OpenAPI for comprehensive API documentation (initial setup for OpenAPI seems present).
+
+## Centralized Error Handling
+
+The application uses a centralized error handling middleware (`ErrorHandlerMiddleware`) to catch unhandled exceptions and provide standardized JSON error responses.
+
+### Error Response Structure
+
+When an error occurs, the API will respond with a JSON object similar to the following:
+
+```json
+{
+  "statusCode": 500, // Or other appropriate HTTP status code
+  "message": "An internal server error occurred. Please try again later.", // Or a more specific message
+  "traceId": "0HLQV0N9P442G:00000001" // ASP.NET Core TraceIdentifier for correlation
+}
+```
+
+### Middleware Logic
+
+- The middleware is registered in `Program.cs` and processes exceptions that occur during request processing.
+- It logs exceptions using `ILogger`, including the request path and a trace identifier.
+- Different types of exceptions can be handled to return specific status codes and messages:
+    - `ApplicationException`: Typically results in a 400 Bad Request with the exception message.
+    - `UnauthorizedAccessException`: Results in a 401 Unauthorized.
+    - `KeyNotFoundException`: Results in a 404 Not Found.
+    - Other unhandled exceptions: Result in a 500 Internal Server Error with a generic message to avoid leaking sensitive details. The detailed error is logged server-side.
+- The `TestController.cs` (`/api/test/*`) can be used during development to test various error scenarios.
 ```

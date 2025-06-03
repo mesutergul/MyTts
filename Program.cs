@@ -1,6 +1,7 @@
 using MyTts.Config.ServiceConfigurations;
 using MyTts.Routes;
 using Microsoft.AspNetCore.HttpOverrides;
+using MyTts.Middleware;
 using MyTts.Models.Auth;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Builder;
@@ -185,6 +186,9 @@ using (var scope = app.Services.CreateScope())
 app.UseDefaultFiles(); 
 app.UseStaticFiles();
 
+// Register the new ErrorHandlerMiddleware early in the pipeline
+app.UseMiddleware<ErrorHandlerMiddleware>();
+
 // Configure forwarded headers
 app.UseForwardedHeaders(new ForwardedHeadersOptions
 {
@@ -209,7 +213,7 @@ app.UseAuthorization(); // Move this after UseAuthentication
 ApiRoutes.RegisterMp3Routes(app);
 // Register your new Auth routes
 AuthApiRoutes.RegisterAuthRoutes(app);
-//app.MapControllers();
+app.MapControllers();
 
 // Log listening addresses
 foreach (var address in app.Urls)
