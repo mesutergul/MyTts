@@ -75,7 +75,7 @@ namespace MyTts.Services
                     {
                         await client.SendMailAsync(message);
                         _logger.LogInformation("Email sent successfully to {Recipients}", string.Join(", ", to));
-                        return null;
+                        return null!;
                     }
                     catch (SmtpException ex)
                     {

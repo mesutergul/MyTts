@@ -164,7 +164,7 @@ namespace MyTts.Storage
                         async () => 
                         {
                             await File.WriteAllTextAsync(filePath, contents, cancellationToken);
-                            return null;
+                            return null!;
                         },
                         $"WriteAllText_{filePath}",
                         cancellationToken);
@@ -229,7 +229,7 @@ namespace MyTts.Storage
                             {
                                 File.Delete(filePath);
                             }
-                            return Task.FromResult<object>(null);
+                            return Task.FromResult<object>(null!);
                         },
                         $"DeleteFile_{filePath}",
                         cancellationToken);
@@ -303,7 +303,7 @@ namespace MyTts.Storage
                     () =>
                     {
                         Directory.CreateDirectory(directoryPath);
-                        return Task.FromResult<object>(null);
+                        return Task.FromResult<object>(null!);
                     },
                     $"CreateDirectory_{directoryPath}",
                     cancellationToken);
@@ -334,7 +334,7 @@ namespace MyTts.Storage
                         () =>
                         {
                             File.Move(sourceFilePath, destinationFilePath, true);
-                            return Task.FromResult<object>(null);
+                            return Task.FromResult<object>(null!);
                         },
                         $"MoveFile_{sourceFilePath}_to_{destinationFilePath}",
                         cancellationToken);
@@ -431,7 +431,7 @@ namespace MyTts.Storage
                                 FileOptions.Asynchronous | FileOptions.SequentialScan);
 
                             await stream.CopyToAsync(fileStream, _options.BufferSize, cancellationToken);
-                            return null;
+                            return null!;
                         },
                         $"SaveStream_{filePath}",
                         cancellationToken);

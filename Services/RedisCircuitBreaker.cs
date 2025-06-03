@@ -75,7 +75,7 @@ namespace MyTts.Services
                         try
                         {
                             await action(cancellationToken);
-                            return null;
+                            return null!;
                         }
                         catch (RedisConnectionException ex)
                         {
