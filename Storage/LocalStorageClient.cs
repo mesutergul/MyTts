@@ -2,9 +2,9 @@ using System.Collections.Concurrent;
 using Microsoft.Extensions.Options;
 using MyTts.Storage.Interfaces;
 using MyTts.Storage.Models;
+using MyTts.Config.ServiceConfigurations;
+using MyTts.Helpers;
 using Polly;
-using Polly.Retry;
-using Polly.CircuitBreaker;
 
 namespace MyTts.Storage
 {
@@ -13,61 +13,51 @@ namespace MyTts.Storage
         private readonly ILogger<LocalStorageClient> _logger;
         private readonly LocalStorageOptions _options;
         private readonly ConcurrentDictionary<string, SemaphoreSlim> _fileLocks;
-        private readonly AsyncRetryPolicy _retryPolicy;
-        private readonly AsyncCircuitBreakerPolicy _circuitBreakerPolicy;
+        private readonly SharedPolicyFactory _policyFactory;
+        private readonly CombinedRateLimiter _rateLimiter;
         private bool _disposed;
 
         public LocalStorageClient(
             ILogger<LocalStorageClient> logger,
-            IOptions<LocalStorageOptions> options)
+            IOptions<LocalStorageOptions> options,
+            SharedPolicyFactory policyFactory,
+            CombinedRateLimiter rateLimiter)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+            _policyFactory = policyFactory ?? throw new ArgumentNullException(nameof(policyFactory));
+            _rateLimiter = rateLimiter ?? throw new ArgumentNullException(nameof(rateLimiter));
             _fileLocks = new ConcurrentDictionary<string, SemaphoreSlim>();
-
-            // Configure retry policy
-            _retryPolicy = Policy
-                .Handle<IOException>()
-                .Or<UnauthorizedAccessException>()
-                .WaitAndRetryAsync(
-                    _options.MaxRetries,
-                    retryAttempt => _options.RetryDelay * Math.Pow(2, retryAttempt - 1),
-                    OnRetryAsync);
-
-            // Configure circuit breaker policy
-            _circuitBreakerPolicy = Policy
-                .Handle<IOException>()
-                .Or<UnauthorizedAccessException>()
-                .CircuitBreakerAsync(
-                    exceptionsAllowedBeforeBreaking: 2,
-                    durationOfBreak: TimeSpan.FromSeconds(30),
-                    onBreak: (ex, duration) =>
-                    {
-                        _logger.LogWarning(ex, "Circuit breaker opened for {Duration} seconds", duration.TotalSeconds);
-                    },
-                    onReset: () =>
-                    {
-                        _logger.LogInformation("Circuit breaker reset");
-                    },
-                    onHalfOpen: () =>
-                    {
-                        _logger.LogInformation("Circuit breaker half-open");
-                    });
         }
 
-        private Task OnRetryAsync(Exception ex, TimeSpan timeSpan, int retryCount, Context context)
+        private async Task<T> ExecuteWithPoliciesAsync<T>(Func<Task<T>> operation, string operationName, CancellationToken cancellationToken = default)
         {
-            _logger.LogWarning(ex, 
-                "Retry {RetryCount} of {MaxRetries} after {Delay}ms for operation {Operation}",
-                retryCount, _options.MaxRetries, timeSpan.TotalMilliseconds, context.OperationKey);
-            return Task.CompletedTask;
-        }
+            var context = ResilienceContextPool.Shared.Get(cancellationToken);
+            try
+            {
+                context.Properties.Set(new ResiliencePropertyKey<string>("OperationKey"), operationName);
 
-        private async Task<T> ExecuteWithPoliciesAsync<T>(Func<Task<T>> operation, string operationName)
-        {
-            return await _circuitBreakerPolicy
-                .WrapAsync(_retryPolicy)
-                .ExecuteAsync(async () => await operation());
+                // Create a pipeline combining retry, circuit breaker, and rate limiting
+                var pipeline = new ResiliencePipelineBuilder<T>()
+                    .AddPipeline(_policyFactory.GetStorageRetryPolicy<T>())
+                    .Build();
+
+                // Acquire rate limit before executing the operation
+                var linkedToken = _rateLimiter.CreateLinkedTokenWithTimeout(cancellationToken);
+                await _rateLimiter.AcquireAsync(linkedToken);
+                try
+                {
+                    return await pipeline.ExecuteAsync(async token => await operation(), context);
+                }
+                finally
+                {
+                    _rateLimiter.Release();
+                }
+            }
+            finally
+            {
+                ResilienceContextPool.Shared.Return(context);
+            }
         }
 
         public async Task<StorageResult<byte[]>> ReadAllBytesAsync(string filePath, CancellationToken cancellationToken = default)
@@ -82,7 +72,8 @@ namespace MyTts.Storage
                 {
                     var result = await ExecuteWithPoliciesAsync(
                         () => File.ReadAllBytesAsync(filePath, cancellationToken),
-                        "ReadAllBytes");
+                        $"ReadAllBytes_{filePath}",
+                        cancellationToken);
 
                     return StorageResult<byte[]>.Success(result, DateTime.UtcNow - startTime);
                 }
@@ -90,11 +81,6 @@ namespace MyTts.Storage
                 {
                     fileLock.Release();
                 }
-            }
-            catch (BrokenCircuitException ex)
-            {
-                _logger.LogError(ex, "Circuit breaker is open for file: {FilePath}", filePath);
-                return StorageResult<byte[]>.Failure(new StorageError(ex, "File system is temporarily unavailable"), DateTime.UtcNow - startTime);
             }
             catch (Exception ex)
             {
@@ -117,14 +103,10 @@ namespace MyTts.Storage
                         _options.BufferSize,
                         FileOptions.Asynchronous | FileOptions.SequentialScan
                     )),
-                    "ReadLargeFileAsStream");
+                    $"ReadLargeFileAsStream_{filePath}",
+                    cancellationToken);
 
                 return StorageResult<Stream>.Success(stream, DateTime.UtcNow - startTime);
-            }
-            catch (BrokenCircuitException ex)
-            {
-                _logger.LogError(ex, "Circuit breaker is open for file: {FilePath}", filePath);
-                return StorageResult<Stream>.Failure(new StorageError(ex, "File system is temporarily unavailable"), DateTime.UtcNow - startTime);
             }
             catch (Exception ex)
             {
@@ -152,7 +134,7 @@ namespace MyTts.Storage
                         }
                         await File.WriteAllBytesAsync(filePath, bytes, cancellationToken);
                         return Task.CompletedTask;
-                    }, "WriteAllBytes");
+                    }, $"WriteAllBytes_{filePath}", cancellationToken);
 
                     return StorageResult.Success(DateTime.UtcNow - startTime);
                 }
@@ -160,11 +142,6 @@ namespace MyTts.Storage
                 {
                     fileLock.Release();
                 }
-            }
-            catch (BrokenCircuitException ex)
-            {
-                _logger.LogError(ex, "Circuit breaker is open for file: {FilePath}", filePath);
-                return StorageResult.Failure(new StorageError(ex, "File system is temporarily unavailable"), DateTime.UtcNow - startTime);
             }
             catch (Exception ex)
             {
@@ -183,8 +160,14 @@ namespace MyTts.Storage
 
                 try
                 {
-                    await _retryPolicy.ExecuteAsync(async () =>
-                        await File.WriteAllTextAsync(filePath, contents, cancellationToken));
+                    await ExecuteWithPoliciesAsync<object>(
+                        async () => 
+                        {
+                            await File.WriteAllTextAsync(filePath, contents, cancellationToken);
+                            return null;
+                        },
+                        $"WriteAllText_{filePath}",
+                        cancellationToken);
 
                     return StorageResult.Success(DateTime.UtcNow - startTime);
                 }
@@ -210,8 +193,10 @@ namespace MyTts.Storage
 
                 try
                 {
-                    var result = await _retryPolicy.ExecuteAsync(async () =>
-                        await File.ReadAllTextAsync(filePath, cancellationToken));
+                    var result = await ExecuteWithPoliciesAsync<string>(
+                        async () => await File.ReadAllTextAsync(filePath, cancellationToken),
+                        $"ReadAllText_{filePath}",
+                        cancellationToken);
 
                     return StorageResult<string>.Success(result, DateTime.UtcNow - startTime);
                 }
@@ -237,14 +222,17 @@ namespace MyTts.Storage
 
                 try
                 {
-                    await _retryPolicy.ExecuteAsync(() =>
-                    {
-                        if (File.Exists(filePath))
+                    await ExecuteWithPoliciesAsync<object>(
+                        () =>
                         {
-                            File.Delete(filePath);
-                        }
-                        return Task.CompletedTask;
-                    });
+                            if (File.Exists(filePath))
+                            {
+                                File.Delete(filePath);
+                            }
+                            return Task.FromResult<object>(null);
+                        },
+                        $"DeleteFile_{filePath}",
+                        cancellationToken);
 
                     return StorageResult.Success(DateTime.UtcNow - startTime);
                 }
@@ -265,17 +253,20 @@ namespace MyTts.Storage
             var startTime = DateTime.UtcNow;
             try
             {
-                var result = await _retryPolicy.ExecuteAsync(async () =>
-                {
-                    await Task.CompletedTask;
-                    return File.Exists(filePath);
-                });
+                var result = await ExecuteWithPoliciesAsync<bool>(
+                    async () =>
+                    {
+                        await Task.CompletedTask;
+                        return File.Exists(filePath);
+                    },
+                    $"FileExists_{filePath}",
+                    cancellationToken);
 
                 return StorageResult<bool>.Success(result, DateTime.UtcNow - startTime);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to check file existence: {FilePath}", filePath);
+                _logger.LogError(ex, "Failed to check if file exists: {FilePath}", filePath);
                 return StorageResult<bool>.Failure(new StorageError(ex), DateTime.UtcNow - startTime);
             }
         }
@@ -285,17 +276,20 @@ namespace MyTts.Storage
             var startTime = DateTime.UtcNow;
             try
             {
-                var result = await _retryPolicy.ExecuteAsync(async () =>
-                {
-                    await Task.CompletedTask;
-                    return Directory.Exists(directoryPath);
-                });
+                var result = await ExecuteWithPoliciesAsync<bool>(
+                    async () =>
+                    {
+                        await Task.CompletedTask;
+                        return Directory.Exists(directoryPath);
+                    },
+                    $"DirectoryExists_{directoryPath}",
+                    cancellationToken);
 
                 return StorageResult<bool>.Success(result, DateTime.UtcNow - startTime);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to check directory existence: {DirectoryPath}", directoryPath);
+                _logger.LogError(ex, "Failed to check if directory exists: {DirectoryPath}", directoryPath);
                 return StorageResult<bool>.Failure(new StorageError(ex), DateTime.UtcNow - startTime);
             }
         }
@@ -305,11 +299,14 @@ namespace MyTts.Storage
             var startTime = DateTime.UtcNow;
             try
             {
-                await _retryPolicy.ExecuteAsync(() =>
-                {
-                    Directory.CreateDirectory(directoryPath);
-                    return Task.CompletedTask;
-                });
+                await ExecuteWithPoliciesAsync<object>(
+                    () =>
+                    {
+                        Directory.CreateDirectory(directoryPath);
+                        return Task.FromResult<object>(null);
+                    },
+                    $"CreateDirectory_{directoryPath}",
+                    cancellationToken);
 
                 return StorageResult.Success(DateTime.UtcNow - startTime);
             }
@@ -326,33 +323,33 @@ namespace MyTts.Storage
             try
             {
                 var sourceLock = await GetFileLockAsync(sourceFilePath);
-                var destinationLock = await GetFileLockAsync(destinationFilePath);
+                var destLock = await GetFileLockAsync(destinationFilePath);
 
-                await Task.WhenAll(
-                    sourceLock.WaitAsync(cancellationToken),
-                    destinationLock.WaitAsync(cancellationToken)
-                );
+                await sourceLock.WaitAsync(cancellationToken);
+                await destLock.WaitAsync(cancellationToken);
 
                 try
                 {
-                    await _retryPolicy.ExecuteAsync(() =>
-                    {
-                        File.Move(sourceFilePath, destinationFilePath, true);
-                        return Task.CompletedTask;
-                    });
+                    await ExecuteWithPoliciesAsync<object>(
+                        () =>
+                        {
+                            File.Move(sourceFilePath, destinationFilePath, true);
+                            return Task.FromResult<object>(null);
+                        },
+                        $"MoveFile_{sourceFilePath}_to_{destinationFilePath}",
+                        cancellationToken);
 
                     return StorageResult.Success(DateTime.UtcNow - startTime);
                 }
                 finally
                 {
                     sourceLock.Release();
-                    destinationLock.Release();
+                    destLock.Release();
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to move file from {SourcePath} to {DestinationPath}",
-                    sourceFilePath, destinationFilePath);
+                _logger.LogError(ex, "Failed to move file from {SourcePath} to {DestPath}", sourceFilePath, destinationFilePath);
                 return StorageResult.Failure(new StorageError(ex), DateTime.UtcNow - startTime);
             }
         }
@@ -362,11 +359,14 @@ namespace MyTts.Storage
             var startTime = DateTime.UtcNow;
             try
             {
-                var result = await _retryPolicy.ExecuteAsync(async () =>
-                {
-                    await Task.CompletedTask;
-                    return new FileInfo(filePath);
-                });
+                var result = await ExecuteWithPoliciesAsync<FileInfo>(
+                    async () =>
+                    {
+                        await Task.CompletedTask;
+                        return new FileInfo(filePath);
+                    },
+                    $"GetFileInfo_{filePath}",
+                    cancellationToken);
 
                 return StorageResult<FileInfo>.Success(result, DateTime.UtcNow - startTime);
             }
@@ -385,11 +385,14 @@ namespace MyTts.Storage
             var startTime = DateTime.UtcNow;
             try
             {
-                var result = await _retryPolicy.ExecuteAsync(async () =>
-                {
-                    await Task.CompletedTask;
-                    return Directory.GetFiles(directoryPath, searchPattern);
-                });
+                var result = await ExecuteWithPoliciesAsync<IEnumerable<string>>(
+                    async () =>
+                    {
+                        await Task.CompletedTask;
+                        return Directory.GetFiles(directoryPath, searchPattern);
+                    },
+                    $"ListFiles_{directoryPath}",
+                    cancellationToken);
 
                 return StorageResult<IEnumerable<string>>.Success(result, DateTime.UtcNow - startTime);
             }
@@ -410,24 +413,28 @@ namespace MyTts.Storage
 
                 try
                 {
-                    await _retryPolicy.ExecuteAsync(async () =>
-                    {
-                        string? directory = Path.GetDirectoryName(filePath);
-                        if (directory != null && !Directory.Exists(directory))
+                    await ExecuteWithPoliciesAsync<object>(
+                        async () =>
                         {
-                            Directory.CreateDirectory(directory);
-                        }
+                            string? directory = Path.GetDirectoryName(filePath);
+                            if (directory != null && !Directory.Exists(directory))
+                            {
+                                Directory.CreateDirectory(directory);
+                            }
 
-                        await using var fileStream = new FileStream(
-                            filePath,
-                            FileMode.Create,
-                            FileAccess.Write,
-                            FileShare.None,
-                            _options.BufferSize,
-                            FileOptions.Asynchronous | FileOptions.SequentialScan);
+                            using var fileStream = new FileStream(
+                                filePath,
+                                FileMode.Create,
+                                FileAccess.Write,
+                                FileShare.None,
+                                _options.BufferSize,
+                                FileOptions.Asynchronous | FileOptions.SequentialScan);
 
-                        await stream.CopyToAsync(fileStream, _options.BufferSize, cancellationToken);
-                    });
+                            await stream.CopyToAsync(fileStream, _options.BufferSize, cancellationToken);
+                            return null;
+                        },
+                        $"SaveStream_{filePath}",
+                        cancellationToken);
 
                     return StorageResult.Success(DateTime.UtcNow - startTime);
                 }

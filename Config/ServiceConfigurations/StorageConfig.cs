@@ -3,8 +3,8 @@ using MyTts.Storage;
 using MyTts.Storage.Models;
 using MyTts.Storage.Interfaces;
 using MyTts.Helpers;
+using MyTts.Config.ServiceConfigurations;
 using Polly;
-using Polly.Retry;
 
 namespace MyTts.Config.ServiceConfigurations;
 
@@ -44,14 +44,22 @@ public static class StorageServiceConfig
             }
         });
 
-        // Configure retry policy for storage operations
-        services.AddSingleton<ResiliencePipeline<string>>(sp =>
+        // Configure CombinedRateLimiter for storage operations
+        services.AddSingleton<CombinedRateLimiter>(sp =>
         {
             var options = sp.GetRequiredService<IOptions<LocalStorageOptions>>().Value;
-            var policyFactory = sp.GetRequiredService<SharedPolicyFactory>();
-            return policyFactory.GetStorageRetryPolicy<string>(
-                options.MaxRetries,
-                (int)options.RetryDelay.TotalSeconds);
+            var logger = sp.GetRequiredService<ILogger<CombinedRateLimiter>>();
+            
+            // Calculate requests per second based on max concurrent operations
+            // Assuming we want to allow burst up to max concurrent operations
+            double requestsPerSecond = options.MaxConcurrentOperations;
+            
+            return new CombinedRateLimiter(
+                maxConcurrentRequests: options.MaxConcurrentOperations,
+                requestsPerSecond: requestsPerSecond,
+                queueSize: options.MaxConcurrentOperations * 2, // Allow queue size to be double the concurrent operations
+                logger: logger
+            );
         });
 
         // Get the configuration instance for initialization
