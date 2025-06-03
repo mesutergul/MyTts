@@ -18,6 +18,8 @@ namespace MyTts.Services
         private const int MaxRetries = 3;
         private const int RetryDelayMs = 2000; // Base delay for retries
         private const int ProcessTimeoutMs = 30000; // 30 second timeout for FFmpeg process
+        private static readonly TimeSpan RateLimitTimeout = TimeSpan.FromSeconds(30);
+        private static readonly ResiliencePropertyKey<string> OperationKey = new("OperationKey");
 
         public Mp3StreamMerger(
             ILogger<Mp3StreamMerger> logger, 
@@ -41,10 +43,12 @@ namespace MyTts.Services
             CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(audioProcessors);
+            ArgumentNullException.ThrowIfNull(resilienceContext);
             if (!audioProcessors.Any())
             {
                 throw new ArgumentException("No audio processors provided", nameof(audioProcessors));
             }
+
             var outputFilePath = "merged";
 
             try
@@ -55,17 +59,24 @@ namespace MyTts.Services
                 }
 
                 // Create a linked token with timeout for rate limiting
-                var linkedToken = _rateLimiter.CreateLinkedTokenWithTimeout(cancellationToken);
+                var linkedToken = _rateLimiter.CreateLinkedTokenWithTimeout(cancellationToken, RateLimitTimeout);
 
                 // Acquire rate limit before starting the merge operation
                 await _rateLimiter.AcquireAsync(linkedToken);
                 try
                 {
-                    return await MergeAudioProcessorsAsync(audioProcessors, outputFilePath, fileType, breakAudioPath, startAudioPath, endAudioPath, linkedToken).ConfigureAwait(false);
+                    return await MergeAudioProcessorsAsync(
+                        audioProcessors, 
+                        outputFilePath, 
+                        fileType, 
+                        breakAudioPath, 
+                        startAudioPath, 
+                        endAudioPath, 
+                        linkedToken)
+                        .ConfigureAwait(false);
                 }
                 finally
                 {
-                    // Always release the rate limiter
                     _rateLimiter.Release();
                 }
             }
@@ -99,20 +110,25 @@ namespace MyTts.Services
                 var context = ResilienceContextPool.Shared.Get(cancellationToken);
                 try
                 {
-                    context.Properties.Set(new ResiliencePropertyKey<string>("OperationKey"), "MergeAudioProcessors");
+                    context.Properties.Set(OperationKey, "MergeAudioProcessors");
                     
                     return await _mergePipeline.ExecuteAsync(async (ctx) =>
                     {
                         try
                         {
-                            // Check cancellation before starting the operation
                             cancellationToken.ThrowIfCancellationRequested();
 
-                            var ffmpegArgs = await CreateFfmpegArgumentsAsync(processors, streamPipeSources, streamsToDispose, breakAudioPath, startAudioPath, endAudioPath, cancellationToken).ConfigureAwait(false);
+                            var ffmpegArgs = await CreateFfmpegArgumentsAsync(
+                                processors, 
+                                streamPipeSources, 
+                                streamsToDispose, 
+                                breakAudioPath, 
+                                startAudioPath, 
+                                endAudioPath, 
+                                cancellationToken)
+                                .ConfigureAwait(false);
 
-                            int totalInputs = !string.IsNullOrEmpty(breakAudioPath) ? processors.Count * 2 - 2 : processors.Count;
-                            totalInputs = !string.IsNullOrEmpty(startAudioPath) ? totalInputs + 1 : totalInputs;
-                            totalInputs = !string.IsNullOrEmpty(endAudioPath) ? totalInputs + 1 : totalInputs;
+                            int totalInputs = CalculateTotalInputs(processors.Count, breakAudioPath, startAudioPath, endAudioPath);
                             var filterComplex = CreateFilterComplexCommand(totalInputs);
 
                             var ffmpegOptions = new FFOptions
@@ -134,29 +150,28 @@ namespace MyTts.Services
                                 .CancellableThrough(cancellationToken)
                                 .ProcessAsynchronously(true, ffmpegOptions);
 
-                            if (outputStream.Length > 0)
+                            if (outputStream.Length == 0)
                             {
-                                string fullPath = StoragePathHelper.GetFullPath(filePath, fileType);
-                                _logger.LogInformation("Saving merged audio to {FilePath} ({Length} bytes)", filePath, outputStream.Length);
-
-                                outputStream.Position = 0;
-                                await using (var fileStream = new FileStream(
-                                    fullPath,
-                                    FileMode.Create,
-                                    FileAccess.Write,
-                                    FileShare.ReadWrite | FileShare.Delete,
-                                    bufferSize: BufferSize,
-                                    FileOptions.Asynchronous | FileOptions.SequentialScan))
-                                {
-                                    await outputStream.CopyToAsync(fileStream, BufferSize, cancellationToken);
-                                }
-                                return fullPath;
+                                throw new InvalidOperationException("FFmpeg process completed but output stream is empty");
                             }
-                            throw new InvalidOperationException("FFmpeg process completed but output stream is empty");
+
+                            string fullPath = StoragePathHelper.GetFullPath(filePath, fileType);
+                            _logger.LogInformation("Saving merged audio to {FilePath} ({Length} bytes)", filePath, outputStream.Length);
+
+                            outputStream.Position = 0;
+                            await using var fileStream = new FileStream(
+                                fullPath,
+                                FileMode.Create,
+                                FileAccess.Write,
+                                FileShare.ReadWrite | FileShare.Delete,
+                                bufferSize: BufferSize,
+                                FileOptions.Asynchronous | FileOptions.SequentialScan);
+
+                            await outputStream.CopyToAsync(fileStream, BufferSize, cancellationToken);
+                            return fullPath;
                         }
                         catch (Exception)
                         {
-                            // Clean up resources before retry
                             await CleanupStreamsAsync(streamPipeSources, streamsToDispose);
                             throw;
                         }
@@ -181,6 +196,28 @@ namespace MyTts.Services
             {
                 await CleanupStreamsAsync(streamPipeSources, streamsToDispose);
             }
+        }
+
+        private static int CalculateTotalInputs(int processorCount, string? breakAudioPath, string? startAudioPath, string? endAudioPath)
+        {
+            int totalInputs = processorCount;
+            
+            if (!string.IsNullOrEmpty(breakAudioPath))
+            {
+                totalInputs += processorCount - 2; // Add break audio between each processor
+            }
+            
+            if (!string.IsNullOrEmpty(startAudioPath))
+            {
+                totalInputs++;
+            }
+            
+            if (!string.IsNullOrEmpty(endAudioPath))
+            {
+                totalInputs++;
+            }
+            
+            return totalInputs;
         }
 
         private async Task CleanupStreamsAsync(List<StreamPipeSource> streamPipeSources, List<Stream> streamsToDispose)
@@ -212,9 +249,8 @@ namespace MyTts.Services
             streamsToDispose.Clear();
         }
 
-        private string CreateFilterComplexCommand(int totalInputs)
+        private static string CreateFilterComplexCommand(int totalInputs)
         {
-            // Create the filter complex command that concatenates all inputs
             var inputs = string.Join("][", Enumerable.Range(0, totalInputs));
             return $"-filter_complex \"[{inputs}]concat=n={totalInputs}:v=0:a=1[outa]\" -map \"[outa]\"";
         }
@@ -236,6 +272,7 @@ namespace MyTts.Services
 
             // Create FFmpeg arguments with the first input
             var args = FFMpegArguments.FromPipeInput(firstPipeSource);
+            
             if (!string.IsNullOrEmpty(startAudioPath))
             {
                 args = args.AddFileInput(startAudioPath);

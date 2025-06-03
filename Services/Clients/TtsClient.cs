@@ -254,53 +254,43 @@ namespace MyTts.Services.Clients
             }
         }
         private async Task ExecuteMergeOperationAsync(
-        List<AudioProcessor> processors,
-        string breakAudioPath,
-        string startAudioPath,
-        string endAudioPath,
-        AudioType fileType,
-        CancellationToken cancellationToken)
-    {
-        ResiliencePropertyKey<string> OperationKey = new("OperationKey");
-        var context = ResilienceContextPool.Shared.Get(cancellationToken);
-        context.Properties.Set(OperationKey, "MergeOperation");
-        try
+            List<AudioProcessor> processors,
+            string breakAudioPath,
+            string startAudioPath,
+            string endAudioPath,
+            AudioType fileType,
+            CancellationToken cancellationToken)
         {
-            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
+                var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
-            var mergePipeline = _sharedPolicyFactory.GetStorageRetryPolicy<string>(3, 10);
-            
-            await mergePipeline.ExecuteAsync(
-                async token => await _mp3StreamMerger.MergeMp3ByteArraysAsync(
+                await _mp3StreamMerger.MergeMp3ByteArraysAsync(
                     processors,
                     _storageConfig.BasePath,
                     fileType,
                     breakAudioPath,
                     startAudioPath,
                     endAudioPath,
-                    token, cancellationToken),
-                context);
+                    ResilienceContextPool.Shared.Get(cancellationToken),
+                    cancellationToken);
 
-            stopwatch.Stop();
-            _logger.LogInformation(
-                "Merged {Count} MP3 files in {ElapsedMilliseconds}ms",
-                processors.Count,
-                stopwatch.ElapsedMilliseconds);
+                stopwatch.Stop();
+                _logger.LogInformation(
+                    "Merged {Count} MP3 files in {ElapsedMilliseconds}ms",
+                    processors.Count,
+                    stopwatch.ElapsedMilliseconds);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to merge MP3 files");
+                await _notificationService.SendErrorNotificationAsync(
+                    "MP3 Merge Failed",
+                    $"Failed to merge {processors.Count} files",
+                    ex);
+                throw;
+            }
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to merge MP3 files");
-            await _notificationService.SendErrorNotificationAsync(
-                "MP3 Merge Failed",
-                $"Failed to merge {processors.Count} files",
-                ex);
-            throw;
-        }
-        finally
-        {
-            ResilienceContextPool.Shared.Return(context);
-        }
-    }
         private async Task<string> checkFilePaths(string path, CancellationToken cancellationToken)
         {
             var existsResult = await _localStorageClient.FileExistsAsync(path, cancellationToken);
