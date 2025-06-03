@@ -29,7 +29,7 @@ namespace MyTts.Services
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _rateLimiter = rateLimiter ?? throw new ArgumentNullException(nameof(rateLimiter));
-            _mergePipeline = policyFactory.CreatePipeline<string>(MaxRetries, RetryDelayMs / 1000);
+            _mergePipeline = policyFactory.CreateTtsPipeline<string>(MaxRetries, RetryDelayMs / 1000);
         }
 
         public async Task<string> MergeMp3ByteArraysAsync(
@@ -133,7 +133,7 @@ namespace MyTts.Services
 
                             var ffmpegOptions = new FFOptions
                             {
-                                BinaryFolder = Path.Combine(AppContext.BaseDirectory, "ffmpeg-bin"),
+                                // BinaryFolder = Path.Combine(AppContext.BaseDirectory, "ffmpeg-bin"),
                                 TemporaryFilesFolder = Path.GetTempPath()
                             };
 

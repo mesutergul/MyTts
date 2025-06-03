@@ -61,8 +61,8 @@ public static class ElevenLabsServiceConfig
             var client = new ElevenLabsClient(auth, settings);
 
             // Create separate pipelines for Voice and VoiceClip
-            var voicePipeline = policyFactory.CreatePipeline<Voice>();
-            var voiceClipPipeline = policyFactory.CreatePipeline<MyTts.Services.VoiceClip>();
+            var voicePipeline = policyFactory.CreateTtsPipeline<Voice>();
+            var voiceClipPipeline = policyFactory.CreateTtsPipeline<MyTts.Services.VoiceClip>();
 
             return new ResilientElevenLabsClient(
                 client, 

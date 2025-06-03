@@ -21,7 +21,6 @@ namespace MyTts.Services.Clients
 {
     public class TtsClient : ITtsClient, IAsyncDisposable
     {
-        // private readonly ElevenLabsClient _elevenLabsClient;
         private readonly ResilientElevenLabsClient _resilientElevenLabsClient;
         private readonly StorageClient? _googleStorageClient;
         private readonly ICloudTtsClient _geminiTtsClient;
@@ -39,7 +38,6 @@ namespace MyTts.Services.Clients
         private static readonly ThreadLocal<Random> _random = new(() => new Random());
         private bool _disposed;
         private readonly INotificationService _notificationService;
-        private readonly SharedPolicyFactory _sharedPolicyFactory;
 
         public TtsClient(
             ICloudTtsClient geminiTtsClient,
@@ -50,7 +48,6 @@ namespace MyTts.Services.Clients
             IRedisCacheService? cache,
             IMp3StreamMerger mp3StreamMerger,
             INotificationService notificationService,
-            SharedPolicyFactory sharedPolicyFactory,
             ILogger<TtsClient> logger)
         {
             _resilientElevenLabsClient = resilientElevenLabsClient ?? throw new ArgumentNullException(nameof(resilientElevenLabsClient));
@@ -61,7 +58,6 @@ namespace MyTts.Services.Clients
             _geminiTtsClient = geminiTtsClient ?? throw new ArgumentNullException(nameof(geminiTtsClient));
             _mp3StreamMerger = mp3StreamMerger ?? throw new ArgumentNullException(nameof(mp3StreamMerger));
             _notificationService = notificationService ?? throw new ArgumentNullException(nameof(notificationService));
-            _sharedPolicyFactory = sharedPolicyFactory ?? throw new ArgumentNullException(nameof(sharedPolicyFactory));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _voiceCache = new ConcurrentDictionary<string, Voice>();
             _jsonOptions = new JsonSerializerOptions
@@ -97,36 +93,6 @@ namespace MyTts.Services.Clients
                 _logger.LogInformation("Google Cloud Storage is not configured or disabled");
             }
         }
-
-        private async Task<T> ExecuteWithPoliciesAsync<T>(Func<Task<T>> action, int id, CancellationToken cancellationToken)
-        {
-            ResiliencePropertyKey<string> OperationKey = new("OperationKey");
-            var context = ResilienceContextPool.Shared.Get(cancellationToken);
-            context.Properties.Set(OperationKey, $"TTS_{id}");
-            try
-            {             
-                var pipeline = new ResiliencePipelineBuilder<T>()
-                    .AddPipeline(_sharedPolicyFactory.GetTtsRetryPolicy<T>(
-                        retryCount: 3,
-                        baseDelaySeconds: 2))
-                    .AddPipeline(_sharedPolicyFactory.GetTtsCircuitBreakerPolicy<T>(
-                        failureThreshold: 0.5,
-                        minimumThroughput: 10))
-                    .Build();
-
-                return await pipeline.ExecuteAsync(async token => await action(), context);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error executing TTS request for ID {Id}", id);
-                throw;
-            }
-            finally
-            {
-                ResilienceContextPool.Shared.Return(context);
-            }
-        }
-
         public async Task<string> ProcessContentsAsync(
                  IEnumerable<HaberSummaryDto> allNews,
                  IEnumerable<HaberSummaryDto> neededNews,
