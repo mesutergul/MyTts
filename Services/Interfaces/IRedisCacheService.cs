@@ -7,5 +7,8 @@
         Task<bool> RemoveAsync(string key, CancellationToken cancellationToken = default);
         Task<bool> ExistsAsync(string key, CancellationToken cancellationToken = default);
         Task<bool> IsConnectedAsync(CancellationToken cancellationToken = default);
+        Task SetBytesAsync(string key, byte[] value, TimeSpan? expiry = null, CancellationToken cancellationToken = default);
+        Task<byte[]?> GetBytesAsync(string key, CancellationToken cancellationToken = default);
+
     }
 }

@@ -19,20 +19,13 @@ namespace MyTts.Config.ServiceConfigurations
             services.AddScoped<IEmailService, EmailService>();
             services.AddScoped<EmailService>();
 
-            // Register SmtpClient as singleton
+            // Register SmtpClient as singleton with proper configuration
             services.AddSingleton<SmtpClient>(sp =>
             {
                 var config = sp.GetRequiredService<IOptions<EmailConfig>>().Value;
-                var client = new SmtpClient(config.SmtpServer, config.SmtpPort)
-                {
-                    EnableSsl = config.EnableSsl,
-                    Credentials = new NetworkCredential(config.SenderEmail, config.SenderPassword),
-                    Timeout = config.TimeoutSeconds * 1000,
-                    DeliveryMethod = SmtpDeliveryMethod.Network,
-                    UseDefaultCredentials = false
-                };
+                var logger = sp.GetRequiredService<ILogger<EmailService>>();
 
-                // Set up client validation
+                // Validate configuration
                 if (string.IsNullOrEmpty(config.SenderEmail) || string.IsNullOrEmpty(config.SenderPassword))
                 {
                     throw new InvalidOperationException("Email sender credentials are not configured");
@@ -43,7 +36,40 @@ namespace MyTts.Config.ServiceConfigurations
                     throw new InvalidOperationException("Invalid SMTP port. Must be 587 (TLS) or 465 (SSL)");
                 }
 
-                return client;
+                if (string.IsNullOrEmpty(config.SmtpServer))
+                {
+                    throw new InvalidOperationException("SMTP server is not configured");
+                }
+
+                try
+                {
+                    var client = new SmtpClient(config.SmtpServer, config.SmtpPort)
+                    {
+                        EnableSsl = config.EnableSsl,
+                        Credentials = new NetworkCredential(config.SenderEmail, config.SenderPassword),
+                        Timeout = config.TimeoutSeconds * 1000,
+                        DeliveryMethod = SmtpDeliveryMethod.Network,
+                        UseDefaultCredentials = false
+                    };
+
+                    // Test connection
+                    try
+                    {
+                        client.Send(new MailMessage(config.SenderEmail, config.SenderEmail, "Test", "Test"));
+                        logger.LogInformation("SMTP connection test successful");
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(ex, "SMTP connection test failed, but continuing with configuration");
+                    }
+
+                    return client;
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Failed to configure SMTP client");
+                    throw;
+                }
             });
 
             // Register Polly policies

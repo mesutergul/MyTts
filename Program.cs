@@ -17,6 +17,8 @@ using Microsoft.Extensions.Logging;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Logging.Console;
+using Hangfire;
+using Hangfire.Redis.StackExchange;
 
 /*
 ffmpeg -i input.mp3 -filter:a loudnorm output_normalized.mp3
@@ -88,7 +90,17 @@ builder.Services
     .AddHttpClientsServices()
     .AddRedisServices(builder.Configuration)
     .AddApiServices()
-    .AddHttpContextAccessor();
+    .AddHttpContextAccessor()
+    .AddHangfire(configuration => configuration
+        .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+        .UseSimpleAssemblyNameTypeSerializer()
+        .UseRecommendedSerializerSettings()
+        .UseRedisStorage(builder.Configuration.GetConnectionString("Redis") ?? "localhost:6379"))
+    .AddHangfireServer(options =>
+    {
+        options.ServerName = $"MyTts-{Environment.MachineName}";
+        options.WorkerCount = Environment.ProcessorCount * 5;
+    });
 // Inside Program.cs, after all AddServices calls:
 //builder.Services.AddSingleton<SharedPolicyFactory>();
 

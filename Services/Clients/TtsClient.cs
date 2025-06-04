@@ -16,6 +16,7 @@ using MyTts.Storage.Interfaces;
 using MyTts.Services.Interfaces;
 using Polly;
 using MyTts.Config.ServiceConfigurations;
+using Hangfire;
 
 namespace MyTts.Services.Clients
 {
@@ -24,7 +25,7 @@ namespace MyTts.Services.Clients
         private readonly ResilientElevenLabsClient _resilientElevenLabsClient;
         private readonly StorageClient? _googleStorageClient;
         private readonly ICloudTtsClient _geminiTtsClient;
-        private readonly IRedisCacheService? _cache;
+        private readonly IRedisCacheService _cache;
         private readonly IOptions<ElevenLabsConfig> _config;
         private readonly ILogger<TtsClient> _logger;
         private readonly IMp3StreamMerger _mp3StreamMerger;
@@ -38,6 +39,7 @@ namespace MyTts.Services.Clients
         private static readonly ThreadLocal<Random> _random = new(() => new Random());
         private bool _disposed;
         private readonly INotificationService _notificationService;
+        private readonly IBackgroundJobClient _backgroundJobClient; // Add this
 
         public TtsClient(
             ICloudTtsClient geminiTtsClient,
@@ -45,16 +47,18 @@ namespace MyTts.Services.Clients
             IOptions<ElevenLabsConfig> config,
             IOptions<StorageConfiguration> storageConfig,
             ILocalStorageClient storage,
-            IRedisCacheService? cache,
+            IRedisCacheService cache,
             IMp3StreamMerger mp3StreamMerger,
             INotificationService notificationService,
+            IBackgroundJobClient backgroundJobClient, // Add this
             ILogger<TtsClient> logger)
         {
             _resilientElevenLabsClient = resilientElevenLabsClient ?? throw new ArgumentNullException(nameof(resilientElevenLabsClient));
             _config = config ?? throw new ArgumentNullException(nameof(config));
             _storageConfig = storageConfig?.Value ?? throw new ArgumentNullException(nameof(storageConfig));
             _localStorageClient = storage ?? throw new ArgumentNullException(nameof(storage));
-            _cache = cache;
+            _cache = cache ?? throw new ArgumentNullException(nameof(cache));
+            _backgroundJobClient = backgroundJobClient ?? throw new ArgumentNullException(nameof(backgroundJobClient));
             _geminiTtsClient = geminiTtsClient ?? throw new ArgumentNullException(nameof(geminiTtsClient));
             _mp3StreamMerger = mp3StreamMerger ?? throw new ArgumentNullException(nameof(mp3StreamMerger));
             _notificationService = notificationService ?? throw new ArgumentNullException(nameof(notificationService));
@@ -116,29 +120,36 @@ namespace MyTts.Services.Clients
 
             try
             {
-                // Process needed and saved news in parallel
+                // Process needed and saved news in parallel with proper cancellation handling
                 var processingTasks = new List<Task<(int id, AudioProcessor Processor)>>(
                     contentsNeededList.Count + contentsSavedList.Count);
 
-                // Add tasks for needed news
-                processingTasks.AddRange(contentsNeededList.Select(content =>
-                    ProcessContentAsync(
+                // Add tasks for needed news with cancellation handling
+                foreach (var content in contentsNeededList)
+                {
+                    processingTasks.Add(ProcessContentAsync(
                         content.Ozet,
                         content.IlgiId,
                         language,
                         fileType,
-                        cancellationToken)));
+                        cancellationToken));
+                }
 
-                // Add tasks for saved news
-                processingTasks.AddRange(contentsSavedList.Select(content =>
-                    ProcessSavedContentAsync(content.IlgiId, fileType, cancellationToken)));
+                // Add tasks for saved news with cancellation handling
+                foreach (var content in contentsSavedList)
+                {
+                    processingTasks.Add(ProcessSavedContentAsync(
+                        content.IlgiId,
+                        fileType,
+                        cancellationToken));
+                }
 
-                // Wait for all tasks to complete
+                // Wait for all tasks to complete, handling cancellations
                 var results = await Task.WhenAll(processingTasks);
-               
+                
                 // Create processors dictionary for efficient lookup
                 var processedFiles = results.ToDictionary(r => r.id, r => r.Processor);
-               
+                
                 // Build final list in original order
                 var processors = allNewsList
                     .Where(news => processedFiles.ContainsKey(news.IlgiId))
@@ -160,10 +171,11 @@ namespace MyTts.Services.Clients
                     string startAudioPath = StoragePathHelper.GetFullPath("merged_haber_basi", fileType);
                     string endAudioPath = StoragePathHelper.GetFullPath("merged_haber_sonu", fileType);
 
-                    breakAudioPath = await checkFilePaths(breakAudioPath, cancellationToken);
-                    startAudioPath = await checkFilePaths(startAudioPath, cancellationToken);
-                    endAudioPath = await checkFilePaths(endAudioPath, cancellationToken);
-                    // Start merge operation in background
+                    breakAudioPath = await CheckFilePaths(breakAudioPath, cancellationToken);
+                    startAudioPath = await CheckFilePaths(startAudioPath, cancellationToken);
+                    endAudioPath = await CheckFilePaths(endAudioPath, cancellationToken);
+
+                    // Start merge operation in background with proper cancellation handling
                     _ = Task.Run(async () =>
                     {
                         try
@@ -175,7 +187,7 @@ namespace MyTts.Services.Clients
                                 startAudioPath,
                                 endAudioPath,
                                 fileType,
-                                cancellationToken);
+                                CancellationToken.None); // Use None for background task
                             stopwatch.Stop();
 
                             _logger.LogInformation(
@@ -183,7 +195,6 @@ namespace MyTts.Services.Clients
                                 processors.Count,
                                 stopwatch.ElapsedMilliseconds);
 
-                            // Send notification about successful merge
                             await _notificationService.SendNotificationAsync(
                                 "MP3 Merge Completed",
                                 $"Successfully merged {processors.Count} files in {stopwatch.ElapsedMilliseconds}ms",
@@ -197,7 +208,7 @@ namespace MyTts.Services.Clients
                                 $"Failed to merge {processors.Count} files after all retries",
                                 ex);
                         }
-                    }, cancellationToken);
+                    }, CancellationToken.None); // Use None for background task
 
                     // Return a temporary ID that can be used to track the merge progress
                     var mergeId = $"merge_{Guid.NewGuid()}";
@@ -210,7 +221,7 @@ namespace MyTts.Services.Clients
             }
             catch (OperationCanceledException)
             {
-                _logger.LogWarning("Content processing was cancelled");
+                _logger.LogWarning("Content processing was canceled");
                 throw;
             }
             catch (Exception ex)
@@ -256,7 +267,7 @@ namespace MyTts.Services.Clients
                 throw;
             }
         }
-        private async Task<string> checkFilePaths(string path, CancellationToken cancellationToken)
+        private async Task<string> CheckFilePaths(string path, CancellationToken cancellationToken)
         {
             var existsResult = await _localStorageClient.FileExistsAsync(path, cancellationToken);
             var result = path;
@@ -330,7 +341,19 @@ namespace MyTts.Services.Clients
                     "Generated audio clip in {ElapsedMilliseconds}ms for text length {TextLength}",
                     stopwatch.ElapsedMilliseconds,
                     text.Length);
+                // Convert the stream to a byte array
+                byte[] audioBytes;
+                using (var memoryStream = new MemoryStream())
+                {
+                    await voiceClip.GetShareableStream().CopyToAsync(memoryStream, cancellationToken);
+                    audioBytes = memoryStream.ToArray();
+                }
 
+                // --- CRUCIAL: Save the individual MP3 byte array to Redis ---
+                string redisKey = $"individual-mp3:{id}";
+                TimeSpan expiry = _storageConfig.CacheDuration.Files;
+                await _cache.SetBytesAsync(redisKey, audioBytes, expiry, cancellationToken);
+                _logger.LogInformation("Individual MP3 for Content ID: {Id} saved to Redis with key: {RedisKey}", id, redisKey);
                 var audioProcessor = new AudioProcessor(voiceClip);
 
                 // Launch all I/O-bound tasks in parallel
@@ -451,7 +474,7 @@ namespace MyTts.Services.Clients
 
         private async Task StoreMetadataRedisAsync(int id, string text, string localPath, string fileName, CancellationToken cancellationToken)
         {
-            if (_cache == null || !await _cache.IsConnectedAsync(cancellationToken)) return;
+            if (!await _cache.IsConnectedAsync(cancellationToken)) return;
             var metadata = new AudioMetadata
             {
                 Id = id,
@@ -473,15 +496,71 @@ namespace MyTts.Services.Clients
         {
             try
             {
-                string fullPath = StoragePathHelper.GetFullPathById(ilgiId, fileType);
-                var readResult = await _localStorageClient.ReadAllBytesAsync(fullPath, cancellationToken);
-                if (!readResult.IsSuccess)
+                AudioProcessor audioProcessor = null!;
+
+                // --- Try to load from Redis first ---
+                byte[]? audioBytes = null;
+                if (await _cache.IsConnectedAsync(cancellationToken))
                 {
-                    throw readResult.Error!.Exception;
+                    try
+                    {
+                        audioBytes = await _cache.GetBytesAsync($"individual-mp3:{ilgiId}", cancellationToken);
+                        if (audioBytes != null)
+                        {
+                            audioProcessor = new AudioProcessor(new VoiceClip(audioBytes));
+                            _logger.LogInformation("Loaded audio for {Id} from Redis cache.", ilgiId);
+                            
+                            // Save locally in background without waiting
+                            _ = Task.Run(async () =>
+                            {
+                                try
+                                {
+                                    await SaveLocallyAsync(audioProcessor, StoragePathHelper.GetFullPathById(ilgiId, fileType), CancellationToken.None);
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogError(ex, "Failed to save audio locally for {Id}", ilgiId);
+                                }
+                            }, CancellationToken.None);
+                        }
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        _logger.LogWarning("Redis operation was canceled for {Id}", ilgiId);
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to load from Redis for {Id}, will try local storage", ilgiId);
+                    }
                 }
-                var voiceClip = new VoiceClip(readResult.Data!);
-                var audioProcessor = new AudioProcessor(voiceClip);
+
+                if (audioProcessor == null)
+                {
+                    // --- If not in cache, load from local storage ---
+                    string localPath = StoragePathHelper.GetFullPathById(ilgiId, fileType);
+                    var existsResult = await _localStorageClient.FileExistsAsync(localPath, cancellationToken);
+                    
+                    if (!existsResult.IsSuccess || !existsResult.Data)
+                    {
+                        throw new FileNotFoundException($"Audio file for ID {ilgiId} not found at {localPath}");
+                    }
+
+                    var readResult = await _localStorageClient.ReadAllBytesAsync(localPath, cancellationToken);
+                    if (!readResult.IsSuccess)
+                    {
+                        throw readResult.Error!.Exception;
+                    }
+
+                    audioProcessor = new AudioProcessor(new VoiceClip(readResult.Data!));
+                }
+
                 return (ilgiId, audioProcessor);
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogWarning("Operation was canceled for content {Id}", ilgiId);
+                throw;
             }
             catch (Exception ex)
             {

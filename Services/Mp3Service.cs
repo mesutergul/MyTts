@@ -14,7 +14,7 @@ namespace MyTts.Services
         private readonly ILogger<Mp3Service> _logger;
         private readonly IMp3Repository _mp3FileRepository;
         private readonly ITtsClient _ttsClient;
-        private readonly IRedisCacheService? _cache;
+        private readonly IRedisCacheService _cache;
         private readonly ICache<int, string> _ozetCache;
         private readonly SemaphoreSlim _processingSemaphore;
         private const int MaxConcurrentProcessing = 1;
@@ -25,14 +25,14 @@ namespace MyTts.Services
             ILogger<Mp3Service> logger,
             IMp3Repository mp3FileRepository,
             ITtsClient ttsClient,
-            IRedisCacheService? cache,
+            IRedisCacheService cache,
             ICache<int, string> ozetCache,
             IServiceScopeFactory serviceScopeFactory)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _mp3FileRepository = mp3FileRepository ?? throw new ArgumentNullException(nameof(mp3FileRepository));
             _ttsClient = ttsClient ?? throw new ArgumentNullException(nameof(ttsClient));
-            _cache = cache;
+            _cache = cache ?? throw new ArgumentNullException(nameof(cache));
             _processingSemaphore = new SemaphoreSlim(MaxConcurrentProcessing);
             _ozetCache = ozetCache;
             _serviceScopeFactory = serviceScopeFactory ?? throw new ArgumentNullException(nameof(serviceScopeFactory));
@@ -166,8 +166,8 @@ namespace MyTts.Services
             {
                 var existingHash = _ozetCache.Get(news.IlgiId);
                 var isSame = existingHash == null || !TextHasher.HasTextChangedMd5(news.Ozet, existingHash);
-               
-                if (await _mp3FileRepository.FileExistsAnywhereAsync(news.IlgiId, language, fileType, cancellationToken) && isSame)
+                var inRedis = await _cache.ExistsAsync($"mp3stream:{news.IlgiId}", cancellationToken);
+                if (await _mp3FileRepository.FileExistsAnywhereAsync(news.IlgiId, language, fileType, cancellationToken) && (isSame||inRedis))
                 {
                     savedNewsList.Add(news);                   
                 }
@@ -229,9 +229,7 @@ namespace MyTts.Services
         public async Task<IEnumerable<Mp3Dto>> GetFeedByLanguageAsync(ListRequest listRequest, CancellationToken cancellationToken)
         {
             var cacheKey = $"feed_{listRequest.Language}";
-            return _cache != null
-                ? await _cache.GetAsync<IEnumerable<Mp3Dto>>(cacheKey) ?? Enumerable.Empty<Mp3Dto>()
-                : Enumerable.Empty<Mp3Dto>();
+            return await _cache.GetAsync<IEnumerable<Mp3Dto>>(cacheKey) ?? Enumerable.Empty<Mp3Dto>();
         }
         public async Task<Mp3Dto> GetMp3FileAsync(int id, string language, AudioType fileType, CancellationToken cancellationToken)
         {
@@ -412,7 +410,7 @@ namespace MyTts.Services
             {
                 // Check cache first
                 string cacheKey = $"mp3disk:{id}";
-                var cachedPath = _cache != null ? await _cache.GetAsync<string>(cacheKey) : null;
+                var cachedPath = await _cache.GetAsync<string>(cacheKey);
 
                 string filePath;
                 if (cachedPath != null)

@@ -40,5 +40,17 @@ namespace MyTts.Services
             _logger.LogWarning("Redis is not available. Skipping connection check.");
             return Task.FromResult(false);
         }
+
+        Task IRedisCacheService.SetBytesAsync(string key, byte[] value, TimeSpan? expiry, CancellationToken cancellationToken)
+        {
+            _logger.LogWarning("Redis is not available. Skipping cache set for key: {Key}", key);
+            return Task.CompletedTask;
+        }
+
+        Task<byte[]?> IRedisCacheService.GetBytesAsync(string key, CancellationToken cancellationToken)
+        {
+            _logger.LogWarning("Redis is not available. Returning default value for key: {Key}", key);
+            return Task.FromResult<byte[]?>(default);
+        }
     }
 }

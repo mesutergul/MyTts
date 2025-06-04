@@ -5,30 +5,29 @@ using Polly.Retry;
 using Polly.Extensions.Http;
 using Polly.CircuitBreaker;
 using StackExchange.Redis;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace MyTts.Config.ServiceConfigurations
 {
     public class SharedPolicyFactory
     {
         private readonly ILogger<SharedPolicyFactory> _logger;
-        private readonly Func<INotificationService> _notificationServiceFactory;
+        private readonly IServiceProvider _serviceProvider;
         private static readonly ResiliencePropertyKey<string> RecipientKey = new("recipient");
 
         public SharedPolicyFactory(ILogger<SharedPolicyFactory> logger, IServiceProvider serviceProvider)
         {
             _logger = logger;
-            _notificationServiceFactory = () => serviceProvider.GetRequiredService<INotificationService>();
+            _serviceProvider = serviceProvider;
         }
 
         private async Task TrySendNotificationAsync(string title, string message, NotificationType type)
         {
             try
             {
-                var notificationService = _notificationServiceFactory();
-                if (notificationService != null)
-                {
-                    await notificationService.SendNotificationAsync(title, message, type);
-                }
+                using var scope = _serviceProvider.CreateScope();
+                var notificationService = scope.ServiceProvider.GetRequiredService<INotificationService>();
+                await notificationService.SendNotificationAsync(title, message, type);
             }
             catch (Exception ex)
             {

@@ -136,5 +136,55 @@ public async Task<T?> GetAsync<T>(string key, CancellationToken cancellationToke
         }
 
         private string GetKey(string key) => $"{_config.InstanceName}{key}";
+        public async Task SetBytesAsync(string key, byte[] value, TimeSpan? expiry = null, CancellationToken cancellationToken = default)
+        {
+            if (_db == null || !_redis.IsConnected)
+            {
+                _logger.LogWarning("Redis connection not available for SET_BYTES operation. Key: {Key}", key);
+                return;
+            }
+
+            await _circuitBreaker.ExecuteAsync(async (ct) =>
+            {
+                await _db.StringSetAsync(
+                    GetKey(key),
+                    value,
+                    expiry ?? TimeSpan.FromMinutes(_config.DefaultExpirationMinutes)
+                );
+            }, $"SET_BYTES_{key}");
+        }
+
+        public async Task<byte[]?> GetBytesAsync(string key, CancellationToken cancellationToken = default)
+        {
+            if (_db == null || !_redis.IsConnected)
+            {
+                _logger.LogWarning("Redis connection not available for GET_BYTES operation. Key: {Key}", key);
+                return default;
+            }
+
+            return await _circuitBreaker.ExecuteAsync(async (ct) =>
+            {
+                ResiliencePropertyKey<string> OperationKey = new("OperationKey");
+                var context = ResilienceContextPool.Shared.Get(cancellationToken);
+                context.Properties.Set(OperationKey, $"TTS_BYTES_{key}");
+
+                try
+                {
+                    var result = await _retryPolicy.ExecuteAsync(async (ctx) =>
+                    {
+                        return await _db.StringGetAsync(GetKey(key));
+                    }, context);
+
+                    if (result.IsNull)
+                        return default;
+
+                    return (byte[]?)result; // Cast RedisValue to byte[]
+                }
+                finally
+                {
+                    ResilienceContextPool.Shared.Return(context);
+                }
+            }, $"GET_BYTES_{key}");
+        }
     }
 }

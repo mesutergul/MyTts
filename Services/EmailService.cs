@@ -12,15 +12,18 @@ namespace MyTts.Services
         private readonly ILogger<EmailService> _logger;
         private readonly EmailConfig _emailConfig;
         private readonly SharedPolicyFactory _policyFactory;
+        private readonly SmtpClient _smtpClient;
 
         public EmailService(
             ILogger<EmailService> logger,
             IOptions<EmailConfig> emailConfig,
-            SharedPolicyFactory policyFactory)
+            SharedPolicyFactory policyFactory,
+            SmtpClient smtpClient)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _emailConfig = emailConfig?.Value ?? throw new ArgumentNullException(nameof(emailConfig));
             _policyFactory = policyFactory ?? throw new ArgumentNullException(nameof(policyFactory));
+            _smtpClient = smtpClient ?? throw new ArgumentNullException(nameof(smtpClient));
         }
 
         public async Task SendEmailAsync(string to, string subject, string body, bool isHtml = false)
@@ -38,15 +41,6 @@ namespace MyTts.Services
                 var policy = _policyFactory.GetEmailPolicy<object>();
                 await policy.ExecuteAsync<object>(async (ctx) =>
                 {
-                    using var client = new SmtpClient(_emailConfig.SmtpServer, _emailConfig.SmtpPort)
-                    {
-                        EnableSsl = _emailConfig.EnableSsl,
-                        Credentials = new System.Net.NetworkCredential(_emailConfig.SenderEmail, _emailConfig.SenderPassword),
-                        Timeout = _emailConfig.TimeoutSeconds * 1000, // Convert seconds to milliseconds
-                        DeliveryMethod = SmtpDeliveryMethod.Network,
-                        UseDefaultCredentials = false
-                    };
-
                     using var message = new MailMessage
                     {
                         From = new MailAddress(_emailConfig.SenderEmail, _emailConfig.SenderName),
@@ -73,7 +67,7 @@ namespace MyTts.Services
 
                     try
                     {
-                        await client.SendMailAsync(message);
+                        await _smtpClient.SendMailAsync(message);
                         _logger.LogInformation("Email sent successfully to {Recipients}", string.Join(", ", to));
                         return null!;
                     }
