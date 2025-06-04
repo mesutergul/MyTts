@@ -56,6 +56,8 @@ namespace MyTts.Config.ServiceConfigurations
                 options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
                 options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
                 options.DefaultScheme = JwtBearerDefaults.AuthenticationScheme;
+                options.DefaultForbidScheme = JwtBearerDefaults.AuthenticationScheme;
+                options.RequireAuthenticatedSignIn = false;  // Make authentication optional by default
             })
             .AddJwtBearer(options =>
             {
@@ -74,19 +76,48 @@ namespace MyTts.Config.ServiceConfigurations
                 // Handle token from query string for streaming endpoints
                 options.Events = new JwtBearerEvents
                 {
-                    OnMessageReceived = context =>
-                    {
-                        var accessToken = context.Request.Query["access_token"];
-                        var path = context.HttpContext.Request.Path;
+                    OnAuthenticationFailed = context =>
+            {
+                // Only log and handle failures for routes where authentication IS expected
+                if (context.Exception.GetType() == typeof(SecurityTokenExpiredException))
+                {
+                    context.Response.Headers.Add("Token-Expired", "true");
+                }
+                // Log other authentication failures for debugging protected routes
+                return Task.CompletedTask;
+            },
+            OnMessageReceived = context =>
+            {
+                var accessToken = context.Request.Query["access_token"];
+                var path = context.HttpContext.Request.Path;
 
-                        // Allow token via query string for streaming endpoints
-                        if (!string.IsNullOrEmpty(accessToken) &&
-                            (path.StartsWithSegments("/mp3/stream") || path.StartsWithSegments("/mp3/download")))
-                        {
-                            context.Token = accessToken;
-                        }
-                        return Task.CompletedTask;
-                    }
+                // Allow token via query string ONLY for designated streaming endpoints
+                if (!string.IsNullOrEmpty(accessToken) &&
+                    (path.StartsWithSegments("/mp3/stream") || path.StartsWithSegments("/mp3/download")))
+                {
+                    context.Token = accessToken;
+                }
+                return Task.CompletedTask;
+            },
+            OnChallenge = context =>
+            {
+                // Customize 401/403 responses if needed, for PROTECTED routes
+                // context.Response.ContentType = "application/json";
+                // context.Response.StatusCode = (int)HttpStatusCode.Unauthorized;
+                // return context.Response.WriteAsync(JsonSerializer.Serialize(new { error = "Authentication Required" }));
+                return Task.CompletedTask;
+            },
+            OnForbidden = context =>
+            {
+                // Customize 403 response if needed, for PROTECTED routes
+                return Task.CompletedTask;
+            },
+            OnTokenValidated = context =>
+            {
+                // Add custom logic after a token is successfully validated, for PROTECTED routes
+                // Example: Add custom claims, refresh token logic etc.
+                return Task.CompletedTask;
+            }
                 };
             });
 
@@ -101,11 +132,6 @@ namespace MyTts.Config.ServiceConfigurations
 
                 options.AddPolicy("UserOrAdmin", policy =>
                     policy.RequireRole("User", "Admin"));
-
-                // Custom policy for API access
-                options.AddPolicy("ApiAccess", policy =>
-                    policy.RequireAuthenticatedUser()
-                          .RequireClaim("scope", "api_access"));
             });
 
             // Register authentication services

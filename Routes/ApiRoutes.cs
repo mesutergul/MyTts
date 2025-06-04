@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using MyTts.Models;
 using MyTts.Services.Interfaces;
+using Microsoft.AspNetCore.Authorization;
 
 namespace MyTts.Routes
 {
@@ -236,7 +237,9 @@ namespace MyTts.Routes
                 .WithDisplayName("Get Merged MP3 File")
                 .Produces(200)
                 .ProducesProblem(404)
-                .ProducesProblem(500);
+                .ProducesProblem(500)
+                .AllowAnonymous()
+                .WithMetadata(new AllowAnonymousAttribute());
         }
 
         /// <summary>

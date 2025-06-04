@@ -1,35 +1,10 @@
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc; // For [FromBody]
-using Microsoft.AspNetCore.Routing;
-using Microsoft.Extensions.Logging;
 using MyTts.Services.Interfaces; // Assuming IAuthService is here
 using System.Security.Claims;
-using System.Threading.Tasks;
-using Microsoft.AspNetCore.Authorization;
 using MyTts.Models.Auth;
 
 namespace MyTts.Routes
 {
-
-
-    // Assuming these models/services exist in your project
-    // namespace YourApp.Models.Requests
-    // {
-    //     public class RegisterRequest { public string Email { get; set; } public string Password { get; set; } }
-    //     public class LoginRequest { public string Email { get; set; } public string Password { get; set; } }
-    // }
-    // namespace YourApp.Services
-    // {
-    //     public interface IAuthService {
-    //         Task<object?> RegisterAsync(RegisterRequest request);
-    //         Task<object?> LoginAsync(LoginRequest request);
-    //         Task<object?> RefreshTokenAsync(string refreshToken);
-    //         Task RevokeTokenAsync(string refreshToken);
-    //         Task<object?> GetUserInfoAsync(string userId);
-    //     }
-    // }
-
     public static class AuthApiRoutes
     {
         private const string BaseRoute = "api/auth";

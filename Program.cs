@@ -12,6 +12,10 @@ using Microsoft.Extensions.Options;
 using Polly;
 using StackExchange.Redis;
 using MyTts.Services.Interfaces;
+using MyTts.Extensions;
+using Microsoft.Extensions.Logging;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Authentication;
 
 /*
 ffmpeg -i input.mp3 -filter:a loudnorm output_normalized.mp3
@@ -23,32 +27,52 @@ curl -X GET http://localhost:5209/api/auth/me \
           -H "Authorization: Bearer $TOKEN"
 */
 
-//Configure FFmpeg with absolute path
- string baseDir = AppContext.BaseDirectory;
-string ffmpegDir = Path.Combine(baseDir, "ffmpeg-bin");
+// //Configure FFmpeg with absolute path
+//  string baseDir = AppContext.BaseDirectory;
+// string ffmpegDir = Path.Combine(baseDir, "ffmpeg-bin");
 
-// Ensure FFmpeg directory exists
-if (!Directory.Exists(ffmpegDir))
-{
-    throw new DirectoryNotFoundException($"FFmpeg directory not found at: {ffmpegDir}");
-}
+// // Ensure FFmpeg directory exists
+// if (!Directory.Exists(ffmpegDir))
+// {
+//     throw new DirectoryNotFoundException($"FFmpeg directory not found at: {ffmpegDir}");
+// }
 
-// Ensure FFmpeg executables exist
-string ffmpegExe = Path.Combine(ffmpegDir, "ffmpeg.exe");
-string ffprobeExe = Path.Combine(ffmpegDir, "ffprobe.exe");
+// // Ensure FFmpeg executables exist
+// string ffmpegExe = Path.Combine(ffmpegDir, "ffmpeg.exe");
+// string ffprobeExe = Path.Combine(ffmpegDir, "ffprobe.exe");
 
-if (!File.Exists(ffmpegExe) || !File.Exists(ffprobeExe))
-{
-    throw new FileNotFoundException($"FFmpeg executables not found in: {ffmpegDir}");
-}
+// if (!File.Exists(ffmpegExe) || !File.Exists(ffprobeExe))
+// {
+//     throw new FileNotFoundException($"FFmpeg executables not found in: {ffmpegDir}");
+// }
 
-FFMpegCore.GlobalFFOptions.Configure(new FFMpegCore.FFOptions
-{
-    BinaryFolder = ffmpegDir,
-    TemporaryFilesFolder = Path.GetTempPath()
-});
+// FFMpegCore.GlobalFFOptions.Configure(new FFMpegCore.FFOptions
+// {
+//     BinaryFolder = ffmpegDir,
+//     TemporaryFilesFolder = Path.GetTempPath()
+// });
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Configure logging
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole(options =>
+{
+    options.IncludeScopes = true;
+    options.TimestampFormat = "[yyyy-MM-dd HH:mm:ss] ";
+});
+
+// Add logging filter to suppress authentication debug messages
+builder.Logging.AddFilter((category, level) =>
+{
+    // Suppress all authentication debug messages
+    if (category == "Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerHandler" &&
+        level == LogLevel.Debug)
+    {
+        return false; // Don't log any JWT Bearer debug messages
+    }
+    return true; // Log everything else
+});
 
 // Add services to the container
 builder.Services
@@ -62,7 +86,8 @@ builder.Services
     .AddEmailServices(builder.Configuration)
     .AddHttpClientsServices()
     .AddRedisServices(builder.Configuration)
-    .AddApiServices();
+    .AddApiServices()
+    .AddHttpContextAccessor();
 // Inside Program.cs, after all AddServices calls:
 //builder.Services.AddSingleton<SharedPolicyFactory>();
 
@@ -120,6 +145,13 @@ builder.Services
 //    tempServiceProvider.Dispose();
 //}
 var app = builder.Build();
+
+app.UseErrorHandlerMiddleware(middleware =>
+{
+    // Optional: Add or override custom exception mappings here
+    // For example, if you want a specific custom exception to return a 409 Conflict
+    // middleware.AddExceptionMapping(typeof(MyCustomConflictException), HttpStatusCode.Conflict);
+});
 
 // ✅ SEED ADMIN ROLE & USER HERE
 using (var scope = app.Services.CreateScope())
@@ -191,26 +223,54 @@ app.UseForwardedHeaders(new ForwardedHeadersOptions
     ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
 });
 
+app.UseRouting();
+app.UseCors("AllowLocalDevelopment");
+
+// Add custom middleware to skip authentication for specific paths
+// app.Use(async (context, next) =>
+// {
+//     var path = context.Request.Path.Value?.ToLower();
+//     if (path?.StartsWith("/testerror") == true || 
+//         path?.StartsWith("/.well-known") == true ||
+//         path?.StartsWith("/api/mp3/merged") == true)
+//     {
+//         // Skip authentication for test routes, Chrome DevTools, and merged MP3
+//         context.Features.Set<IAuthenticationFeature>(new AuthenticationFeature());
+//         await next();
+//         return;
+//     }
+//     await next();
+// });
+app.UseWhen(context =>
+{
+    var path = context.Request.Path;
+    var excludeFromAuth =
+        path.StartsWithSegments("/testerror") ||
+        path.StartsWithSegments("/.well-known") ||
+        path.StartsWithSegments("/api/mp3/merged") ||
+        path.StartsWithSegments("/static");
+
+    // THIS LINE IS CRITICAL FOR DIAGNOSIS
+    Console.WriteLine($"[DEBUG UseWhen Predicate] Path: '{path}', Exclude from Auth: {excludeFromAuth}");
+
+    return !excludeFromAuth; 
+}, appBuilder =>
+{
+    // Only apply authentication and authorization middleware to paths that are NOT excluded
+    appBuilder.UseAuthentication();
+    appBuilder.UseAuthorization();
+});
+// Configure endpoints
+ApiRoutes.RegisterMp3Routes(app);
+// Register your new Auth routes
+AuthApiRoutes.RegisterAuthRoutes(app);
+// Register test error routes
+TestErrorRoutes.RegisterTestErrorRoutes(app);
 // Configure middleware
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
 }
-
-app.UseRouting();
-app.UseCors("AllowLocalDevelopment");
-
-// Add authentication and authorization middleware
-app.UseAuthentication();
-app.UseAuthorization(); // Move this after UseAuthentication
-
-
-// Configure endpoints
-ApiRoutes.RegisterMp3Routes(app);
-// Register your new Auth routes
-AuthApiRoutes.RegisterAuthRoutes(app);
-//app.MapControllers();
-
 // Log listening addresses
 foreach (var address in app.Urls)
 {
