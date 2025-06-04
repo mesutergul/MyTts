@@ -1,13 +1,12 @@
 ﻿using Microsoft.Extensions.Caching.Memory;
 using MyTts.Services.Interfaces;
+using System;
+using System.Collections.Generic;
 
 namespace MyTts.Services
 {
-    using System;
-    using System.Collections.Generic;
-    using Microsoft.Extensions.Caching.Memory;
-
-    public class LimitedMemoryCache<TKey, TValue> : ICache<TKey, TValue>
+    public class LimitedMemoryCache<TKey, TValue> : ICache<TKey, TValue> 
+        where TKey : notnull
     {
         private readonly MemoryCache _cache;
         private readonly MemoryCacheEntryOptions _entryOptions;
@@ -19,6 +18,13 @@ namespace MyTts.Services
 
         public LimitedMemoryCache(int softLimit = 80, int maxItems = 100)
         {
+            if (softLimit <= 0)
+                throw new ArgumentOutOfRangeException(nameof(softLimit), "Soft limit must be greater than 0");
+            if (maxItems <= 0)
+                throw new ArgumentOutOfRangeException(nameof(maxItems), "Max items must be greater than 0");
+            if (softLimit > maxItems)
+                throw new ArgumentException("Soft limit cannot be greater than max items", nameof(softLimit));
+
             _softLimit = softLimit;
             _maxItems = maxItems;
 
@@ -54,10 +60,9 @@ namespace MyTts.Services
             }
         }
 
-        public void SetRange(Dictionary<TKey, TValue> existingHashList)
+        public void SetRange(IReadOnlyDictionary<TKey, TValue> existingHashList)
         {
-            if (existingHashList == null)
-                throw new ArgumentNullException(nameof(existingHashList));
+            ArgumentNullException.ThrowIfNull(existingHashList);
 
             lock (_lock)
             {
@@ -83,20 +88,27 @@ namespace MyTts.Services
 
             lock (_lock)
             {
-                return _cache.TryGetValue(key, out TValue result) ? result : default!;
+                if (_cache.TryGetValue(key, out var result) && result is TValue nonNullResult)
+                {
+                    return nonNullResult;
+                }
+                return default!;
             }
         }
 
         public bool TryGetValue(TKey key, out TValue value)
         {
             ArgumentNullException.ThrowIfNull(key);
-            value = default!;
 
             lock (_lock)
             {
-                var found = _cache.TryGetValue(key, out TValue result);
-                value = result!;
-                return found;
+                if (_cache.TryGetValue(key, out var result) && result is TValue nonNullResult)
+                {
+                    value = nonNullResult;
+                    return true;
+                }
+                value = default!;
+                return false;
             }
         }
 
@@ -140,14 +152,9 @@ namespace MyTts.Services
             while (_keyOrder.Count > _softLimit && _keyOrder.First != null)
             {
                 var oldestKey = _keyOrder.First.Value;
-                if (oldestKey != null)
-                {
-                    _cache.Remove(oldestKey);
-                    _keyOrder.RemoveFirst();
-                }
+                _cache.Remove(oldestKey);
+                _keyOrder.RemoveFirst();
             }
         }
     }
-
-
 }

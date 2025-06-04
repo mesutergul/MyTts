@@ -25,17 +25,15 @@ namespace MyTts.Extensions
         /// <returns>The <see cref="IApplicationBuilder"/> instance.</returns>
         public static IApplicationBuilder UseErrorHandlerMiddleware(this IApplicationBuilder builder, Action<ErrorHandlerMiddleware> configureOptions)
         {
-            // Create an instance of the middleware to allow configuration before it's added to the pipeline.
-            // This is a bit of a trick as middleware is usually instantiated by DI,
-            // but for configuration, we can manually create it and then use its type.
-            var middlewareInstance = (ErrorHandlerMiddleware)builder.ApplicationServices.GetService(typeof(ErrorHandlerMiddleware))
-                                     ?? Activator.CreateInstance(typeof(ErrorHandlerMiddleware), builder.ApplicationServices.GetService<RequestDelegate>(),
-                                                                builder.ApplicationServices.GetService<ILogger<ErrorHandlerMiddleware>>(),
-                                                                builder.ApplicationServices.GetService<IHostEnvironment>()) as ErrorHandlerMiddleware;
-
+            // Create an instance of the middleware to allow configuration before it's added to the pipeline
+            var middlewareInstance = builder.ApplicationServices.GetService<ErrorHandlerMiddleware>();
+            
             if (middlewareInstance == null)
             {
-                throw new InvalidOperationException("Could not create an instance of ErrorHandlerMiddleware for configuration. Ensure it's registered with DI if you're using this overload.");
+                // If not registered in DI, create a new instance
+                middlewareInstance = new ErrorHandlerMiddleware(
+                    builder.ApplicationServices.GetRequiredService<ILogger<ErrorHandlerMiddleware>>(),
+                    builder.ApplicationServices.GetRequiredService<IHostEnvironment>());
             }
 
             configureOptions(middlewareInstance);

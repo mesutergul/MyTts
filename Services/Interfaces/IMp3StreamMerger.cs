@@ -16,7 +16,6 @@ namespace MyTts.Services.Interfaces
             string breakAudioPath,
             string startAudioPath,
             string endAudioPath,
-            ResilienceContext resilienceContext = default,
             CancellationToken cancellationToken = default);
     }
 }

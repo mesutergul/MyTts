@@ -2,26 +2,29 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc; // For ProblemDetails
 using Microsoft.Extensions.Hosting; // For IHostEnvironment
 using Microsoft.Extensions.Logging;
+using StackExchange.Redis;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Net;
+using System.Net.Mail;
 using System.Text.Json;
 using System.Threading.Tasks;
+using static MyTts.Services.Mp3StreamMerger;
 
 namespace MyTts.Middleware
 {
     public class ErrorHandlerMiddleware
     {
-        private readonly RequestDelegate _next;
+        private readonly RequestDelegate? _next;
         private readonly ILogger<ErrorHandlerMiddleware> _logger;
         private readonly IHostEnvironment _env;
         private readonly Dictionary<Type, HttpStatusCode> _exceptionStatusCodeMap;
 
         public ErrorHandlerMiddleware(
-            RequestDelegate next,
             ILogger<ErrorHandlerMiddleware> logger,
-            IHostEnvironment env)
+            IHostEnvironment env,
+            RequestDelegate? next = null)
         {
             _next = next;
             _logger = logger;
@@ -41,7 +44,43 @@ namespace MyTts.Middleware
                 { typeof(TimeoutException), HttpStatusCode.GatewayTimeout }, // Outgoing service call timeout
                 { typeof(HttpRequestException), HttpStatusCode.BadGateway }, // Outgoing HTTP call failure
                 { typeof(IOException), HttpStatusCode.InternalServerError }, // File/network I/O issues
-                { typeof(BadHttpRequestException), HttpStatusCode.BadRequest } // Malformed incoming request
+                { typeof(BadHttpRequestException), HttpStatusCode.BadRequest }, // Malformed incoming request
+                { typeof(ObjectDisposedException), HttpStatusCode.ServiceUnavailable }, // For disposed objects
+                { typeof(JsonException), HttpStatusCode.BadRequest }, // JSON parsing errors
+                { typeof(NotSupportedException), HttpStatusCode.BadRequest }, // Unsupported operations
+                { typeof(OperationCanceledException), HttpStatusCode.ServiceUnavailable }, // Operation cancellation
+                { typeof(SmtpException), HttpStatusCode.ServiceUnavailable }, // Email sending failures
+                { typeof(RedisConnectionException), HttpStatusCode.ServiceUnavailable }, // Redis connection issues
+                { typeof(FFmpegException), HttpStatusCode.InternalServerError }, // FFmpeg processing errors
+                { typeof(StorageException), HttpStatusCode.InternalServerError }, // Storage operation failures
+                { typeof(RateLimitExceededException), HttpStatusCode.TooManyRequests }, // Rate limiting
+                { typeof(DatabaseConnectionException), HttpStatusCode.ServiceUnavailable }, // Database connection issues
+                { typeof(DatabaseTimeoutException), HttpStatusCode.GatewayTimeout }, // Database timeout
+                { typeof(DatabaseDeadlockException), HttpStatusCode.Conflict }, // Database deadlock
+                { typeof(DatabaseConstraintException), HttpStatusCode.BadRequest }, // Database constraint violation
+                { typeof(EntityFrameworkException), HttpStatusCode.InternalServerError }, // General EF errors
+                { typeof(EntityNotFoundException), HttpStatusCode.NotFound }, // Entity not found
+                { typeof(EntityConcurrencyException), HttpStatusCode.Conflict }, // EF concurrency conflicts
+                { typeof(EntityValidationException), HttpStatusCode.BadRequest }, // EF validation failures
+                { typeof(DependencyInjectionException), HttpStatusCode.InternalServerError }, // General DI errors
+                { typeof(ServiceNotRegisteredException), HttpStatusCode.InternalServerError }, // Missing service registration
+                { typeof(CircularDependencyException), HttpStatusCode.InternalServerError }, // Circular dependencies
+                { typeof(AmbiguousServiceException), HttpStatusCode.InternalServerError }, // Ambiguous service resolution
+                { typeof(NotificationException), HttpStatusCode.InternalServerError }, // General notification errors
+                { typeof(NotificationTemplateNotFoundException), HttpStatusCode.InternalServerError }, // Missing notification template
+                { typeof(InvalidNotificationRecipientException), HttpStatusCode.BadRequest }, // Invalid notification recipient
+                { typeof(EmailException), HttpStatusCode.InternalServerError }, // General email errors
+                { typeof(EmailTemplateNotFoundException), HttpStatusCode.InternalServerError }, // Missing email template
+                { typeof(InvalidEmailRecipientException), HttpStatusCode.BadRequest }, // Invalid email recipient
+                { typeof(InvalidEmailAttachmentException), HttpStatusCode.BadRequest }, // Invalid email attachment
+                { typeof(AuthenticationException), HttpStatusCode.Unauthorized }, // General authentication errors
+                { typeof(InvalidCredentialsException), HttpStatusCode.Unauthorized }, // Invalid credentials
+                { typeof(InvalidTokenException), HttpStatusCode.Unauthorized }, // Invalid token
+                { typeof(TokenExpiredException), HttpStatusCode.Unauthorized }, // Expired token
+                { typeof(AuthorizationException), HttpStatusCode.Forbidden }, // General authorization errors
+                { typeof(InsufficientPermissionsException), HttpStatusCode.Forbidden }, // Insufficient permissions
+                { typeof(AccountLockedException), HttpStatusCode.Forbidden }, // Account locked
+                { typeof(AccountDisabledException), HttpStatusCode.Forbidden } // Account disabled
             };
         }
 
@@ -49,7 +88,10 @@ namespace MyTts.Middleware
         {
             try
             {
-                await _next(context); // Call the next middleware in the pipeline
+                if (_next != null)
+                {
+                    await _next(context);
+                }
             }
             catch (Exception ex)
             {

@@ -11,7 +11,7 @@ namespace MyTts.Routes
     {
         private const string BaseRoute = "testerror";
         private const string ApiName = "testerror";
-        private class TestErrorRoutesLoggerCategory { }
+        private sealed class TestErrorRoutesLoggerCategory { }
 
         public static void RegisterTestErrorRoutes(IEndpointRouteBuilder endpoints)
         {
@@ -22,20 +22,18 @@ namespace MyTts.Routes
 
             // General runtime exception
             testErrorGroup.MapGet("general-error",
-                async ([FromServices] ILogger<TestErrorRoutesLoggerCategory> logger) =>
+                ([FromServices] ILogger<TestErrorRoutesLoggerCategory> logger) =>
                 {
                     logger.LogInformation("Simulating general runtime error");
                     throw new InvalidOperationException("This is a simulated general runtime error in business logic.");
                 })
                 .WithName($"{ApiName}.general-error")
                 .WithDisplayName("Simulate General Error")
-                .Produces(500)
-                .AllowAnonymous()
-                .WithMetadata(new AllowAnonymousAttribute());
+                .Produces(500);
 
             // I/O error
             testErrorGroup.MapGet("io-error",
-                async ([FromServices] ILogger<TestErrorRoutesLoggerCategory> logger) =>
+                ([FromServices] ILogger<TestErrorRoutesLoggerCategory> logger) =>
                 {
                     logger.LogInformation("Simulating I/O error");
                     string path = Path.Combine(Path.GetTempPath(), "nonexistent_dir_12345", "test.txt");
@@ -44,9 +42,7 @@ namespace MyTts.Routes
                 })
                 .WithName($"{ApiName}.io-error")
                 .WithDisplayName("Simulate I/O Error")
-                .Produces(500)
-                .AllowAnonymous()
-                .WithMetadata(new AllowAnonymousAttribute());
+                .Produces(500);
 
             // Network error
             testErrorGroup.MapGet("network-error",
@@ -54,16 +50,14 @@ namespace MyTts.Routes
                        [FromServices] ILogger<TestErrorRoutesLoggerCategory> logger) =>
                 {
                     logger.LogInformation("Simulating network error");
-                    var client = httpClientFactory.CreateClient();
+                    using var client = httpClientFactory.CreateClient();
                     var response = await client.GetAsync("http://localhost:9999/non-existent-api");
                     response.EnsureSuccessStatusCode();
                     return Results.Ok("Network call successful (should not happen).");
                 })
                 .WithName($"{ApiName}.network-error")
                 .WithDisplayName("Simulate Network Error")
-                .Produces(502)
-                .AllowAnonymous()
-                .WithMetadata(new AllowAnonymousAttribute());
+                .Produces(502);
 
             // Timeout error
             testErrorGroup.MapGet("timeout-error",
@@ -71,7 +65,7 @@ namespace MyTts.Routes
                        [FromServices] ILogger<TestErrorRoutesLoggerCategory> logger) =>
                 {
                     logger.LogInformation("Simulating timeout error");
-                    var client = httpClientFactory.CreateClient();
+                    using var client = httpClientFactory.CreateClient();
                     client.Timeout = TimeSpan.FromMilliseconds(10);
                     try
                     {
@@ -85,26 +79,22 @@ namespace MyTts.Routes
                 })
                 .WithName($"{ApiName}.timeout-error")
                 .WithDisplayName("Simulate Timeout Error")
-                .Produces(504)
-                .AllowAnonymous()
-                .WithMetadata(new AllowAnonymousAttribute());
+                .Produces(504);
 
             // Custom not found
             testErrorGroup.MapGet("custom-not-found",
-                async ([FromServices] ILogger<TestErrorRoutesLoggerCategory> logger) =>
+                ([FromServices] ILogger<TestErrorRoutesLoggerCategory> logger) =>
                 {
                     logger.LogInformation("Simulating custom not found error");
                     throw new NotFoundException("The requested item was not found in our system.");
                 })
                 .WithName($"{ApiName}.custom-not-found")
                 .WithDisplayName("Simulate Custom Not Found")
-                .Produces(404)
-                .AllowAnonymous()
-                .WithMetadata(new AllowAnonymousAttribute());
+                .Produces(404);
 
             // Custom bad request
             testErrorGroup.MapGet("custom-bad-request",
-                async ([FromQuery] string input,
+                ([FromQuery] string? input,
                        [FromServices] ILogger<TestErrorRoutesLoggerCategory> logger) =>
                 {
                     logger.LogInformation("Testing custom bad request with input: {Input}", input);
@@ -117,35 +107,29 @@ namespace MyTts.Routes
                 .WithName($"{ApiName}.custom-bad-request")
                 .WithDisplayName("Simulate Custom Bad Request")
                 .Produces(200)
-                .Produces(400)
-                .AllowAnonymous()
-                .WithMetadata(new AllowAnonymousAttribute());
+                .Produces(400);
 
             // Unauthorized access
             testErrorGroup.MapGet("unauthorized-access",
-                async ([FromServices] ILogger<TestErrorRoutesLoggerCategory> logger) =>
+                ([FromServices] ILogger<TestErrorRoutesLoggerCategory> logger) =>
                 {
                     logger.LogInformation("Simulating unauthorized access error");
                     throw new UnauthorizedAccessException("You do not have sufficient permissions to access this resource.");
                 })
                 .WithName($"{ApiName}.unauthorized-access")
                 .WithDisplayName("Simulate Unauthorized Access")
-                .Produces(403)
-                .AllowAnonymous()
-                .WithMetadata(new AllowAnonymousAttribute());
+                .Produces(403);
 
             // Success case
             testErrorGroup.MapGet("success",
-                async ([FromServices] ILogger<TestErrorRoutesLoggerCategory> logger) =>
+                ([FromServices] ILogger<TestErrorRoutesLoggerCategory> logger) =>
                 {
                     logger.LogInformation("Simulating successful operation");
                     return Results.Ok("Operation successful!");
                 })
                 .WithName($"{ApiName}.success")
                 .WithDisplayName("Simulate Success")
-                .Produces(200)
-                .AllowAnonymous()
-                .WithMetadata(new AllowAnonymousAttribute());
+                .Produces(200);
         }
     }
 }

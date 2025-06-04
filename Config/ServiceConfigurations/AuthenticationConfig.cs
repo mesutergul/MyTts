@@ -11,8 +11,20 @@ namespace MyTts.Config.ServiceConfigurations
 {
     public static class AuthConfig
     {
+        private const string JwtSection = "Jwt";
+        private const string KeyName = "Key";
+        private const string IssuerName = "Issuer";
+        private const string AudienceName = "Audience";
+        private const string TokenExpiredHeader = "Token-Expired";
+        private const string AccessTokenQueryParam = "access_token";
+        private const string Mp3StreamPath = "/mp3/stream";
+        private const string Mp3DownloadPath = "/mp3/download";
+
         public static IServiceCollection AddAuthenticationServices(this IServiceCollection services, IConfiguration configuration)
         {
+            ArgumentNullException.ThrowIfNull(services);
+            ArgumentNullException.ThrowIfNull(configuration);
+
             // Configure Identity with your existing AuthDbContext
             services.AddIdentity<ApplicationUser, IdentityRole>(options =>
             {
@@ -41,14 +53,24 @@ namespace MyTts.Config.ServiceConfigurations
             .AddDefaultTokenProviders();
 
             // Configure JWT for API authentication
-            var jwtSettings = configuration.GetSection("Jwt");
-            var key = jwtSettings["Key"];
-            var issuer = jwtSettings["Issuer"];
-            var audience = jwtSettings["Audience"];
+            var jwtSettings = configuration.GetSection(JwtSection);
+            var key = jwtSettings[KeyName];
+            var issuer = jwtSettings[IssuerName];
+            var audience = jwtSettings[AudienceName];
 
             if (string.IsNullOrEmpty(key))
             {
                 throw new InvalidOperationException("JWT Key not configured");
+            }
+
+            if (string.IsNullOrEmpty(issuer))
+            {
+                throw new InvalidOperationException("JWT Issuer not configured");
+            }
+
+            if (string.IsNullOrEmpty(audience))
+            {
+                throw new InvalidOperationException("JWT Audience not configured");
             }
 
             services.AddAuthentication(options =>
@@ -77,47 +99,28 @@ namespace MyTts.Config.ServiceConfigurations
                 options.Events = new JwtBearerEvents
                 {
                     OnAuthenticationFailed = context =>
-            {
-                // Only log and handle failures for routes where authentication IS expected
-                if (context.Exception.GetType() == typeof(SecurityTokenExpiredException))
-                {
-                    context.Response.Headers.Add("Token-Expired", "true");
-                }
-                // Log other authentication failures for debugging protected routes
-                return Task.CompletedTask;
-            },
-            OnMessageReceived = context =>
-            {
-                var accessToken = context.Request.Query["access_token"];
-                var path = context.HttpContext.Request.Path;
+                    {
+                        if (context.Exception is SecurityTokenExpiredException)
+                        {
+                            context.Response.Headers[TokenExpiredHeader] = "true";
+                        }
+                        return Task.CompletedTask;
+                    },
+                    OnMessageReceived = context =>
+                    {
+                        var accessToken = context.Request.Query[AccessTokenQueryParam].FirstOrDefault();
+                        var path = context.HttpContext.Request.Path;
 
-                // Allow token via query string ONLY for designated streaming endpoints
-                if (!string.IsNullOrEmpty(accessToken) &&
-                    (path.StartsWithSegments("/mp3/stream") || path.StartsWithSegments("/mp3/download")))
-                {
-                    context.Token = accessToken;
-                }
-                return Task.CompletedTask;
-            },
-            OnChallenge = context =>
-            {
-                // Customize 401/403 responses if needed, for PROTECTED routes
-                // context.Response.ContentType = "application/json";
-                // context.Response.StatusCode = (int)HttpStatusCode.Unauthorized;
-                // return context.Response.WriteAsync(JsonSerializer.Serialize(new { error = "Authentication Required" }));
-                return Task.CompletedTask;
-            },
-            OnForbidden = context =>
-            {
-                // Customize 403 response if needed, for PROTECTED routes
-                return Task.CompletedTask;
-            },
-            OnTokenValidated = context =>
-            {
-                // Add custom logic after a token is successfully validated, for PROTECTED routes
-                // Example: Add custom claims, refresh token logic etc.
-                return Task.CompletedTask;
-            }
+                        if (!string.IsNullOrEmpty(accessToken) &&
+                            (path.StartsWithSegments(Mp3StreamPath) || path.StartsWithSegments(Mp3DownloadPath)))
+                        {
+                            context.Token = accessToken;
+                        }
+                        return Task.CompletedTask;
+                    },
+                    OnChallenge = context => Task.CompletedTask,
+                    OnForbidden = context => Task.CompletedTask,
+                    OnTokenValidated = context => Task.CompletedTask
                 };
             });
 

@@ -1,5 +1,4 @@
 using Microsoft.AspNetCore.Identity;
-using MyTts.Controllers;
 using MyTts.Data.Context;
 using MyTts.Models.Auth;
 using MyTts.Services;

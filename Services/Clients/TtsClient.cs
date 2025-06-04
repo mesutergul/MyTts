@@ -238,7 +238,6 @@ namespace MyTts.Services.Clients
                     breakAudioPath,
                     startAudioPath,
                     endAudioPath,
-                    ResilienceContextPool.Shared.Get(cancellationToken),
                     cancellationToken);
 
                 stopwatch.Stop();

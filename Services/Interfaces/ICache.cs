@@ -1,5 +1,4 @@
-﻿
-namespace MyTts.Services.Interfaces
+﻿namespace MyTts.Services.Interfaces
 {
     public interface ICache<TKey, TValue>
     {
@@ -8,8 +7,7 @@ namespace MyTts.Services.Interfaces
         bool TryGetValue(TKey key, out TValue value);
         void Remove(TKey key);
         bool IsEmpty();
-        void SetRange(Dictionary<TKey, TValue> existingHashList);
+        void SetRange(IReadOnlyDictionary<TKey, TValue> existingHashList);
         int Count { get; }
     }
-
 }

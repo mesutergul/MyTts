@@ -16,6 +16,7 @@ using MyTts.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.Extensions.Logging.Console;
 
 /*
 ffmpeg -i input.mp3 -filter:a loudnorm output_normalized.mp3
@@ -27,52 +28,52 @@ curl -X GET http://localhost:5209/api/auth/me \
           -H "Authorization: Bearer $TOKEN"
 */
 
-// //Configure FFmpeg with absolute path
-//  string baseDir = AppContext.BaseDirectory;
-// string ffmpegDir = Path.Combine(baseDir, "ffmpeg-bin");
+//Configure FFmpeg with absolute path
+string baseDir = AppContext.BaseDirectory;
+string ffmpegDir = Path.Combine(baseDir, "ffmpeg-bin");
 
-// // Ensure FFmpeg directory exists
-// if (!Directory.Exists(ffmpegDir))
-// {
-//     throw new DirectoryNotFoundException($"FFmpeg directory not found at: {ffmpegDir}");
-// }
+// Ensure FFmpeg directory exists
+if (!Directory.Exists(ffmpegDir))
+{
+    throw new DirectoryNotFoundException($"FFmpeg directory not found at: {ffmpegDir}");
+}
 
-// // Ensure FFmpeg executables exist
-// string ffmpegExe = Path.Combine(ffmpegDir, "ffmpeg.exe");
-// string ffprobeExe = Path.Combine(ffmpegDir, "ffprobe.exe");
+// Ensure FFmpeg executables exist
+string ffmpegExe = Path.Combine(ffmpegDir, "ffmpeg.exe");
+string ffprobeExe = Path.Combine(ffmpegDir, "ffprobe.exe");
 
-// if (!File.Exists(ffmpegExe) || !File.Exists(ffprobeExe))
-// {
-//     throw new FileNotFoundException($"FFmpeg executables not found in: {ffmpegDir}");
-// }
+if (!File.Exists(ffmpegExe) || !File.Exists(ffprobeExe))
+{
+    throw new FileNotFoundException($"FFmpeg executables not found in: {ffmpegDir}");
+}
 
-// FFMpegCore.GlobalFFOptions.Configure(new FFMpegCore.FFOptions
-// {
-//     BinaryFolder = ffmpegDir,
-//     TemporaryFilesFolder = Path.GetTempPath()
-// });
+FFMpegCore.GlobalFFOptions.Configure(new FFMpegCore.FFOptions
+{
+    BinaryFolder = ffmpegDir,
+    TemporaryFilesFolder = Path.GetTempPath()
+});
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Configure logging
-builder.Logging.ClearProviders();
-builder.Logging.AddConsole(options =>
-{
-    options.IncludeScopes = true;
-    options.TimestampFormat = "[yyyy-MM-dd HH:mm:ss] ";
-});
+//builder.Logging.ClearProviders();
+//builder.Logging.AddDebug(); // Add debug output
+//builder.Logging.AddConsole(options =>
+//{
+//    options.IncludeScopes = true;
+//    options.TimestampFormat = "[yyyy-MM-dd HH:mm:ss] ";
+//    options.UseUtcTimestamp = false;
+//});
 
-// Add logging filter to suppress authentication debug messages
-builder.Logging.AddFilter((category, level) =>
-{
-    // Suppress all authentication debug messages
-    if (category == "Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerHandler" &&
-        level == LogLevel.Debug)
-    {
-        return false; // Don't log any JWT Bearer debug messages
-    }
-    return true; // Log everything else
-});
+//// Set minimum log level for the application
+//builder.Logging.SetMinimumLevel(LogLevel.Debug);
+
+//// Add test log to verify logging is working
+//var logger = builder.Services.BuildServiceProvider().GetRequiredService<ILogger<Program>>();
+//logger.LogInformation("Application starting up...");
+//logger.LogDebug("Debug logging is enabled");
+//logger.LogWarning("Warning logging is enabled");
+//logger.LogError("Error logging is enabled");
 
 // Add services to the container
 builder.Services
@@ -241,25 +242,25 @@ app.UseCors("AllowLocalDevelopment");
 //     }
 //     await next();
 // });
-app.UseWhen(context =>
-{
-    var path = context.Request.Path;
-    var excludeFromAuth =
-        path.StartsWithSegments("/testerror") ||
-        path.StartsWithSegments("/.well-known") ||
-        path.StartsWithSegments("/api/mp3/merged") ||
-        path.StartsWithSegments("/static");
+//app.UseWhen(context =>
+//{
+//    var path = context.Request.Path;
+//    var excludeFromAuth =
+//        path.StartsWithSegments("/testerror") ||
+//        path.StartsWithSegments("/.well-known") ||
+//        path.StartsWithSegments("/api/mp3/merged") ||
+//        path.StartsWithSegments("/static");
 
-    // THIS LINE IS CRITICAL FOR DIAGNOSIS
-    Console.WriteLine($"[DEBUG UseWhen Predicate] Path: '{path}', Exclude from Auth: {excludeFromAuth}");
+//    // THIS LINE IS CRITICAL FOR DIAGNOSIS
+//    Console.WriteLine($"[DEBUG UseWhen Predicate] Path: '{path}', Exclude from Auth: {excludeFromAuth}");
 
-    return !excludeFromAuth; 
-}, appBuilder =>
-{
+//    return !excludeFromAuth; 
+//}, appBuilder =>
+//{
     // Only apply authentication and authorization middleware to paths that are NOT excluded
-    appBuilder.UseAuthentication();
-    appBuilder.UseAuthorization();
-});
+    app.UseAuthentication();
+    app.UseAuthorization();
+//});
 // Configure endpoints
 ApiRoutes.RegisterMp3Routes(app);
 // Register your new Auth routes

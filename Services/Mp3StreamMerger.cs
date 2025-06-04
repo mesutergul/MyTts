@@ -39,11 +39,9 @@ namespace MyTts.Services
             string breakAudioPath,
             string startAudioPath,
             string endAudioPath,
-            ResilienceContext resilienceContext,
             CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(audioProcessors);
-            ArgumentNullException.ThrowIfNull(resilienceContext);
             if (!audioProcessors.Any())
             {
                 throw new ArgumentException("No audio processors provided", nameof(audioProcessors));
@@ -133,7 +131,7 @@ namespace MyTts.Services
 
                             var ffmpegOptions = new FFOptions
                             {
-                                // BinaryFolder = Path.Combine(AppContext.BaseDirectory, "ffmpeg-bin"),
+                                BinaryFolder = Path.Combine(AppContext.BaseDirectory, "ffmpeg-bin"),
                                 TemporaryFilesFolder = Path.GetTempPath()
                             };
 
