@@ -484,7 +484,7 @@ namespace MyTts.Services.Clients
             try
             {
                 AudioProcessor audioProcessor = null!;
-
+                string localPath = StoragePathHelper.GetFullPathById(ilgiId, fileType);
                 // --- Try to load from Redis first ---
                 if (await _cache.IsConnectedAsync(cancellationToken))
                 {
@@ -496,19 +496,25 @@ namespace MyTts.Services.Clients
                         {
                             audioProcessor = new AudioProcessor(new VoiceClip(cachedData));
                             _logger.LogInformation("Loaded audio for {Id} from Redis cache.", ilgiId);
-
-                            // Save locally in background without waiting
-                            _ = Task.Run(async () =>
+                            if ((await _localStorageClient.FileExistsAsync(localPath, cancellationToken)).IsSuccess)
                             {
-                                try
+                                _logger.LogInformation("Local file already exists for {Id}, skipping local save.", ilgiId);
+                            }
+                            else
+                            {
+                                // Save locally in background without waiting
+                                _ = Task.Run(async () =>
                                 {
-                                    await SaveLocallyAsync(audioProcessor, StoragePathHelper.GetFullPathById(ilgiId, fileType), CancellationToken.None);
-                                }
-                                catch (Exception ex)
-                                {
-                                    _logger.LogError(ex, "Failed to save audio locally for {Id}", ilgiId);
-                                }
-                            }, CancellationToken.None);
+                                    try
+                                    {
+                                        await SaveLocallyAsync(audioProcessor, localPath, CancellationToken.None);
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        _logger.LogError(ex, "Failed to save audio locally for {Id}", ilgiId);
+                                    }
+                                }, CancellationToken.None);
+                            }
                         }
                     }
                     catch (OperationCanceledException)
@@ -525,7 +531,6 @@ namespace MyTts.Services.Clients
                 if (audioProcessor == null)
                 {
                     // --- If not in cache, load from local storage ---
-                    string localPath = StoragePathHelper.GetFullPathById(ilgiId, fileType);
                     var readResult = await _localStorageClient.ReadAllBytesAsync(localPath, cancellationToken);
                     if (!readResult.IsSuccess)
                     {
