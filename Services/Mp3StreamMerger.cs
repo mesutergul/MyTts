@@ -20,7 +20,6 @@ namespace MyTts.Services
         private const int ProcessTimeoutMs = 30000; // 30 second timeout for FFmpeg process
         private static readonly TimeSpan RateLimitTimeout = TimeSpan.FromSeconds(30);
         private static readonly ResiliencePropertyKey<string> OperationKey = new("OperationKey");
-
         public Mp3StreamMerger(
             ILogger<Mp3StreamMerger> logger, 
             IConfiguration configuration,
@@ -31,7 +30,6 @@ namespace MyTts.Services
             _rateLimiter = rateLimiter ?? throw new ArgumentNullException(nameof(rateLimiter));
             _mergePipeline = policyFactory.CreateTtsPipeline<string>(MaxRetries, RetryDelayMs / 1000);
         }
-
         public async Task<string> MergeMp3ByteArraysAsync(
             IReadOnlyList<AudioProcessor> audioProcessors,
             string basePath,
@@ -89,7 +87,6 @@ namespace MyTts.Services
                 throw;
             }
         }
-
         private async Task<string> MergeAudioProcessorsAsync(
             IReadOnlyList<AudioProcessor> processors,
             string filePath,
@@ -131,7 +128,7 @@ namespace MyTts.Services
 
                             var ffmpegOptions = new FFOptions
                             {
-                                BinaryFolder = Path.Combine(AppContext.BaseDirectory, "ffmpeg-bin"),
+                                // BinaryFolder = Path.Combine(AppContext.BaseDirectory, "ffmpeg-bin"),
                                 TemporaryFilesFolder = Path.GetTempPath()
                             };
 
@@ -195,7 +192,6 @@ namespace MyTts.Services
                 await CleanupStreamsAsync(streamPipeSources, streamsToDispose);
             }
         }
-
         private static int CalculateTotalInputs(int processorCount, string? breakAudioPath, string? startAudioPath, string? endAudioPath)
         {
             int totalInputs = processorCount;
@@ -217,7 +213,6 @@ namespace MyTts.Services
             
             return totalInputs;
         }
-
         private async Task CleanupStreamsAsync(List<StreamPipeSource> streamPipeSources, List<Stream> streamsToDispose)
         {
             foreach (var source in streamPipeSources)
@@ -246,13 +241,11 @@ namespace MyTts.Services
             }
             streamsToDispose.Clear();
         }
-
         private static string CreateFilterComplexCommand(int totalInputs)
         {
             var inputs = string.Join("][", Enumerable.Range(0, totalInputs));
             return $"-filter_complex \"[{inputs}]concat=n={totalInputs}:v=0:a=1[outa]\" -map \"[outa]\"";
         }
-
         private static async Task<FFMpegArguments> CreateFfmpegArgumentsAsync(
             IReadOnlyList<AudioProcessor> processors,
             List<StreamPipeSource> streamPipeSources,
@@ -300,14 +293,11 @@ namespace MyTts.Services
 
             return args;
         }
-
-        // Custom exception for FFmpeg errors
         public class FFmpegException : Exception
         {
             public FFmpegException(string message) : base(message) { }
             public FFmpegException(string message, Exception innerException) : base(message, innerException) { }
         }
-
         public async ValueTask DisposeAsync()
         {
             if (!_disposed)

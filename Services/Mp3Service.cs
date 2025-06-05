@@ -92,7 +92,7 @@ namespace MyTts.Services
                         var repository = scope.ServiceProvider.GetRequiredService<IMp3Repository>();
 
                         _logger.LogInformation("Background SQL operation started for {Count} files", metadataCopy.Count);
-                        
+
                         // Split the metadata into smaller chunks to reduce transaction time
                         const int chunkSize = 5;
                         for (int i = 0; i < metadataCopy.Count; i += chunkSize)
@@ -101,18 +101,18 @@ namespace MyTts.Services
                             try
                             {
                                 await repository.SaveMp3MetadataToSqlBatchAsync(chunk, AudioType.Mp3, CancellationToken.None);
-                                _logger.LogInformation("Successfully saved chunk {ChunkNumber} of {TotalChunks} in background", 
-                                    (i / chunkSize) + 1, 
+                                _logger.LogInformation("Successfully saved chunk {ChunkNumber} of {TotalChunks} in background",
+                                    (i / chunkSize) + 1,
                                     (int)Math.Ceiling(metadataCopy.Count / (double)chunkSize));
                             }
                             catch (Exception ex)
                             {
-                                _logger.LogError(ex, "Error saving chunk {ChunkNumber} of {TotalChunks} in background", 
-                                    (i / chunkSize) + 1, 
+                                _logger.LogError(ex, "Error saving chunk {ChunkNumber} of {TotalChunks} in background",
+                                    (i / chunkSize) + 1,
                                     (int)Math.Ceiling(metadataCopy.Count / (double)chunkSize));
                             }
                         }
-                        
+
                         _logger.LogInformation("Successfully saved all metadata for {Count} files in background", metadataCopy.Count);
                     }
                     catch (OperationCanceledException)
@@ -187,7 +187,6 @@ namespace MyTts.Services
             }
             return (neededNewsList, savedNewsList);
         }
-
         public async Task<Stream> CreateSingleMp3Async(OneRequest request, AudioType fileType, CancellationToken cancellationToken)
         {
             try
@@ -246,7 +245,6 @@ namespace MyTts.Services
             return await _mp3FileRepository.LoadMp3MetaByNewsIdAsync(id, fileType, cancellationToken)
                 ?? throw new KeyNotFoundException($"MP3 file not found for ID: {id}");
         }
-
         public async Task<Mp3Dto> GetLastMp3ByLanguageAsync(string language, AudioType fileType, CancellationToken cancellationToken)
         {
             ArgumentException.ThrowIfNullOrEmpty(language);
@@ -377,7 +375,6 @@ namespace MyTts.Services
             else fileStream = new MemoryStream(fileData);
             return (fileStream, localPath.ToString());
         }
-
         private IActionResult CreateStreamResponse(string filePath, string fileName)
         {
             var stream = CreateFileStream(filePath, isStreaming: true);
@@ -498,24 +495,12 @@ namespace MyTts.Services
                 { "X-Content-Type-Options", "nosniff" }
             };
         }
-        public async ValueTask DisposeAsync()
-        {
-            if (_disposed) return;
-            _disposed = true;
-            _processingSemaphore.Dispose();
-            if (_ttsClient is IAsyncDisposable disposableTtsClient)
-            {
-                await disposableTtsClient.DisposeAsync();
-            }
-        }
-
         public async Task<IEnumerable<Mp3Dto>> GetMp3FileListAsync(string language, AudioType fileType, CancellationToken cancellationToken)
         {
             ArgumentException.ThrowIfNullOrEmpty(language);
             var mp3Files = await _mp3FileRepository.LoadListMp3MetadatasAsync(fileType, cancellationToken);
             return mp3Files.Where(f => f.Language.Equals(language, StringComparison.OrdinalIgnoreCase));
         }
-
         public async Task<IEnumerable<Mp3Dto>> GetMp3FileListByLanguageAsync(string language, AudioType fileType, CancellationToken cancellationToken)
         {
             ArgumentException.ThrowIfNullOrEmpty(language);
@@ -538,7 +523,6 @@ namespace MyTts.Services
             using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Failed to start ffmpeg process");
             await process.WaitForExitAsync();
         }
-
         public async Task<List<HaberSummaryDto>> GetNewsList(CancellationToken cancellationToken)
         {
             return await _mp3FileRepository.GetNewsList(cancellationToken);
@@ -547,7 +531,6 @@ namespace MyTts.Services
         {
             return await _mp3FileRepository.GetExistingMetaList(myList, cancellationToken);
         }
-
         public async Task SaveMp3MetadataAsync(int id, string localPath, string language, CancellationToken cancellationToken)
         {
             try
@@ -567,7 +550,6 @@ namespace MyTts.Services
                 throw;
             }
         }
-
         public async Task SaveMp3MetadataBatchAsync(List<Mp3Dto> metadataList, CancellationToken cancellationToken)
         {
             try
@@ -582,7 +564,6 @@ namespace MyTts.Services
                 throw;
             }
         }
-
         private async Task SaveMp3MetadataBatchAsyncInternal(List<Mp3Dto> metadataList, CancellationToken cancellationToken)
         {
             try
@@ -598,17 +579,14 @@ namespace MyTts.Services
             }
         }
         private string GetHashCacheKey(int id) => $"{HASH_CACHE_KEY_PREFIX}{id}";
-
         private async Task<string?> GetHashFromCacheAsync(int id, CancellationToken cancellationToken)
         {
             return await _cache.GetAsync<string>(GetHashCacheKey(id), cancellationToken);
         }
-
         private async Task SetHashToCacheAsync(int id, string hash, CancellationToken cancellationToken)
         {
             await _cache.SetAsync(GetHashCacheKey(id), hash, HASH_CACHE_DURATION, cancellationToken);
         }
-
         private async Task SetHashRangeToCacheAsync(Dictionary<int, string> hashList, CancellationToken cancellationToken)
         {
             foreach (var (id, hash) in hashList)
@@ -616,7 +594,6 @@ namespace MyTts.Services
                 await SetHashToCacheAsync(id, hash, cancellationToken);
             }
         }
-
         private async Task ProcessMp3Async(int id, string text, string language, AudioType fileType, CancellationToken cancellationToken)
         {
             try
@@ -642,16 +619,26 @@ namespace MyTts.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error processing MP3 for ID: {Id}, Language: {Language}", id, language);
-                
+
                 // Create a new scope for error notification
                 using var scope = _serviceScopeFactory.CreateScope();
                 var notificationService = scope.ServiceProvider.GetRequiredService<INotificationService>();
-                
+
                 await notificationService.SendErrorNotificationAsync(
                     "Processing Failed",
                     $"Failed to process MP3 for ID: {id}, Language: {language}",
                     ex);
                 throw;
+            }
+        }
+        public async ValueTask DisposeAsync()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            _processingSemaphore.Dispose();
+            if (_ttsClient is IAsyncDisposable disposableTtsClient)
+            {
+                await disposableTtsClient.DisposeAsync();
             }
         }
     }
