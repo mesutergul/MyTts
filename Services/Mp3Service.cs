@@ -5,6 +5,7 @@ using MyTts.Services.Interfaces;
 using MyTts.Helpers;
 using System.Diagnostics;
 using MyTts.Services.Constants;
+using System.Collections.Concurrent;
 
 namespace MyTts.Services
 {
@@ -20,6 +21,8 @@ namespace MyTts.Services
         private readonly IServiceScopeFactory _serviceScopeFactory;
         private const string HASH_CACHE_KEY_PREFIX = "hash:";
         private static readonly TimeSpan HASH_CACHE_DURATION = TimeSpan.FromDays(7);
+        private readonly ConcurrentDictionary<int, Task> _processingTasks = new();
+        private readonly ConcurrentDictionary<int, CancellationTokenSource> _cancellationTokens = new();
 
         public Mp3Service(
             ILogger<Mp3Service> logger,
@@ -611,6 +614,44 @@ namespace MyTts.Services
             foreach (var (id, hash) in hashList)
             {
                 await SetHashToCacheAsync(id, hash, cancellationToken);
+            }
+        }
+
+        private async Task ProcessMp3Async(int id, string text, string language, AudioType fileType, CancellationToken cancellationToken)
+        {
+            try
+            {
+                _logger.LogInformation("Starting MP3 processing for ID: {Id}, Language: {Language}", id, language);
+
+                // Create a new scope for notification
+                using var scope = _serviceScopeFactory.CreateScope();
+                var notificationService = scope.ServiceProvider.GetRequiredService<INotificationService>();
+
+                await notificationService.SendNotificationAsync(
+                    "Processing Started",
+                    $"Starting MP3 processing for ID: {id}, Language: {language}",
+                    NotificationType.Info);
+
+                var (filePath, processor) = await _ttsClient.ProcessContentAsync(text, id, language, fileType, cancellationToken);
+
+                await notificationService.SendNotificationAsync(
+                    "Processing Completed",
+                    $"Successfully processed MP3 for ID: {id}, Language: {language}",
+                    NotificationType.Success);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error processing MP3 for ID: {Id}, Language: {Language}", id, language);
+                
+                // Create a new scope for error notification
+                using var scope = _serviceScopeFactory.CreateScope();
+                var notificationService = scope.ServiceProvider.GetRequiredService<INotificationService>();
+                
+                await notificationService.SendErrorNotificationAsync(
+                    "Processing Failed",
+                    $"Failed to process MP3 for ID: {id}, Language: {language}",
+                    ex);
+                throw;
             }
         }
     }

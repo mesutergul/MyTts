@@ -5,6 +5,7 @@ using MyTts.Services.Interfaces;
 using Polly;
 using MyTts.Config.ServiceConfigurations;
 using MyTts.Middleware;
+using System.Threading;
 
 namespace MyTts.Services
 {
@@ -14,6 +15,7 @@ namespace MyTts.Services
         private readonly EmailConfig _emailConfig;
         private readonly SharedPolicyFactory _policyFactory;
         private readonly SmtpClient _smtpClient;
+        private readonly SemaphoreSlim _smtpSemaphore = new SemaphoreSlim(1, 1);
 
         public EmailService(
             ILogger<EmailService> logger,
@@ -75,8 +77,29 @@ namespace MyTts.Services
                     try
                     {
                         _logger.LogDebug("Sending email with subject: {Subject}", subject);
-                        await _smtpClient.SendMailAsync(message);
-                        _logger.LogInformation("Email sent successfully to {Recipients}", string.Join(", ", to));
+                        
+                        // Use semaphore to ensure only one SMTP operation at a time
+                        await _smtpSemaphore.WaitAsync();
+                        try
+                        {
+                            // Create a new SmtpClient for each operation to avoid async completion issues
+                            using var smtpClient = new SmtpClient(_emailConfig.SmtpServer, _emailConfig.SmtpPort)
+                            {
+                                EnableSsl = _emailConfig.EnableSsl,
+                                Credentials = new System.Net.NetworkCredential(_emailConfig.SenderEmail, _emailConfig.SenderPassword),
+                                Timeout = _emailConfig.TimeoutSeconds * 1000,
+                                DeliveryMethod = SmtpDeliveryMethod.Network,
+                                UseDefaultCredentials = false
+                            };
+
+                            await smtpClient.SendMailAsync(message);
+                            _logger.LogInformation("Email sent successfully to {Recipients}", string.Join(", ", to));
+                        }
+                        finally
+                        {
+                            _smtpSemaphore.Release();
+                        }
+                        
                         return null!;
                     }
                     catch (SmtpException ex)

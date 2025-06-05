@@ -28,8 +28,8 @@ namespace MyTts.Services.Constants
         // Cache durations
         public static readonly TimeSpan DEFAULT_METADATA_EXPIRY = TimeSpan.FromHours(1);
         public static readonly TimeSpan DB_CACHE_DURATION = TimeSpan.FromMinutes(45);
-        public static readonly TimeSpan FILE_CACHE_DURATION = TimeSpan.FromMinutes(60);
-        public static readonly TimeSpan HASH_CACHE_DURATION = TimeSpan.FromDays(7);
+        public static readonly TimeSpan FILE_CACHE_DURATION = TimeSpan.FromHours(2);
+        public static readonly TimeSpan HASH_CACHE_DURATION = TimeSpan.FromDays(2);
         public static readonly TimeSpan STREAM_CACHE_DURATION = TimeSpan.FromHours(24);
         public static readonly TimeSpan INDIVIDUAL_MP3_DURATION = TimeSpan.FromHours(12);
 

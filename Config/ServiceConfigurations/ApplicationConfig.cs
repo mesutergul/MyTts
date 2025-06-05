@@ -21,7 +21,7 @@ namespace MyTts.Config.ServiceConfigurations
 
             // Configure and register notification service with resilience policies
             services.Configure<NotificationOptions>(configuration.GetSection("Notifications"));
-            services.AddSingleton<INotificationService, NotificationService>();
+            services.AddScoped<INotificationService, NotificationService>();
             services.AddHttpClient("NotificationService", client =>
             {
                 client.DefaultRequestHeaders.Add("User-Agent", "MyTts-NotificationService");

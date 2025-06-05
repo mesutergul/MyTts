@@ -16,10 +16,10 @@ namespace MyTts.Config.ServiceConfigurations
             services.Configure<EmailConfig>(configuration.GetSection("Email"));
 
             // Register email service with all its dependencies
-            services.AddSingleton<IEmailService, EmailService>();
+            services.AddScoped<IEmailService, EmailService>();
 
-            // Register SmtpClient as singleton with proper configuration
-            services.AddSingleton<SmtpClient>(sp =>
+            // Register SmtpClient as scoped since we create new instances per operation
+            services.AddScoped<SmtpClient>(sp =>
             {
                 var config = sp.GetRequiredService<IOptions<EmailConfig>>().Value;
                 var logger = sp.GetRequiredService<ILogger<EmailService>>();

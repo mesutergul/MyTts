@@ -57,9 +57,9 @@
     </None>
   </ItemGroup>
 
-  <!-- <ItemGroup>
+  <ItemGroup>
     <None Include="ffmpeg-bin\**\*.*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-  </ItemGroup> -->
+  </ItemGroup>
 </Project>

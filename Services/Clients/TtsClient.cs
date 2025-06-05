@@ -35,7 +35,7 @@ namespace MyTts.Services.Clients
         private const int BufferSize = 128 * 1024; // 128KB buffer size
         private static readonly ThreadLocal<Random> _random = new(() => new Random());
         private bool _disposed;
-        private readonly INotificationService _notificationService;
+        private readonly IServiceScopeFactory _serviceScopeFactory;
 
         public TtsClient(
             ICloudTtsClient geminiTtsClient,
@@ -45,7 +45,7 @@ namespace MyTts.Services.Clients
             ILocalStorageClient storage,
             IRedisCacheService cache,
             IMp3StreamMerger mp3StreamMerger,
-            INotificationService notificationService,
+            IServiceScopeFactory serviceScopeFactory,
             ILogger<TtsClient> logger)
         {
             _resilientElevenLabsClient = resilientElevenLabsClient ?? throw new ArgumentNullException(nameof(resilientElevenLabsClient));
@@ -55,7 +55,7 @@ namespace MyTts.Services.Clients
             _cache = cache ?? throw new ArgumentNullException(nameof(cache));
             _geminiTtsClient = geminiTtsClient ?? throw new ArgumentNullException(nameof(geminiTtsClient));
             _mp3StreamMerger = mp3StreamMerger ?? throw new ArgumentNullException(nameof(mp3StreamMerger));
-            _notificationService = notificationService ?? throw new ArgumentNullException(nameof(notificationService));
+            _serviceScopeFactory = serviceScopeFactory ?? throw new ArgumentNullException(nameof(serviceScopeFactory));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _voiceCache = new ConcurrentDictionary<string, Voice>();
             _jsonOptions = new JsonSerializerOptions
@@ -189,7 +189,10 @@ namespace MyTts.Services.Clients
                                 processors.Count,
                                 stopwatch.ElapsedMilliseconds);
 
-                            await _notificationService.SendNotificationAsync(
+                            // Create a new scope for notification
+                            using var scope = _serviceScopeFactory.CreateScope();
+                            var notificationService = scope.ServiceProvider.GetRequiredService<INotificationService>();
+                            await notificationService.SendNotificationAsync(
                                 "MP3 Merge Completed",
                                 $"Successfully merged {processors.Count} files in {stopwatch.ElapsedMilliseconds}ms",
                                 NotificationType.Success);
@@ -197,7 +200,10 @@ namespace MyTts.Services.Clients
                         catch (Exception ex)
                         {
                             _logger.LogError(ex, "Failed to merge MP3 files after all retries");
-                            await _notificationService.SendErrorNotificationAsync(
+                            // Create a new scope for error notification
+                            using var scope = _serviceScopeFactory.CreateScope();
+                            var notificationService = scope.ServiceProvider.GetRequiredService<INotificationService>();
+                            await notificationService.SendErrorNotificationAsync(
                                 "MP3 Merge Failed",
                                 $"Failed to merge {processors.Count} files after all retries",
                                 ex);
@@ -250,11 +256,22 @@ namespace MyTts.Services.Clients
                     "Merged {Count} MP3 files in {ElapsedMilliseconds}ms",
                     processors.Count,
                     stopwatch.ElapsedMilliseconds);
+
+                // Create a new scope for notification
+                using var scope = _serviceScopeFactory.CreateScope();
+                var notificationService = scope.ServiceProvider.GetRequiredService<INotificationService>();
+                await notificationService.SendNotificationAsync(
+                    "MP3 Merge Completed",
+                    $"Successfully merged {processors.Count} files in {stopwatch.ElapsedMilliseconds}ms",
+                    NotificationType.Success);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to merge MP3 files");
-                await _notificationService.SendErrorNotificationAsync(
+                // Create a new scope for error notification
+                using var scope = _serviceScopeFactory.CreateScope();
+                var notificationService = scope.ServiceProvider.GetRequiredService<INotificationService>();
+                await notificationService.SendErrorNotificationAsync(
                     "MP3 Merge Failed",
                     $"Failed to merge {processors.Count} files",
                     ex);
@@ -329,7 +346,10 @@ namespace MyTts.Services.Clients
 
                 _logger.LogInformation("Processed content {Id}: {LocalPath}", id, localPath);
 
-                await _notificationService.SendNotificationAsync(
+                // Create a new scope for success notification
+                using var scope = _serviceScopeFactory.CreateScope();
+                var notificationService = scope.ServiceProvider.GetRequiredService<INotificationService>();
+                await notificationService.SendNotificationAsync(
                     "Content Processed Successfully",
                     $"Successfully processed content {id} for language {language}",
                     NotificationType.Success);
@@ -339,7 +359,10 @@ namespace MyTts.Services.Clients
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error processing content {Id}", id);
-                await _notificationService.SendErrorNotificationAsync(
+                // Create a new scope for error notification
+                using var scope = _serviceScopeFactory.CreateScope();
+                var notificationService = scope.ServiceProvider.GetRequiredService<INotificationService>();
+                await notificationService.SendErrorNotificationAsync(
                     "Content Processing Failed",
                     $"Failed to process content {id} for language {language}",
                     ex);
