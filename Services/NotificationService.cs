@@ -9,7 +9,7 @@ namespace MyTts.Services
     {
         private readonly ILogger<NotificationService> _logger;
         private readonly NotificationOptions _options;
-        private readonly HttpClient _httpClient;
+        private readonly IHttpClientFactory _httpClientFactory;
         private readonly IEmailService _emailService;
         private bool _slackEnabled;
         private readonly string? _slackWebhookUrl;
@@ -17,12 +17,12 @@ namespace MyTts.Services
         public NotificationService(
             ILogger<NotificationService> logger,
             IOptions<NotificationOptions> options,
-            HttpClient httpClient,
+            IHttpClientFactory httpClientFactory,
             IEmailService emailService)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-            _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+            _httpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
             _emailService = emailService ?? throw new ArgumentNullException(nameof(emailService));
 
             // Validate Slack configuration at startup
@@ -150,7 +150,8 @@ namespace MyTts.Services
 
             try
             {
-                var response = await _httpClient.PostAsync(_slackWebhookUrl, content, cancellationToken);
+                using var client = _httpClientFactory.CreateClient("NotificationService");
+                var response = await client.PostAsync(_slackWebhookUrl, content, cancellationToken);
                 if (!response.IsSuccessStatusCode)
                 {
                     var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);

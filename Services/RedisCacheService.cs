@@ -17,20 +17,22 @@ namespace MyTts.Services
         private readonly ILogger<RedisCacheService> _logger;
         private readonly RedisCircuitBreaker _circuitBreaker;
         private readonly ResiliencePipeline<RedisValue> _retryPolicy;
+        private const string EvictionKeyPattern = "eviction:*";
+        private const string EvictionLockKey = "eviction:lock";
+        private const int EvictionLockTimeoutSeconds = 30;
 
         public RedisCacheService(
             IConnectionMultiplexer redis,
             IOptions<RedisConfig> config,
             ILogger<RedisCacheService> logger,
-            ILogger<RedisCircuitBreaker> loggerCircuit, // Added
-            SharedPolicyFactory policyFactory, // Added
+            ILogger<RedisCircuitBreaker> loggerCircuit,
+            SharedPolicyFactory policyFactory,
             ResiliencePipeline<RedisValue> retryPolicy)
         {
             _redis = redis;
             _config = config.Value;
             _logger = logger;
             _retryPolicy = retryPolicy;
-            // Updated RedisCircuitBreaker instantiation
             _circuitBreaker = new RedisCircuitBreaker(loggerCircuit, policyFactory);
 
             if (redis == null || !redis.IsConnected)
@@ -39,9 +41,78 @@ namespace MyTts.Services
                 throw new InvalidOperationException("Redis ConnectionMultiplexer is not connected.");
             }
             _db = redis.GetDatabase(_config.DatabaseId);
+
+            // Start eviction monitoring
+            _ = StartEvictionMonitoring();
         }
 
-public async Task<T?> GetAsync<T>(string key, CancellationToken cancellationToken = default)
+        private async Task StartEvictionMonitoring()
+        {
+            while (true)
+            {
+                try
+                {
+                    await Task.Delay(TimeSpan.FromMinutes(5)); // Check every 5 minutes
+                    await PerformEvictionIfNeeded();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error during eviction monitoring");
+                }
+            }
+        }
+
+        private async Task PerformEvictionIfNeeded()
+        {
+            // Try to acquire lock
+            if (!await AcquireEvictionLock())
+            {
+                return; // Another instance is handling eviction
+            }
+
+            try
+            {
+                var server = _redis.GetServer(_redis.GetEndPoints().First());
+                var keys = server.Keys(pattern: EvictionKeyPattern).ToArray();
+
+                foreach (var key in keys)
+                {
+                    try
+                    {
+                        var ttl = await _db.KeyTimeToLiveAsync(key);
+                        if (ttl == null || ttl.Value.TotalHours > 24) // Evict keys older than 24 hours
+                        {
+                            await _db.KeyDeleteAsync(key);
+                            _logger.LogInformation("Evicted key: {Key}", key);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error evicting key: {Key}", key);
+                    }
+                }
+            }
+            finally
+            {
+                await ReleaseEvictionLock();
+            }
+        }
+
+        private async Task<bool> AcquireEvictionLock()
+        {
+            return await _db.StringSetAsync(
+                EvictionLockKey,
+                Environment.MachineName,
+                TimeSpan.FromSeconds(EvictionLockTimeoutSeconds),
+                When.NotExists);
+        }
+
+        private async Task ReleaseEvictionLock()
+        {
+            await _db.KeyDeleteAsync(EvictionLockKey);
+        }
+
+        public async Task<T?> GetAsync<T>(string key, CancellationToken cancellationToken = default)
         {
             if (_db == null || !_redis.IsConnected)
             {
@@ -94,10 +165,16 @@ public async Task<T?> GetAsync<T>(string key, CancellationToken cancellationToke
             await _circuitBreaker.ExecuteAsync(async (CancellationToken) =>
             {
                 var serializedValue = JsonSerializer.Serialize(value);
+                var finalExpiry = expiry ?? TimeSpan.FromMinutes(_config.DefaultExpirationMinutes);
+                
+                // Add eviction metadata
+                var evictionKey = $"eviction:{key}";
+                await _db.StringSetAsync(evictionKey, DateTime.UtcNow.ToString("O"), finalExpiry);
+
                 await _db.StringSetAsync(
                     GetKey(key),
                     serializedValue,
-                    expiry ?? TimeSpan.FromMinutes(_config.DefaultExpirationMinutes)
+                    finalExpiry
                 );
             }, $"SET_{key}");
         }

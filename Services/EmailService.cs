@@ -4,6 +4,7 @@ using MyTts.Config;
 using MyTts.Services.Interfaces;
 using Polly;
 using MyTts.Config.ServiceConfigurations;
+using MyTts.Middleware;
 
 namespace MyTts.Services
 {
@@ -38,6 +39,9 @@ namespace MyTts.Services
 
             try
             {
+                _logger.LogInformation("Attempting to send email to {Recipients} using SMTP server {Server}:{Port}",
+                    string.Join(", ", to), _emailConfig.SmtpServer, _emailConfig.SmtpPort);
+
                 var policy = _policyFactory.GetEmailPolicy<object>();
                 await policy.ExecuteAsync<object>(async (ctx) =>
                 {
@@ -47,13 +51,16 @@ namespace MyTts.Services
                         Subject = subject,
                         Body = body,
                         IsBodyHtml = isHtml,
-                        Priority = MailPriority.Normal
+                        Priority = MailPriority.Normal,
+                        BodyEncoding = System.Text.Encoding.UTF8,
+                        SubjectEncoding = System.Text.Encoding.UTF8
                     };
 
                     // Add headers to help with deliverability
                     message.Headers.Add("X-Mailer", "MyTts Notification System");
                     message.Headers.Add("X-Priority", "3");
                     message.Headers.Add("X-MSMail-Priority", "Normal");
+                    message.Headers.Add("X-Auto-Response-Suppress", "OOF, AutoReply");
 
                     if (!string.IsNullOrEmpty(_emailConfig.ReplyTo))
                     {
@@ -67,23 +74,93 @@ namespace MyTts.Services
 
                     try
                     {
+                        _logger.LogDebug("Sending email with subject: {Subject}", subject);
                         await _smtpClient.SendMailAsync(message);
                         _logger.LogInformation("Email sent successfully to {Recipients}", string.Join(", ", to));
                         return null!;
                     }
                     catch (SmtpException ex)
                     {
-                        _logger.LogError(ex, "SMTP error while sending email to {Recipients}. Status code: {StatusCode}, Response: {Response}",
-                            string.Join(", ", to), ex.StatusCode, ex.Message);
-                        throw;
+                        var errorDetails = new
+                        {
+                            StatusCode = ex.StatusCode,
+                            Server = _emailConfig.SmtpServer,
+                            Port = _emailConfig.SmtpPort,
+                            Recipients = string.Join(", ", to),
+                            Subject = subject,
+                            IsHtml = isHtml,
+                            ErrorMessage = ex.Message,
+                            StackTrace = ex.StackTrace
+                        };
+
+                        // Check for protocol violation specifically
+                        if (ex.Message.Contains("protocol violation", StringComparison.OrdinalIgnoreCase))
+                        {
+                            _logger.LogError(ex, 
+                                "SMTP protocol violation detected. Details: {@ErrorDetails}", errorDetails);
+                            throw new EmailServiceUnavailableException(
+                                $"SMTP protocol violation with server {_emailConfig.SmtpServer}: {ex.Message}", ex);
+                        }
+
+                        switch (ex.StatusCode)
+                        {
+                            case SmtpStatusCode.ServiceNotAvailable:
+                                _logger.LogError(ex, 
+                                    "SMTP service unavailable. Details: {@ErrorDetails}", errorDetails);
+                                throw new EmailServiceUnavailableException("SMTP service is currently unavailable", ex);
+
+                            case SmtpStatusCode.ServiceClosingTransmissionChannel:
+                                _logger.LogError(ex, 
+                                    "SMTP service closed transmission channel. Details: {@ErrorDetails}", errorDetails);
+                                throw new EmailServiceUnavailableException("SMTP service closed the connection", ex);
+
+                            case SmtpStatusCode.ExceededStorageAllocation:
+                                _logger.LogError(ex, 
+                                    "Email storage allocation exceeded. Details: {@ErrorDetails}", errorDetails);
+                                throw new EmailStorageException("Email storage allocation exceeded", ex);
+
+                            case SmtpStatusCode.MailboxBusy:
+                            case SmtpStatusCode.MailboxUnavailable:
+                                _logger.LogError(ex, 
+                                    "Recipient mailbox unavailable. Details: {@ErrorDetails}", errorDetails);
+                                throw new InvalidEmailRecipientException($"Recipient mailbox unavailable: {string.Join(", ", to)}", ex);
+
+                            case SmtpStatusCode.TransactionFailed:
+                                _logger.LogError(ex, 
+                                    "SMTP transaction failed. Details: {@ErrorDetails}", errorDetails);
+                                throw new EmailTransactionException("SMTP transaction failed", ex);
+
+                            default:
+                                _logger.LogError(ex, 
+                                    "SMTP general failure. Details: {@ErrorDetails}", errorDetails);
+                                throw new EmailException("SMTP general failure", ex);
+                        }
                     }
-                }, context);
+                });
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not EmailException)
             {
-                _logger.LogError(ex, "Failed to send email to {Recipients} after all retries. Error: {Error}",
-                    string.Join(", ", to), ex.Message);
-                throw;
+                var errorDetails = new
+                {
+                    Server = _emailConfig.SmtpServer,
+                    Port = _emailConfig.SmtpPort,
+                    Recipients = string.Join(", ", to),
+                    Subject = subject,
+                    IsHtml = isHtml,
+                    ErrorMessage = ex.Message,
+                    StackTrace = ex.StackTrace
+                };
+
+                _logger.LogError(ex, 
+                    "Failed to send email to {Recipients} after all retries. Error: {Error}. Details: {@ErrorDetails}",
+                    string.Join(", ", to), 
+                    ex.Message,
+                    errorDetails);
+                throw new EmailException($"Failed to send email: {ex.Message}", ex);
+            }
+            finally
+            {
+                ResilienceContextPool.Shared.Return(context);
             }
         }
     }

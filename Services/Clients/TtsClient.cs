@@ -14,9 +14,7 @@ using MyTts.Storage;
 using MyTts.Helpers;
 using MyTts.Storage.Interfaces;
 using MyTts.Services.Interfaces;
-using Polly;
-using MyTts.Config.ServiceConfigurations;
-using Hangfire;
+using MyTts.Services.Constants;
 
 namespace MyTts.Services.Clients
 {
@@ -34,12 +32,10 @@ namespace MyTts.Services.Clients
         private readonly JsonSerializerOptions _jsonOptions;
         private readonly StorageConfiguration _storageConfig;
         private readonly ConcurrentDictionary<string, Voice> _voiceCache;
-        private const int MaxConcurrentOperations = 10;
         private const int BufferSize = 128 * 1024; // 128KB buffer size
         private static readonly ThreadLocal<Random> _random = new(() => new Random());
         private bool _disposed;
         private readonly INotificationService _notificationService;
-        private readonly IBackgroundJobClient _backgroundJobClient; // Add this
 
         public TtsClient(
             ICloudTtsClient geminiTtsClient,
@@ -50,7 +46,6 @@ namespace MyTts.Services.Clients
             IRedisCacheService cache,
             IMp3StreamMerger mp3StreamMerger,
             INotificationService notificationService,
-            IBackgroundJobClient backgroundJobClient, // Add this
             ILogger<TtsClient> logger)
         {
             _resilientElevenLabsClient = resilientElevenLabsClient ?? throw new ArgumentNullException(nameof(resilientElevenLabsClient));
@@ -58,7 +53,6 @@ namespace MyTts.Services.Clients
             _storageConfig = storageConfig?.Value ?? throw new ArgumentNullException(nameof(storageConfig));
             _localStorageClient = storage ?? throw new ArgumentNullException(nameof(storage));
             _cache = cache ?? throw new ArgumentNullException(nameof(cache));
-            _backgroundJobClient = backgroundJobClient ?? throw new ArgumentNullException(nameof(backgroundJobClient));
             _geminiTtsClient = geminiTtsClient ?? throw new ArgumentNullException(nameof(geminiTtsClient));
             _mp3StreamMerger = mp3StreamMerger ?? throw new ArgumentNullException(nameof(mp3StreamMerger));
             _notificationService = notificationService ?? throw new ArgumentNullException(nameof(notificationService));
@@ -146,10 +140,10 @@ namespace MyTts.Services.Clients
 
                 // Wait for all tasks to complete, handling cancellations
                 var results = await Task.WhenAll(processingTasks);
-                
+
                 // Create processors dictionary for efficient lookup
                 var processedFiles = results.ToDictionary(r => r.id, r => r.Processor);
-                
+
                 // Build final list in original order
                 var processors = allNewsList
                     .Where(news => processedFiles.ContainsKey(news.IlgiId))
@@ -278,38 +272,18 @@ namespace MyTts.Services.Clients
             }
             return result;
         }
-        private async Task<(int id, AudioProcessor FileData)> ProcessGeminiContentAsync(
-            string text, int id, string language, AudioType fileType, CancellationToken cancellationToken)
-        {
-            var localPath = StoragePathHelper.GetFullPathById(id, fileType);
-
-            try
-            {
-                _logger.LogInformation("Processing news ID {NewsId} with Gemini: {Title}", id, text);
-                // Assuming 'language' parameter is compatible with Gemini (e.g., "en-US")
-                // VoiceName can be null to use default from config, or specify one if API supports
-                var audioBytes = await _geminiTtsClient.SynthesizeSpeechAsync(
-                    text,
-                    "tr-TR", // Assuming Turkish for this example, adjust as needed
-                    "tr-TR-Standard-A", // Or a specific voice/model name if available and configurable
-                    cancellationToken);
-                AudioProcessor audioProcessor = new AudioProcessor(new VoiceClip(audioBytes));
-                return (id, audioProcessor);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error processing content {Id}", id);
-                throw;
-            }
-        }
         public async Task<(int id, AudioProcessor FileData)> ProcessContentAsync(
-            string text, int id, string language, AudioType fileType, CancellationToken cancellationToken)
+            string text,
+            int id,
+            string language,
+            AudioType fileType,
+            CancellationToken cancellationToken)
         {
             var localPath = StoragePathHelper.GetFullPathById(id, fileType);
-
+            string redisKey = RedisKeys.FormatKey(RedisKeys.TTS_INDIVIDUAL_MP3_KEY, id);
             try
             {
-                    // Get the voice configuration for the specified language
+                // Get the voice configuration for the specified language
                 if (_config.Value.Feed == null || !_config.Value.Feed.TryGetValue(language, out var languageConfig))
                 {
                     throw new InvalidOperationException($"No voice configuration found for language: {language}");
@@ -324,7 +298,7 @@ namespace MyTts.Services.Clients
                 var voices = languageConfig.Voices.ToList();
                 var randomVoice = voices[_random.Value!.Next(voices.Count)];
                 var voiceId = randomVoice.Value;
-                // "Gulsu": "jbJMQWv1eS4YjQ6PCcn6",
+
                 _logger.LogInformation("Selected voice {VoiceName} ({VoiceId}) for language {Language}",
                     randomVoice.Key, voiceId, language);
 
@@ -341,19 +315,9 @@ namespace MyTts.Services.Clients
                     "Generated audio clip in {ElapsedMilliseconds}ms for text length {TextLength}",
                     stopwatch.ElapsedMilliseconds,
                     text.Length);
-                // Convert the stream to a byte array
-                byte[] audioBytes;
-                using (var memoryStream = new MemoryStream())
-                {
-                    await voiceClip.GetShareableStream().CopyToAsync(memoryStream, cancellationToken);
-                    audioBytes = memoryStream.ToArray();
-                }
 
-                // --- CRUCIAL: Save the individual MP3 byte array to Redis ---
-                string redisKey = $"individual-mp3:{id}";
-                TimeSpan expiry = _storageConfig.CacheDuration.Files;
-                await _cache.SetBytesAsync(redisKey, audioBytes, expiry, cancellationToken);
-                _logger.LogInformation("Individual MP3 for Content ID: {Id} saved to Redis with key: {RedisKey}", id, redisKey);
+                byte[] audioData = voiceClip.ClipData.ToArray();
+                await _cache.SetAsync(redisKey, audioData, RedisKeys.INDIVIDUAL_MP3_DURATION, cancellationToken);
                 var audioProcessor = new AudioProcessor(voiceClip);
 
                 // Launch all I/O-bound tasks in parallel
@@ -499,17 +463,17 @@ namespace MyTts.Services.Clients
                 AudioProcessor audioProcessor = null!;
 
                 // --- Try to load from Redis first ---
-                byte[]? audioBytes = null;
                 if (await _cache.IsConnectedAsync(cancellationToken))
                 {
                     try
                     {
-                        audioBytes = await _cache.GetBytesAsync($"individual-mp3:{ilgiId}", cancellationToken);
-                        if (audioBytes != null)
+                        string redisKey = RedisKeys.FormatKey(RedisKeys.TTS_INDIVIDUAL_MP3_KEY, ilgiId);
+                        var cachedData = await _cache.GetAsync<byte[]>(redisKey, cancellationToken);
+                        if (cachedData != null)
                         {
-                            audioProcessor = new AudioProcessor(new VoiceClip(audioBytes));
+                            audioProcessor = new AudioProcessor(new VoiceClip(cachedData));
                             _logger.LogInformation("Loaded audio for {Id} from Redis cache.", ilgiId);
-                            
+
                             // Save locally in background without waiting
                             _ = Task.Run(async () =>
                             {
@@ -539,19 +503,11 @@ namespace MyTts.Services.Clients
                 {
                     // --- If not in cache, load from local storage ---
                     string localPath = StoragePathHelper.GetFullPathById(ilgiId, fileType);
-                    var existsResult = await _localStorageClient.FileExistsAsync(localPath, cancellationToken);
-                    
-                    if (!existsResult.IsSuccess || !existsResult.Data)
-                    {
-                        throw new FileNotFoundException($"Audio file for ID {ilgiId} not found at {localPath}");
-                    }
-
                     var readResult = await _localStorageClient.ReadAllBytesAsync(localPath, cancellationToken);
                     if (!readResult.IsSuccess)
                     {
                         throw readResult.Error!.Exception;
                     }
-
                     audioProcessor = new AudioProcessor(new VoiceClip(readResult.Data!));
                 }
 

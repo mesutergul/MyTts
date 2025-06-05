@@ -36,6 +36,18 @@ namespace MyTts.Config
 
         public bool EnableCompression { get; set; } = true;
 
+        // Eviction Policy Settings
+        [Range(1, 24)]
+        public int EvictionCheckIntervalMinutes { get; set; } = 5;
+
+        [Range(1, 72)]
+        public int MaxKeyAgeHours { get; set; } = 24;
+
+        [Range(1, 1000000)]
+        public int MaxKeysPerDatabase { get; set; } = 100000;
+
+        public bool EnableEviction { get; set; } = true;
+
         public ValidateOptionsResult Validate(string? name, RedisConfig options)
         {
             var errors = new List<string>();
@@ -66,6 +78,16 @@ namespace MyTts.Config
 
             if (options.OperationTimeoutMs < 1000 || options.OperationTimeoutMs > 60000)
                 errors.Add("OperationTimeoutMs must be between 1000 and 60000");
+
+            // Validate eviction settings
+            if (options.EvictionCheckIntervalMinutes < 1 || options.EvictionCheckIntervalMinutes > 24)
+                errors.Add("EvictionCheckIntervalMinutes must be between 1 and 24");
+
+            if (options.MaxKeyAgeHours < 1 || options.MaxKeyAgeHours > 72)
+                errors.Add("MaxKeyAgeHours must be between 1 and 72");
+
+            if (options.MaxKeysPerDatabase < 1 || options.MaxKeysPerDatabase > 1000000)
+                errors.Add("MaxKeysPerDatabase must be between 1 and 1000000");
 
             return errors.Count > 0
                 ? ValidateOptionsResult.Fail(errors)

@@ -5,6 +5,8 @@ using MyTts.Storage.Models;
 using MyTts.Config.ServiceConfigurations;
 using MyTts.Helpers;
 using Polly;
+using MyTts.Middleware;
+using MyTts.Services.Interfaces;
 
 namespace MyTts.Storage
 {
@@ -15,19 +17,98 @@ namespace MyTts.Storage
         private readonly ConcurrentDictionary<string, SemaphoreSlim> _fileLocks;
         private readonly SharedPolicyFactory _policyFactory;
         private readonly CombinedRateLimiter _rateLimiter;
+        private readonly INotificationService _notificationService;
         private bool _disposed;
+        private const double DISK_SPACE_WARNING_THRESHOLD = 0.90; // 90% full
+        private const double DISK_SPACE_ERROR_THRESHOLD = 0.95; // 95% full
+        private readonly HashSet<string> _notifiedDrives = new();
 
         public LocalStorageClient(
             ILogger<LocalStorageClient> logger,
             IOptions<LocalStorageOptions> options,
             SharedPolicyFactory policyFactory,
-            CombinedRateLimiter rateLimiter)
+            CombinedRateLimiter rateLimiter,
+            INotificationService notificationService)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
             _policyFactory = policyFactory ?? throw new ArgumentNullException(nameof(policyFactory));
             _rateLimiter = rateLimiter ?? throw new ArgumentNullException(nameof(rateLimiter));
+            _notificationService = notificationService ?? throw new ArgumentNullException(nameof(notificationService));
             _fileLocks = new ConcurrentDictionary<string, SemaphoreSlim>();
+        }
+
+        private void CheckDiskSpace(string filePath)
+        {
+            var driveInfo = new DriveInfo(Path.GetPathRoot(filePath)!);
+            var freeSpacePercentage = 1.0 - ((double)driveInfo.AvailableFreeSpace / driveInfo.TotalSize);
+            var driveName = driveInfo.Name;
+
+            if (freeSpacePercentage >= DISK_SPACE_ERROR_THRESHOLD)
+            {
+                _logger.LogError(
+                    "Disk space critically low. Drive: {Drive}, Free Space: {FreeSpace}GB, Total Space: {TotalSpace}GB, Usage: {UsagePercentage}%",
+                    driveName,
+                    driveInfo.AvailableFreeSpace / (1024.0 * 1024 * 1024),
+                    driveInfo.TotalSize / (1024.0 * 1024 * 1024),
+                    freeSpacePercentage * 100);
+
+                // Only send notification if we haven't already notified about this drive
+                if (_notifiedDrives.Add(driveName))
+                {
+                    _ = SendStorageAlertAsync(driveName, freeSpacePercentage, driveInfo.AvailableFreeSpace, driveInfo.TotalSize, true);
+                }
+
+                throw new StorageException($"Disk space critically low on drive {driveName}. Free space: {driveInfo.AvailableFreeSpace / (1024.0 * 1024 * 1024):F2}GB");
+            }
+            else if (freeSpacePercentage >= DISK_SPACE_WARNING_THRESHOLD)
+            {
+                _logger.LogWarning(
+                    "Disk space running low. Drive: {Drive}, Free Space: {FreeSpace}GB, Total Space: {TotalSpace}GB, Usage: {UsagePercentage}%",
+                    driveName,
+                    driveInfo.AvailableFreeSpace / (1024.0 * 1024 * 1024),
+                    driveInfo.TotalSize / (1024.0 * 1024 * 1024),
+                    freeSpacePercentage * 100);
+
+                // Only send warning notification if we haven't already notified about this drive
+                if (_notifiedDrives.Add(driveName))
+                {
+                    _ = SendStorageAlertAsync(driveName, freeSpacePercentage, driveInfo.AvailableFreeSpace, driveInfo.TotalSize, false);
+                }
+            }
+            else
+            {
+                // If disk space is back to normal, remove from notified drives
+                _notifiedDrives.Remove(driveName);
+            }
+        }
+
+        private async Task SendStorageAlertAsync(string driveName, double usagePercentage, long freeSpace, long totalSpace, bool isCritical)
+        {
+            try
+            {
+                var alertType = isCritical ? "CRITICAL" : "WARNING";
+                var message = $"""
+                    Storage Space {alertType} Alert
+                    
+                    Drive: {driveName}
+                    Usage: {usagePercentage:P2}
+                    Free Space: {freeSpace / (1024.0 * 1024 * 1024):F2} GB
+                    Total Space: {totalSpace / (1024.0 * 1024 * 1024):F2} GB
+                    
+                    Please take immediate action to free up disk space.
+                    """;
+
+                await _notificationService.SendNotificationAsync(
+                    title: $"Storage Space {alertType} Alert - {driveName}",
+                    message: message,
+                    type: isCritical ? NotificationType.Error : NotificationType.Warning
+                );
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to send storage space alert notification for drive {Drive}", driveName);
+            }
         }
 
         private async Task<T> ExecuteWithPoliciesAsync<T>(Func<Task<T>> operation, string operationName, CancellationToken cancellationToken = default)
@@ -120,6 +201,8 @@ namespace MyTts.Storage
             var startTime = DateTime.UtcNow;
             try
             {
+                CheckDiskSpace(filePath);
+
                 var fileLock = await GetFileLockAsync(filePath);
                 await fileLock.WaitAsync(cancellationToken);
 
@@ -142,6 +225,11 @@ namespace MyTts.Storage
                 {
                     fileLock.Release();
                 }
+            }
+            catch (StorageException ex)
+            {
+                _logger.LogError(ex, "Storage error while writing bytes to file: {FilePath}", filePath);
+                return StorageResult.Failure(new StorageError(ex), DateTime.UtcNow - startTime);
             }
             catch (Exception ex)
             {
@@ -408,6 +496,8 @@ namespace MyTts.Storage
             var startTime = DateTime.UtcNow;
             try
             {
+                CheckDiskSpace(filePath);
+
                 var fileLock = await GetFileLockAsync(filePath);
                 await fileLock.WaitAsync(cancellationToken);
 
@@ -442,6 +532,11 @@ namespace MyTts.Storage
                 {
                     fileLock.Release();
                 }
+            }
+            catch (StorageException ex)
+            {
+                _logger.LogError(ex, "Storage error while saving stream to file: {FilePath}", filePath);
+                return StorageResult.Failure(new StorageError(ex), DateTime.UtcNow - startTime);
             }
             catch (Exception ex)
             {

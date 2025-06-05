@@ -3,22 +3,7 @@ using MyTts.Routes;
 using Microsoft.AspNetCore.HttpOverrides;
 using MyTts.Models.Auth;
 using Microsoft.AspNetCore.Identity;
-using Microsoft.AspNetCore.Builder;
-using System;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.DependencyInjection;
-using MyTts.Services;
-using Microsoft.Extensions.Options;
-using Polly;
-using StackExchange.Redis;
-using MyTts.Services.Interfaces;
 using MyTts.Extensions;
-using Microsoft.Extensions.Logging;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Authentication;
-using Microsoft.Extensions.Logging.Console;
-using Hangfire;
-using Hangfire.Redis.StackExchange;
 
 /*
 ffmpeg -i input.mp3 -filter:a loudnorm output_normalized.mp3
@@ -30,52 +15,32 @@ curl -X GET http://localhost:5209/api/auth/me \
           -H "Authorization: Bearer $TOKEN"
 */
 
-//Configure FFmpeg with absolute path
-string baseDir = AppContext.BaseDirectory;
-string ffmpegDir = Path.Combine(baseDir, "ffmpeg-bin");
+// //Configure FFmpeg with absolute path
+// string baseDir = AppContext.BaseDirectory;
+// string ffmpegDir = Path.Combine(baseDir, "ffmpeg-bin");
 
-// Ensure FFmpeg directory exists
-if (!Directory.Exists(ffmpegDir))
-{
-    throw new DirectoryNotFoundException($"FFmpeg directory not found at: {ffmpegDir}");
-}
+// // Ensure FFmpeg directory exists
+// if (!Directory.Exists(ffmpegDir))
+// {
+//     throw new DirectoryNotFoundException($"FFmpeg directory not found at: {ffmpegDir}");
+// }
 
-// Ensure FFmpeg executables exist
-string ffmpegExe = Path.Combine(ffmpegDir, "ffmpeg.exe");
-string ffprobeExe = Path.Combine(ffmpegDir, "ffprobe.exe");
+// // Ensure FFmpeg executables exist
+// string ffmpegExe = Path.Combine(ffmpegDir, "ffmpeg.exe");
+// string ffprobeExe = Path.Combine(ffmpegDir, "ffprobe.exe");
 
-if (!File.Exists(ffmpegExe) || !File.Exists(ffprobeExe))
-{
-    throw new FileNotFoundException($"FFmpeg executables not found in: {ffmpegDir}");
-}
+// if (!File.Exists(ffmpegExe) || !File.Exists(ffprobeExe))
+// {
+//     throw new FileNotFoundException($"FFmpeg executables not found in: {ffmpegDir}");
+// }
 
-FFMpegCore.GlobalFFOptions.Configure(new FFMpegCore.FFOptions
-{
-    BinaryFolder = ffmpegDir,
-    TemporaryFilesFolder = Path.GetTempPath()
-});
+// FFMpegCore.GlobalFFOptions.Configure(new FFMpegCore.FFOptions
+// {
+//     BinaryFolder = ffmpegDir,
+//     TemporaryFilesFolder = Path.GetTempPath()
+// });
 
 var builder = WebApplication.CreateBuilder(args);
-
-// Configure logging
-//builder.Logging.ClearProviders();
-//builder.Logging.AddDebug(); // Add debug output
-//builder.Logging.AddConsole(options =>
-//{
-//    options.IncludeScopes = true;
-//    options.TimestampFormat = "[yyyy-MM-dd HH:mm:ss] ";
-//    options.UseUtcTimestamp = false;
-//});
-
-//// Set minimum log level for the application
-//builder.Logging.SetMinimumLevel(LogLevel.Debug);
-
-//// Add test log to verify logging is working
-//var logger = builder.Services.BuildServiceProvider().GetRequiredService<ILogger<Program>>();
-//logger.LogInformation("Application starting up...");
-//logger.LogDebug("Debug logging is enabled");
-//logger.LogWarning("Warning logging is enabled");
-//logger.LogError("Error logging is enabled");
 
 // Add services to the container
 builder.Services
@@ -90,73 +55,8 @@ builder.Services
     .AddHttpClientsServices()
     .AddRedisServices(builder.Configuration)
     .AddApiServices()
-    .AddHttpContextAccessor()
-    .AddHangfire(configuration => configuration
-        .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
-        .UseSimpleAssemblyNameTypeSerializer()
-        .UseRecommendedSerializerSettings()
-        .UseRedisStorage(builder.Configuration.GetConnectionString("Redis") ?? "localhost:6379"))
-    .AddHangfireServer(options =>
-    {
-        options.ServerName = $"MyTts-{Environment.MachineName}";
-        options.WorkerCount = Environment.ProcessorCount * 5;
-    });
-// Inside Program.cs, after all AddServices calls:
-//builder.Services.AddSingleton<SharedPolicyFactory>();
+    .AddHttpContextAccessor();
 
-// Debug step by step - Inside Program.cs, after all AddServices calls:
-//var tempServiceProvider = builder.Services.BuildServiceProvider();
-//try
-//{
-//    Console.WriteLine("Testing service resolution step by step...");
-    
-//    // Test 1: Basic logger
-//    var logger = tempServiceProvider.GetRequiredService<ILogger<SharedPolicyFactory>>();
-//    Console.WriteLine("✓ ILogger<SharedPolicyFactory> resolved");
-    
-//    // Test 2: INotificationService
-//    // try
-//    // {
-//    //     var notificationService = tempServiceProvider.GetRequiredService<INotificationService>();
-//    //     Console.WriteLine("✓ INotificationService resolved");
-//    // }
-//    // catch (Exception ex)
-//    // {
-//    //     Console.WriteLine($"✗ INotificationService failed: {ex.Message}");
-//    //     throw; // This is likely the root cause
-//    // }
-    
-//    // Test 3: SharedPolicyFactory
-//    var policyFactory = tempServiceProvider.GetRequiredService<SharedPolicyFactory>();
-//    Console.WriteLine("✓ SharedPolicyFactory resolved");
-    
-//    // Test 4: Redis config
-//    var redisConfig = tempServiceProvider.GetRequiredService<IOptions<MyTts.Config.RedisConfig>>();
-//    Console.WriteLine("✓ RedisConfig resolved");
-
-//    // Test 5: Finally test RedisCacheService
-//    var redisCacheService = tempServiceProvider.GetRequiredService<IRedisCacheService>();
-//    Console.WriteLine("✓ IRedisCacheService resolved successfully!");
-    
-//}
-//catch (Exception ex)
-//{
-//    Console.WriteLine($"✗ Service resolution failed: {ex.Message}");
-    
-//    // Print inner exception details
-//    var innerEx = ex.InnerException;
-//    while (innerEx != null)
-//    {
-//        Console.WriteLine($"Inner exception: {innerEx.Message}");
-//        innerEx = innerEx.InnerException;
-//    }
-    
-//    Console.WriteLine($"Stack trace: {ex.StackTrace}");
-//}
-//finally
-//{
-//    tempServiceProvider.Dispose();
-//}
 var app = builder.Build();
 
 app.UseErrorHandlerMiddleware(middleware =>
@@ -226,7 +126,6 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
-
 app.UseDefaultFiles(); 
 app.UseStaticFiles();
 
@@ -239,40 +138,9 @@ app.UseForwardedHeaders(new ForwardedHeadersOptions
 app.UseRouting();
 app.UseCors("AllowLocalDevelopment");
 
-// Add custom middleware to skip authentication for specific paths
-// app.Use(async (context, next) =>
-// {
-//     var path = context.Request.Path.Value?.ToLower();
-//     if (path?.StartsWith("/testerror") == true || 
-//         path?.StartsWith("/.well-known") == true ||
-//         path?.StartsWith("/api/mp3/merged") == true)
-//     {
-//         // Skip authentication for test routes, Chrome DevTools, and merged MP3
-//         context.Features.Set<IAuthenticationFeature>(new AuthenticationFeature());
-//         await next();
-//         return;
-//     }
-//     await next();
-// });
-//app.UseWhen(context =>
-//{
-//    var path = context.Request.Path;
-//    var excludeFromAuth =
-//        path.StartsWithSegments("/testerror") ||
-//        path.StartsWithSegments("/.well-known") ||
-//        path.StartsWithSegments("/api/mp3/merged") ||
-//        path.StartsWithSegments("/static");
+app.UseAuthentication();
+app.UseAuthorization();
 
-//    // THIS LINE IS CRITICAL FOR DIAGNOSIS
-//    Console.WriteLine($"[DEBUG UseWhen Predicate] Path: '{path}', Exclude from Auth: {excludeFromAuth}");
-
-//    return !excludeFromAuth; 
-//}, appBuilder =>
-//{
-    // Only apply authentication and authorization middleware to paths that are NOT excluded
-    app.UseAuthentication();
-    app.UseAuthorization();
-//});
 // Configure endpoints
 ApiRoutes.RegisterMp3Routes(app);
 // Register your new Auth routes

@@ -4,8 +4,7 @@ using MyTts.Repositories;
 using MyTts.Services.Interfaces;
 using MyTts.Helpers;
 using System.Diagnostics;
-using System.Speech.Synthesis;
-using System.Speech.AudioFormat;
+using MyTts.Services.Constants;
 
 namespace MyTts.Services
 {
@@ -15,18 +14,18 @@ namespace MyTts.Services
         private readonly IMp3Repository _mp3FileRepository;
         private readonly ITtsClient _ttsClient;
         private readonly IRedisCacheService _cache;
-        private readonly ICache<int, string> _ozetCache;
         private readonly SemaphoreSlim _processingSemaphore;
         private const int MaxConcurrentProcessing = 1;
         private bool _disposed;
         private readonly IServiceScopeFactory _serviceScopeFactory;
+        private const string HASH_CACHE_KEY_PREFIX = "hash:";
+        private static readonly TimeSpan HASH_CACHE_DURATION = TimeSpan.FromDays(7);
 
         public Mp3Service(
             ILogger<Mp3Service> logger,
             IMp3Repository mp3FileRepository,
             ITtsClient ttsClient,
             IRedisCacheService cache,
-            ICache<int, string> ozetCache,
             IServiceScopeFactory serviceScopeFactory)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -34,7 +33,6 @@ namespace MyTts.Services
             _ttsClient = ttsClient ?? throw new ArgumentNullException(nameof(ttsClient));
             _cache = cache ?? throw new ArgumentNullException(nameof(cache));
             _processingSemaphore = new SemaphoreSlim(MaxConcurrentProcessing);
-            _ozetCache = ozetCache;
             _serviceScopeFactory = serviceScopeFactory ?? throw new ArgumentNullException(nameof(serviceScopeFactory));
         }
         public async Task<string> CreateMultipleMp3Async(
@@ -44,12 +42,6 @@ namespace MyTts.Services
             CancellationToken cancellationToken)
         {
             await _processingSemaphore.WaitAsync(cancellationToken);
-            // SpeechSynthesizer synthesizer = new SpeechSynthesizer();
-            // synthesizer.SetOutputToAudioStream(new MemoryStream(), new SpeechAudioFormatInfo(44100, AudioBitsPerSample.Sixteen, AudioChannel.Mono));
-            // synthesizer.SelectVoice("Microsoft Zira Desktop");
-            // synthesizer.Rate = 0;
-            // synthesizer.Volume = 100;   
-            // synthesizer.Speak("Merhaba, bu bir test sesidir.");
             try
             {
                 var newsList = await GetNewsList(cancellationToken);
@@ -62,16 +54,16 @@ namespace MyTts.Services
                     Ozet = anchorText
                 };
                 newsList.Insert(0, anchor);
-                var (neededNewsList, savedNewsList) = await checkNewsList(newsList, language, fileType, cancellationToken);
+                var (neededNewsList, savedNewsList) = await FilterNewsListAsync(newsList, language, fileType, cancellationToken);
                 // Process needed news in parallel
                 await _ttsClient.ProcessContentsAsync(newsList, neededNewsList, savedNewsList, language, fileType, cancellationToken);
 
                 // Start SQL operations as fire-and-forget
 
-                var metadataList = newsList.Select(news =>
+                var metadataList = newsList.Select(async news =>
                 {
                     var myHash = TextHasher.ComputeMd5Hash(news.Ozet);
-                    _ozetCache.Set(news.IlgiId, myHash);
+                    await SetHashToCacheAsync(news.IlgiId, myHash, cancellationToken);
                     _logger.LogInformation("Hash for {Id}: {Hash}", news.IlgiId, myHash);
                     return new Mp3Dto
                     {
@@ -85,14 +77,15 @@ namespace MyTts.Services
                 _logger.LogInformation("Starting background SQL operations for {Count} files", metadataList.Count);
 
                 // Create a copy of the metadata list for the background task
-                var metadataCopy = new List<Mp3Dto>(metadataList);
+                var metadataCopy = metadataList.Select(x => x.Result).ToList();
 
                 // Create a new scope for the background task
                 _ = Task.Run(async () =>
                 {
+                    IServiceScope? scope = null;
                     try
                     {
-                        using var scope = _serviceScopeFactory.CreateScope();
+                        scope = _serviceScopeFactory.CreateScope();
                         var repository = scope.ServiceProvider.GetRequiredService<IMp3Repository>();
 
                         _logger.LogInformation("Background SQL operation started for {Count} files", metadataCopy.Count);
@@ -127,6 +120,20 @@ namespace MyTts.Services
                     {
                         _logger.LogError(ex, "Error saving metadata in background for {Count} files", metadataCopy.Count);
                     }
+                    finally
+                    {
+                        if (scope != null)
+                        {
+                            if (scope is IAsyncDisposable asyncDisposable)
+                            {
+                                await asyncDisposable.DisposeAsync();
+                            }
+                            else
+                            {
+                                scope.Dispose();
+                            }
+                        }
+                    }
                 }, CancellationToken.None); // Use CancellationToken.None for background task
 
 
@@ -139,37 +146,36 @@ namespace MyTts.Services
             }
         }
 
-        private async Task<(IEnumerable<HaberSummaryDto> neededNewsList, IEnumerable<HaberSummaryDto> savedNewsList)> checkNewsListInDB(List<HaberSummaryDto> newsList, AudioType fileType, CancellationToken cancellationToken)
-        {
-            var idList = newsList.Select(er => er.IlgiId).ToList();
-            List<int> existings = await GetExistingMetaList(idList, cancellationToken);
-            var neededNewsList = newsList
-                            .Where(h => !idList.Contains(h.IlgiId))
-                            .ToList();
-            var savedNewsList = newsList
-                            .Where(h => idList.Contains(h.IlgiId))
-                            .ToList();
-            return (neededNewsList, savedNewsList);
-        }
-
-        private async Task<(List<HaberSummaryDto> neededNewsList, List<HaberSummaryDto> savedNewsList)> checkNewsList(List<HaberSummaryDto> newsList, string language, AudioType fileType, CancellationToken cancellationToken)
+        private async Task<(List<HaberSummaryDto> neededNewsList, List<HaberSummaryDto> savedNewsList)> FilterNewsListAsync(
+            List<HaberSummaryDto> newsList,
+            string language,
+            AudioType fileType,
+            CancellationToken cancellationToken)
         {
             var neededNewsList = new List<HaberSummaryDto>();
             var savedNewsList = new List<HaberSummaryDto>();
             var existingHashList = new Dictionary<int, string>();
-            //  215 nolu servera sürekli restart atıldığı için cache uçuyor
-            if (_ozetCache.IsEmpty()) {
+
+            // Get all hashes from Redis in one batch
+            var hashKeys = newsList.Select(x => GetHashCacheKey(x.IlgiId)).ToList();
+            var cachedHashes = await _cache.GetAsync<Dictionary<string, string>>("hash:batch", cancellationToken);
+
+            if (cachedHashes == null || !cachedHashes.Any())
+            {
                 existingHashList = await _mp3FileRepository.GetExistingHashList(newsList.Select(x => x.IlgiId).ToList(), cancellationToken);
-                _ozetCache.SetRange(existingHashList);
+                await SetHashRangeToCacheAsync(existingHashList, cancellationToken);
             }
+
             foreach (var news in newsList)
             {
-                var existingHash = _ozetCache.Get(news.IlgiId);
+                var existingHash = await GetHashFromCacheAsync(news.IlgiId, cancellationToken);
                 var isSame = existingHash == null || !TextHasher.HasTextChangedMd5(news.Ozet, existingHash);
-                var inRedis = await _cache.ExistsAsync($"mp3stream:{news.IlgiId}", cancellationToken);
-                if (await _mp3FileRepository.FileExistsAnywhereAsync(news.IlgiId, language, fileType, cancellationToken) && (isSame||inRedis))
+                string redisKey = RedisKeys.FormatKey(RedisKeys.TTS_INDIVIDUAL_MP3_KEY, news.IlgiId);
+                var inRedis = await _cache.ExistsAsync(redisKey, cancellationToken);
+
+                if ((await _mp3FileRepository.FileExistsAnywhereAsync(news.IlgiId, language, fileType, cancellationToken) || inRedis) && isSame)
                 {
-                    savedNewsList.Add(news);                   
+                    savedNewsList.Add(news);
                 }
                 else
                 {
@@ -178,6 +184,7 @@ namespace MyTts.Services
             }
             return (neededNewsList, savedNewsList);
         }
+
         public async Task<Stream> CreateSingleMp3Async(OneRequest request, AudioType fileType, CancellationToken cancellationToken)
         {
             try
@@ -585,6 +592,25 @@ namespace MyTts.Services
             {
                 _logger.LogError(ex, "Failed to save batch metadata for {Count} files", metadataList.Count);
                 throw;
+            }
+        }
+        private string GetHashCacheKey(int id) => $"{HASH_CACHE_KEY_PREFIX}{id}";
+
+        private async Task<string?> GetHashFromCacheAsync(int id, CancellationToken cancellationToken)
+        {
+            return await _cache.GetAsync<string>(GetHashCacheKey(id), cancellationToken);
+        }
+
+        private async Task SetHashToCacheAsync(int id, string hash, CancellationToken cancellationToken)
+        {
+            await _cache.SetAsync(GetHashCacheKey(id), hash, HASH_CACHE_DURATION, cancellationToken);
+        }
+
+        private async Task SetHashRangeToCacheAsync(Dictionary<int, string> hashList, CancellationToken cancellationToken)
+        {
+            foreach (var (id, hash) in hashList)
+            {
+                await SetHashToCacheAsync(id, hash, cancellationToken);
             }
         }
     }

@@ -341,5 +341,45 @@ namespace MyTts.Middleware
         public AccountDisabledException(string message, Exception innerException) : base(message, innerException) { }
     }
 
+    /// <summary>
+    /// Represents an error that occurs when the email service is unavailable.
+    /// Maps to HTTP 503 Service Unavailable.
+    /// </summary>
+    public class EmailServiceUnavailableException : EmailException
+    {
+        public EmailServiceUnavailableException(string message) : base(message) { }
+        public EmailServiceUnavailableException(string message, Exception innerException) : base(message, innerException) { }
+    }
+
+    /// <summary>
+    /// Represents an error that occurs when email storage allocation is exceeded.
+    /// Maps to HTTP 507 Insufficient Storage.
+    /// </summary>
+    public class EmailStorageException : EmailException
+    {
+        public EmailStorageException(string message) : base(message) { }
+        public EmailStorageException(string message, Exception innerException) : base(message, innerException) { }
+    }
+
+    /// <summary>
+    /// Represents an error that occurs during an email transaction.
+    /// Maps to HTTP 500 Internal Server Error.
+    /// </summary>
+    public class EmailTransactionException : EmailException
+    {
+        public EmailTransactionException(string message) : base(message) { }
+        public EmailTransactionException(string message, Exception innerException) : base(message, innerException) { }
+    }
+
+    /// <summary>
+    /// Represents an error that occurs during email authentication.
+    /// Maps to HTTP 401 Unauthorized.
+    /// </summary>
+    public class EmailAuthenticationException : EmailException
+    {
+        public EmailAuthenticationException(string message) : base(message) { }
+        public EmailAuthenticationException(string message, Exception innerException) : base(message, innerException) { }
+    }
+
     // Add more custom exceptions as needed for your domain (e.g., UnauthorizedException, ServiceUnavailableException)
 }

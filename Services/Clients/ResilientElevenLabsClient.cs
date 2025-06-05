@@ -4,14 +4,13 @@ using Polly;
 using MyTts.Helpers;
 using ElevenLabs.Voices;
 using System.Net.Sockets;
-using System.Net;
 
 namespace MyTts.Services.Clients
 {
     public class ResilientElevenLabsClient : IAsyncDisposable
     {
         private readonly ElevenLabsClient _client;
-        private readonly ResiliencePipeline<VoiceClip> _voiceClipPipeline;
+        private readonly ResiliencePipeline<ElevenLabs.VoiceClip> _voiceClipPipeline;
         private readonly ResiliencePipeline<Voice> _voicePipeline;
         private readonly ILogger<ResilientElevenLabsClient> _logger;
         private readonly CombinedRateLimiter _rateLimiter;
@@ -22,7 +21,7 @@ namespace MyTts.Services.Clients
 
         public ResilientElevenLabsClient(
             ElevenLabsClient client,
-            ResiliencePipeline<VoiceClip> voiceClipPipeline,
+            ResiliencePipeline<ElevenLabs.VoiceClip> voiceClipPipeline,
             ResiliencePipeline<Voice> voicePipeline,
             ILogger<ResilientElevenLabsClient> logger,
             CombinedRateLimiter rateLimiter)
@@ -107,13 +106,13 @@ namespace MyTts.Services.Clients
             }
         }
 
-        public async Task<VoiceClip> TextToSpeechAsync(TextToSpeechRequest request, string voiceId, CancellationToken cancellationToken = default)
+        public async Task<ElevenLabs.VoiceClip> TextToSpeechAsync(TextToSpeechRequest request, string voiceId, CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(request);
             ArgumentException.ThrowIfNullOrEmpty(voiceId);
 
             return await ExecuteWithRateLimitAsync(
-                async (ct) => (VoiceClip)await _client.TextToSpeechEndpoint.TextToSpeechAsync(request, null, ct),
+                async (ct) => await _client.TextToSpeechEndpoint.TextToSpeechAsync(request, null, ct),
                 $"TTS_{voiceId}",
                 _voiceClipPipeline,
                 cancellationToken);

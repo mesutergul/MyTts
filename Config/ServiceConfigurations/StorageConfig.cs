@@ -134,7 +134,7 @@ public static class StorageServiceConfig
     private static void RegisterStorageServices(IServiceCollection services)
     {
         // Register the LocalStorageClient as primary implementation
-        services.AddSingleton<ILocalStorageClient, LocalStorageClient>();
+        services.AddScoped<ILocalStorageClient, LocalStorageClient>();
     }
 
     private static void ValidateAndInitializeStorage(StorageConfiguration config)

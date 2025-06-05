@@ -2,8 +2,8 @@ using MyTts.Repositories;
 using MyTts.Services;
 using MyTts.Services.Interfaces;
 using MyTts.Services.Clients;
-using Microsoft.Extensions.DependencyInjection; // Make sure this line is present
-using Polly; // Keep this for ResiliencePipeline
+using Microsoft.Extensions.DependencyInjection;
+using Polly;
 
 namespace MyTts.Config.ServiceConfigurations
 {
@@ -21,7 +21,8 @@ namespace MyTts.Config.ServiceConfigurations
 
             // Configure and register notification service with resilience policies
             services.Configure<NotificationOptions>(configuration.GetSection("Notifications"));
-            services.AddHttpClient<INotificationService, NotificationService>(client =>
+            services.AddSingleton<INotificationService, NotificationService>();
+            services.AddHttpClient("NotificationService", client =>
             {
                 client.DefaultRequestHeaders.Add("User-Agent", "MyTts-NotificationService");
                 client.Timeout = TimeSpan.FromSeconds(30);
@@ -35,10 +36,9 @@ namespace MyTts.Config.ServiceConfigurations
                         durationOfBreakInSeconds: 30)) // Circuit breaker
                     .AddPipeline(policyFactory.GetRetryPolicy(retryCount: 3)); // Retry
             });
+
             // Register infrastructure services
             services.AddScoped<IRedisCacheService, RedisCacheService>();
-            //  services.AddScoped<IAudioConversionService, AudioConversionService>();
-            services.AddSingleton(typeof(ICache<,>), typeof(LimitedMemoryCache<,>));
 
             return services;
         }

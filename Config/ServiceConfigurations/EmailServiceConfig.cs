@@ -16,8 +16,7 @@ namespace MyTts.Config.ServiceConfigurations
             services.Configure<EmailConfig>(configuration.GetSection("Email"));
 
             // Register email service with all its dependencies
-            services.AddScoped<IEmailService, EmailService>();
-            services.AddScoped<EmailService>();
+            services.AddSingleton<IEmailService, EmailService>();
 
             // Register SmtpClient as singleton with proper configuration
             services.AddSingleton<SmtpClient>(sp =>
@@ -52,10 +51,27 @@ namespace MyTts.Config.ServiceConfigurations
                         UseDefaultCredentials = false
                     };
 
+                    // Configure connection pooling
+                    client.ServicePoint.MaxIdleTime = 10000; // 10 seconds
+                    client.ServicePoint.ConnectionLimit = 1;
+                    client.ServicePoint.Expect100Continue = false;
+
                     // Test connection
                     try
                     {
-                        client.Send(new MailMessage(config.SenderEmail, config.SenderEmail, "Test", "Test"));
+                        using var testMessage = new MailMessage
+                        {
+                            From = new MailAddress(config.SenderEmail, config.SenderName),
+                            Subject = "Test",
+                            Body = "Test",
+                            BodyEncoding = System.Text.Encoding.UTF8,
+                            SubjectEncoding = System.Text.Encoding.UTF8
+                        };
+                        testMessage.To.Add(config.SenderEmail);
+                        testMessage.Headers.Add("X-Mailer", "MyTts Notification System");
+                        testMessage.Headers.Add("X-Auto-Response-Suppress", "OOF, AutoReply");
+
+                        client.Send(testMessage);
                         logger.LogInformation("SMTP connection test successful");
                     }
                     catch (Exception ex)
