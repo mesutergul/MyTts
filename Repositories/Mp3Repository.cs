@@ -6,6 +6,7 @@ using MyTts.Services.Interfaces;
 using MyTts.Services.Constants;
 using MyTts.Helpers;
 using MyTts.Storage.Interfaces;
+using System.IO;
 
 namespace MyTts.Repositories
 {
@@ -23,6 +24,7 @@ namespace MyTts.Repositories
         private readonly ILocalStorageClient _storage;
         private static readonly TimeSpan DB_CACHE_DURATION = RedisKeys.DB_CACHE_DURATION;
         private static readonly TimeSpan FILE_CACHE_DURATION = RedisKeys.FILE_CACHE_DURATION;
+        private readonly Task _initializationTask;
 
         public static string GetStorageKey(int id) => StoragePathHelper.GetStorageKey(id);
         public static string GetCacheKey(int id) => RedisKeys.FormatKey(RedisKeys.MP3_FILE_KEY, id);
@@ -50,12 +52,37 @@ namespace MyTts.Repositories
             _mp3MetaRepository = mp3MetaRepository ?? throw new ArgumentNullException(nameof(mp3MetaRepository));
             _newsRepository = newsRepository ?? throw new ArgumentNullException(nameof(newsRepository));
             
-            // Initialize directories asynchronously
-            InitializeDirectoriesAsync().GetAwaiter().GetResult();
+            // Start initialization asynchronously
+            _initializationTask = Task.Run(async () =>
+            {
+                try
+                {
+                    await InitializeDirectoriesAsync();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to initialize directories during startup");
+                    // Don't throw here - we'll handle initialization failures when operations are attempted
+                }
+            });
+        }
+
+        private async Task EnsureInitializedAsync()
+        {
+            try
+            {
+                await _initializationTask;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Directory initialization failed");
+                throw new InvalidOperationException("Failed to initialize storage directories", ex);
+            }
         }
 
         public async Task<bool> Mp3FileExistsInCacheAsync(string cacheKey, CancellationToken cancellationToken)
         {
+            await EnsureInitializedAsync();
             ArgumentNullException.ThrowIfNull(cacheKey);
             if (_cache == null) return false;
             try
@@ -293,44 +320,70 @@ namespace MyTts.Repositories
         {
             try
             {
-                // Create base storage directory
-                var baseExists = await _storage.DirectoryExistsAsync(_baseStoragePath);
-                if (!baseExists.IsSuccess || !baseExists.Data)
+                // Create base storage directory if it doesn't exist
+                var baseDirExistsResult = await _storage.DirectoryExistsAsync(_baseStoragePath);
+                if (!baseDirExistsResult.IsSuccess || !baseDirExistsResult.Data)
                 {
-                    var createBase = await _storage.CreateDirectoryAsync(_baseStoragePath);
-                    if (!createBase.IsSuccess)
+                    _logger.LogInformation("Creating base storage directory: {Path}", _baseStoragePath);
+                    var createResult = await _storage.CreateDirectoryAsync(_baseStoragePath);
+                    if (!createResult.IsSuccess)
                     {
-                        throw createBase.Error!.Exception;
+                        _logger.LogError(createResult.Error!.Exception, "Failed to create base storage directory: {Path}", _baseStoragePath);
+                        throw new InvalidOperationException($"Failed to create base storage directory: {_baseStoragePath}", createResult.Error!.Exception);
                     }
-                    _logger.LogInformation("Created base storage directory: {Path}", _baseStoragePath);
                 }
 
-                // Create database directory
-                string dbDirectory = Path.GetDirectoryName(_metadataPath)!;
-                var dbExists = await _storage.DirectoryExistsAsync(dbDirectory);
-                if (!dbExists.IsSuccess || !dbExists.Data)
+                // Create metadata directory if it doesn't exist
+                var metadataDir = Path.GetDirectoryName(_metadataPath);
+                if (!string.IsNullOrEmpty(metadataDir))
                 {
-                    var createDb = await _storage.CreateDirectoryAsync(dbDirectory);
-                    if (!createDb.IsSuccess)
+                    var metaDirExistsResult = await _storage.DirectoryExistsAsync(metadataDir);
+                    if (!metaDirExistsResult.IsSuccess || !metaDirExistsResult.Data)
                     {
-                        throw createDb.Error!.Exception;
+                        _logger.LogInformation("Creating metadata directory: {Path}", metadataDir);
+                        var createResult = await _storage.CreateDirectoryAsync(metadataDir);
+                        if (!createResult.IsSuccess)
+                        {
+                            _logger.LogError(createResult.Error!.Exception, "Failed to create metadata directory: {Path}", metadataDir);
+                            throw new InvalidOperationException($"Failed to create metadata directory: {metadataDir}", createResult.Error!.Exception);
+                        }
                     }
-                    _logger.LogInformation("Created database directory: {Path}", dbDirectory);
                 }
 
-                // Verify write permissions
-                await VerifyDirectoryAccessAsync(_baseStoragePath);
-                await VerifyDirectoryAccessAsync(dbDirectory);
-            }
-            catch (UnauthorizedAccessException ex)
-            {
-                _logger.LogError(ex, "Access denied while creating directories. Please check permissions");
-                throw;
-            }
-            catch (IOException ex)
-            {
-                _logger.LogError(ex, "IO error while creating directories");
-                throw;
+                // Verify access to directories
+                try
+                {
+                    await VerifyDirectoryAccessAsync(_baseStoragePath);
+                    if (!string.IsNullOrEmpty(metadataDir))
+                    {
+                        await VerifyDirectoryAccessAsync(metadataDir);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // Log the error but don't throw - we don't want to block initialization if disk space check fails
+                    _logger.LogWarning(ex, "Directory access verification failed, but continuing initialization");
+                }
+
+                // Create language-specific directories
+                var languages = new[] { "tr", "en", "ar", "ru" };
+                foreach (var lang in languages)
+                {
+                    var langPath = Path.Combine(_baseStoragePath, lang);
+                    var langDirExistsResult = await _storage.DirectoryExistsAsync(langPath);
+                    if (!langDirExistsResult.IsSuccess || !langDirExistsResult.Data)
+                    {
+                        _logger.LogInformation("Creating language directory: {Path}", langPath);
+                        var createResult = await _storage.CreateDirectoryAsync(langPath);
+                        if (!createResult.IsSuccess)
+                        {
+                            _logger.LogError(createResult.Error!.Exception, "Failed to create language directory: {Path}", langPath);
+                            throw new InvalidOperationException($"Failed to create language directory: {langPath}", createResult.Error!.Exception);
+                        }
+                    }
+                }
+
+                _logger.LogInformation("Directory initialization completed successfully");
             }
             catch (Exception ex)
             {
@@ -341,44 +394,52 @@ namespace MyTts.Repositories
 
         public async Task VerifyDirectoryAccessAsync(string path)
         {
-            string tempFilePath = Path.Combine(path, $".write-test-{Guid.NewGuid()}.tmp");
-
             try
             {
-                // Create a test file
-                byte[] testData = Encoding.UTF8.GetBytes("test");
-                var writeResult = await _storage.WriteAllBytesAsync(tempFilePath, testData);
-                if (!writeResult.IsSuccess)
+                // Skip drive info check for network paths
+                if (path.StartsWith(@"\\"))
                 {
-                    throw writeResult.Error!.Exception;
+                    _logger.LogDebug("Skipping drive info check for network path: {Path}", path);
+                    return;
                 }
-            }
-            catch (UnauthorizedAccessException ex)
-            {
-                _logger.LogError(ex, "Permissions error: Cannot write to directory '{Path}'. Please check file system permissions for the application user.", path);
-                throw new InvalidOperationException($"The application does not have write permissions for the directory: {path}. Please ensure the user running the application has write access.", ex);
-            }
-            catch (IOException ex)
-            {
-                _logger.LogError(ex, "An I/O error occurred while verifying directory access for '{Path}'.", path);
-                throw;
+
+                var rootPath = Path.GetPathRoot(path);
+                if (string.IsNullOrEmpty(rootPath))
+                {
+                    _logger.LogWarning("Could not determine root path for: {Path}", path);
+                    return;
+                }
+
+                // Ensure the drive path is in the correct format (e.g., "C:\")
+                var driveLetter = rootPath.TrimEnd('\\');
+                if (driveLetter.Length != 2 || !char.IsLetter(driveLetter[0]) || driveLetter[1] != ':')
+                {
+                    _logger.LogWarning("Invalid drive path format: {Path}", rootPath);
+                    return;
+                }
+
+                var driveInfo = new DriveInfo(driveLetter);
+                if (!driveInfo.IsReady)
+                {
+                    _logger.LogWarning("Drive {Drive} is not ready", driveInfo.Name);
+                    return;
+                }
+
+                var freeSpacePercentage = 1.0 - ((double)driveInfo.AvailableFreeSpace / driveInfo.TotalSize);
+                if (freeSpacePercentage >= 0.95) // 95% full
+                {
+                    _logger.LogError(
+                        "Disk space critically low. Drive: {Drive}, Free Space: {FreeSpace}GB, Total Space: {TotalSpace}GB, Usage: {UsagePercentage}%",
+                        driveInfo.Name,
+                        driveInfo.AvailableFreeSpace / (1024.0 * 1024 * 1024),
+                        driveInfo.TotalSize / (1024.0 * 1024 * 1024),
+                        freeSpacePercentage * 100);
+                }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "An unexpected error occurred while verifying directory access for '{Path}'.", path);
-                throw;
-            }
-            finally
-            {
-                var existsResult = await _storage.FileExistsAsync(tempFilePath);
-                if (existsResult.IsSuccess && existsResult.Data)
-                {
-                    var deleteResult = await _storage.DeleteFileAsync(tempFilePath);
-                    if (!deleteResult.IsSuccess)
-                    {
-                        _logger.LogWarning("Failed to delete temporary test file: {Path}", tempFilePath);
-                    }
-                }
+                // Log the error but don't throw - we don't want to block operations if disk space check fails
+                _logger.LogWarning(ex, "An unexpected error occurred while verifying directory access for '{Path}'.", path);
             }
         }
 

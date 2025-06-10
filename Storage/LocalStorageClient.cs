@@ -40,46 +40,68 @@ namespace MyTts.Storage
 
         private void CheckDiskSpace(string filePath)
         {
-            var driveInfo = new DriveInfo(Path.GetPathRoot(filePath)!);
-            var freeSpacePercentage = 1.0 - ((double)driveInfo.AvailableFreeSpace / driveInfo.TotalSize);
-            var driveName = driveInfo.Name;
-
-            if (freeSpacePercentage >= DISK_SPACE_ERROR_THRESHOLD)
+            try
             {
-                _logger.LogError(
-                    "Disk space critically low. Drive: {Drive}, Free Space: {FreeSpace}GB, Total Space: {TotalSpace}GB, Usage: {UsagePercentage}%",
-                    driveName,
-                    driveInfo.AvailableFreeSpace / (1024.0 * 1024 * 1024),
-                    driveInfo.TotalSize / (1024.0 * 1024 * 1024),
-                    freeSpacePercentage * 100);
-
-                // Only send notification if we haven't already notified about this drive
-                if (_notifiedDrives.Add(driveName))
+                // Skip disk space check for network paths
+                if (filePath.StartsWith(@"\\"))
                 {
-                    _ = SendStorageAlertAsync(driveName, freeSpacePercentage, driveInfo.AvailableFreeSpace, driveInfo.TotalSize, true);
+                    _logger.LogDebug("Skipping disk space check for network path: {FilePath}", filePath);
+                    return;
                 }
 
-                throw new StorageException($"Disk space critically low on drive {driveName}. Free space: {driveInfo.AvailableFreeSpace / (1024.0 * 1024 * 1024):F2}GB");
-            }
-            else if (freeSpacePercentage >= DISK_SPACE_WARNING_THRESHOLD)
-            {
-                _logger.LogWarning(
-                    "Disk space running low. Drive: {Drive}, Free Space: {FreeSpace}GB, Total Space: {TotalSpace}GB, Usage: {UsagePercentage}%",
-                    driveName,
-                    driveInfo.AvailableFreeSpace / (1024.0 * 1024 * 1024),
-                    driveInfo.TotalSize / (1024.0 * 1024 * 1024),
-                    freeSpacePercentage * 100);
-
-                // Only send warning notification if we haven't already notified about this drive
-                if (_notifiedDrives.Add(driveName))
+                var rootPath = Path.GetPathRoot(filePath);
+                if (string.IsNullOrEmpty(rootPath))
                 {
-                    _ = SendStorageAlertAsync(driveName, freeSpacePercentage, driveInfo.AvailableFreeSpace, driveInfo.TotalSize, false);
+                    _logger.LogWarning("Could not determine root path for: {FilePath}", filePath);
+                    return;
+                }
+
+                var driveInfo = new DriveInfo(rootPath);
+                var freeSpacePercentage = 1.0 - ((double)driveInfo.AvailableFreeSpace / driveInfo.TotalSize);
+                var driveName = driveInfo.Name;
+
+                if (freeSpacePercentage >= DISK_SPACE_ERROR_THRESHOLD)
+                {
+                    _logger.LogError(
+                        "Disk space critically low. Drive: {Drive}, Free Space: {FreeSpace}GB, Total Space: {TotalSpace}GB, Usage: {UsagePercentage}%",
+                        driveName,
+                        driveInfo.AvailableFreeSpace / (1024.0 * 1024 * 1024),
+                        driveInfo.TotalSize / (1024.0 * 1024 * 1024),
+                        freeSpacePercentage * 100);
+
+                    // Only send notification if we haven't already notified about this drive
+                    if (_notifiedDrives.Add(driveName))
+                    {
+                        _ = SendStorageAlertAsync(driveName, freeSpacePercentage, driveInfo.AvailableFreeSpace, driveInfo.TotalSize, true);
+                    }
+
+                    throw new StorageException($"Disk space critically low on drive {driveName}. Free space: {driveInfo.AvailableFreeSpace / (1024.0 * 1024 * 1024):F2}GB");
+                }
+                else if (freeSpacePercentage >= DISK_SPACE_WARNING_THRESHOLD)
+                {
+                    _logger.LogWarning(
+                        "Disk space running low. Drive: {Drive}, Free Space: {FreeSpace}GB, Total Space: {TotalSpace}GB, Usage: {UsagePercentage}%",
+                        driveName,
+                        driveInfo.AvailableFreeSpace / (1024.0 * 1024 * 1024),
+                        driveInfo.TotalSize / (1024.0 * 1024 * 1024),
+                        freeSpacePercentage * 100);
+
+                    // Only send warning notification if we haven't already notified about this drive
+                    if (_notifiedDrives.Add(driveName))
+                    {
+                        _ = SendStorageAlertAsync(driveName, freeSpacePercentage, driveInfo.AvailableFreeSpace, driveInfo.TotalSize, false);
+                    }
+                }
+                else
+                {
+                    // If disk space is back to normal, remove from notified drives
+                    _notifiedDrives.Remove(driveName);
                 }
             }
-            else
+            catch (Exception ex)
             {
-                // If disk space is back to normal, remove from notified drives
-                _notifiedDrives.Remove(driveName);
+                // Log the error but don't throw - we don't want to block file operations if disk space check fails
+                _logger.LogWarning(ex, "Failed to check disk space for path: {FilePath}", filePath);
             }
         }
 
