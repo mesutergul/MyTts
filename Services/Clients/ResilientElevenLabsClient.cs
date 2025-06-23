@@ -72,7 +72,7 @@ namespace MyTts.Services.Clients
                 {
                     try
                     {
-                        await EnsureApiEndpointReachableAsync(cancellationToken);
+                      //  await EnsureApiEndpointReachableAsync(cancellationToken);
 
                         // Acquire rate limit with timeout
                         var linkedToken = _rateLimiter.CreateLinkedTokenWithTimeout(cancellationToken, RateLimitTimeout);

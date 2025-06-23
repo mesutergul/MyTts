@@ -68,7 +68,7 @@ namespace MyTts.Services
                     var tasks = new List<Task>();
 
                     // Add email notification task if enabled
-                    if (_options.EnableEmailNotifications)
+                    if (_options.EnableEmailNotifications&&false)
                     {
                         tasks.Add(SendEmailNotificationAsync(title, message, type, cancellationToken));
                     }
